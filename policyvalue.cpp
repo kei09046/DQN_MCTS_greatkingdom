@@ -98,9 +98,7 @@ std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game* ga
 
 std::vector<float> PolicyValueNet::getData(std::vector<const Game*> gameBatch){
 	//std::cout << "get data " << gameBatch.size() << std::endl;
-	std::vector<float> ret(gameBatch.size() * inputDepth * inputSize);
-	for(int i=0; i<ret.size(); ++i)
-		ret[i] = 0.0f;
+	std::vector<float> ret(gameBatch.size() * inputDepth * inputSize, 0.0f);
 
 	const int temp = inputDepth * inputSize;
 	for(int num = 0; num < gameBatch.size(); ++num){

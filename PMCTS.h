@@ -22,25 +22,20 @@ class alignas(64) Node{
 private:
     const Game game; // includes position, territory, valid moves etc. for heuristic
     float N, W, P, initQ; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-    color turn;
+    const color turn;
+    const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
     std::vector<Node*> child;
     std::vector<std::pair<int, int> > legal;
     std::pair<int, int> winmove;
+    EvalCache<PolicyValueOutput>* const eval_cache;
 
     void expand();
 
     static std::vector<float> softmax(std::vector<float>& logit);
 
 public:
-    uint refCount; // counts how many parents share this node
-    const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
-    
-    Node(const Game& g);
-
-    Node(const Game& g, const HashValue hashValue); // prevent computing hashValue twice.
-
-    //void deletetree();
+    Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache);
 
     float searchandPropagate(PolicyValueNet& net);
 
@@ -56,9 +51,10 @@ private:
     Node* root;
     int playout;
     PolicyValueNet* net;
+    EvalCache<PolicyValueOutput>* const eval_cache;
 
 public:
-    MCTS(int playout, PolicyValueNet* net);
+    MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache);
 
     void runSimulation();
 

@@ -31,8 +31,7 @@ void MCTS::resetTimeStats(){
 
 const Hash hash;
 thread_local std::unordered_map<HashValue, Node*> trans_table;
-//EvalCache<std::vector<PolicyValueOutput>> eval_cache;
-EvalCache<PolicyValueOutput> eval_norot_cache;
+
 
 std::vector<float> Node::softmax(std::vector<float>& logit){
     std::vector<float> exp_logit(logit.size());
@@ -54,12 +53,8 @@ std::vector<float> Node::softmax(std::vector<float>& logit){
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-Node::Node(const Game& g): game(g), turn(g.getTurn()), N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), refCount(1), 
-hashValue(hash.computeHash(g)){
-}
-
-Node::Node(const Game& g, const HashValue hashValue): game(g), turn(g.getTurn()), N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), refCount(1),
- hashValue(hashValue){
+Node::Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache): game(g), turn(g.getTurn()), 
+N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), eval_cache(eval_cache){
 }
 
 void Node::expand(){
@@ -98,12 +93,11 @@ void Node::expand(){
                     Node* childNode;
 
                     if(trans_table.count(newHash) == 0){
-                        childNode = new Node(ng, newHash);
+                        childNode = new Node(ng, newHash, eval_cache);
                         trans_table[newHash] = childNode;
                     }
                     else{
                         childNode = trans_table[newHash];
-                        childNode->refCount++;
                     }
                     child.push_back(childNode);
                     legal.push_back({i, j});
@@ -135,12 +129,11 @@ void Node::expand(){
         Node* childNode;
 
         if(trans_table.count(newHash) == 0){
-            childNode = new Node(pass, newHash);
+            childNode = new Node(pass, newHash, eval_cache);
             trans_table[newHash] = childNode;
         }
         else{
             childNode = trans_table[newHash];
-            childNode->refCount++;
         }
 
         child.push_back(childNode);
@@ -152,15 +145,6 @@ void Node::expand(){
     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
     #endif
 }
-
-// void Node::deletetree(){ // TODO : fix vulnerability to cyclic reference.(due to hash collision) -> fixed. deletetree never gets called. Clears tree after game instead.
-//     for(Node* i : child){
-//         i->deletetree();
-//     }
-//     if(--refCount == 0)
-//         trans_table.erase(hashValue); // unordered map automatically calls destructor when value gets erased 
-// }
-
 
 float Node::searchandPropagate(PolicyValueNet& net){
     if(N++ == 0){
@@ -202,9 +186,9 @@ float Node::searchandPropagate(PolicyValueNet& net){
         // }
 
         PolicyValueOutput entry;
-        if(!eval_norot_cache.get(hashValue, entry)){
+        if(!eval_cache->get(hashValue, entry)){
             entry = net.evaluate(&game, legal);                       
-            eval_norot_cache.insert(hashValue, entry);
+            eval_cache->insert(hashValue, entry);
         }
         else if(entry.first.size() != legal.size()){ // hash collision
             std::cout << "warning! hash collision! Hash value : " << hashValue << std::endl;
@@ -397,15 +381,15 @@ void MCTS::reset(){
         delete node;
     }
     trans_table.clear();
-    root = new Node(Game());
-    trans_table[root->hashValue] = root;
+    root = new Node(Game(), hash.baseHash(), eval_cache);
+    trans_table[hash.baseHash()] = root;
 }
 
 void MCTS::updateModel(){
-    eval_norot_cache.clear();
+    eval_cache->clear();
 }
 
-MCTS::MCTS(int playout, PolicyValueNet* net) : net(net), playout(playout){
-    root = new Node(Game());
-    trans_table[root->hashValue] = root;
+MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache) : net(net), playout(playout), eval_cache(eval_cache){
+    root = new Node(Game(), hash.baseHash(), eval_cache);
+    trans_table[hash.baseHash()] = root;
 }

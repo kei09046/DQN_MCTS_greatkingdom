@@ -17,7 +17,7 @@ private:
 public:
     Hash();
 
-    HashValue computeHash(const Game& game) const;
+    HashValue baseHash() const;
     HashValue computeHashAfterMove(const Game& game, const std::pair<int, int>& move, const HashValue prevHash) const;
 };
 

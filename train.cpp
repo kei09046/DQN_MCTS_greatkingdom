@@ -36,8 +36,9 @@ float TrainPipeline::start_play(std::array<MCTS*, 2> player_list, std::ostream& 
 
 void TrainPipeline::play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
-	PolicyValueNet* pv = new PolicyValueNet(model_path + model, gpu);
-	MCTS player = MCTS(playout, pv);
+	PolicyValueNet pv(model_path + model, gpu);
+	EvalCache<PolicyValueOutput>* eval_cache = new EvalCache<PolicyValueOutput>();
+	MCTS player = MCTS(playout, &pv, eval_cache);
 	std::pair<int, int> cord;
 	color res;
 
@@ -60,6 +61,8 @@ void TrainPipeline::play(const std::string& model, color side, int playout, floa
 		}
         player.jump(cord);
 	}
+
+	delete eval_cache;
 	return;
 }
 
@@ -67,24 +70,29 @@ float TrainPipeline::policy_evaluate(const std::string& mod_one, const std::stri
 	bool gpu, float temp, int n_games) {
 	PolicyValueNet po(model_path + mod_one, gpu);
 	PolicyValueNet pt(model_path + mod_two, gpu);
-	MCTS* base_player = new MCTS(n_playout, &po);
-	MCTS* oppo_player = new MCTS(n_playout, &pt);
+	EvalCache<PolicyValueOutput>* eval_cache_o = new EvalCache<PolicyValueOutput>();
+	EvalCache<PolicyValueOutput>* eval_cache_t = new EvalCache<PolicyValueOutput>();
+	MCTS* base_player = new MCTS(n_playout, &po, eval_cache_o);
+	MCTS* oppo_player = new MCTS(n_playout, &pt, eval_cache_t);
 
 	std::vector<bool> b = play_match(base_player, oppo_player, total_res, is_shown, temp, n_games);
 
 	delete base_player;
 	delete oppo_player;
+	delete eval_cache_o;
+	delete eval_cache_t;
 	return std::count(b.begin(), b.end(), true) / static_cast<float>(n_games << 1);
 }
 
 std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model_list,
 	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games) {
 	int N = model_list.size();
-
+	
+	std::vector<EvalCache<PolicyValueOutput>*> caches(N, new EvalCache<PolicyValueOutput>());
 	std::vector<MCTS*> players(N);
 	for (int i = 0; i < N; ++i) {
 		PolicyValueNet* pv = new PolicyValueNet(model_path + model_list[i], gpu);
-		players[i] = new MCTS(n_playout, pv);
+		players[i] = new MCTS(n_playout, pv, caches[i]);
 	}
 
 	bool load_from_file = false;
@@ -242,17 +250,6 @@ void TrainPipeline::insert_data(TrainData data) {
 	buffer_mutex.unlock();
 }
 
-float TrainPipeline::policy_evaluate(bool is_shown, float temp, int n_games)
-{
-	MCTS* current_player = new MCTS(n_playout, &inference_model);
-	MCTS* past_player = new MCTS(n_playout, &prev_policy);
-
-	std::vector<bool> b = play_match(current_player, past_player, std::cout, is_shown, temp, n_games);
-	delete current_player;
-	delete past_player;
-	return std::count(b.begin(), b.end(), true) / static_cast<float>(n_games << 1);
-}
-
 void TrainPipeline::train(){
 	std::vector<int> indices = select_indices(game_buffer->size(), batchSize); // randomly select samples from buffer
 	std::vector<TrainData*> batch_data(batchSize);
@@ -318,9 +315,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	std::vector<std::thread> self_play_threads;
 	std::vector<MCTS> mcts_players; // MCTS players of size train_thread_num
+	EvalCache<PolicyValueOutput>* eval_cache = new EvalCache<PolicyValueOutput>();
 
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(n_playout, &inference_model);
+		mcts_players.emplace_back(n_playout, &inference_model, eval_cache);
 		self_play_paused[i] = false;
 	}
 

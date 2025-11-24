@@ -63,8 +63,6 @@ public:
 
 	void insert_data(TrainData data);
 
-	float policy_evaluate(bool is_shown = false, float temp = 1.0f, int n_games = 100); 
-
 	void train();
 
 	void run(const int game_batch_num=10000, const int inference_thread_num=4, const bool is_shown=false, float temp=0.5f, const std::string& model_prefix="model");
