@@ -95,8 +95,12 @@ std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model
 	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games) {
 	int N = model_list.size();
 	
+	auto trans_tables = std::vector<std::unordered_map<HashValue, Node*>*>();
+	trans_tables.reserve(N);
+	for(int i=0; i<N; ++i)
+		trans_tables.push_back(new std::unordered_map<HashValue, Node*>());
+
 	std::vector<EvalCache<PolicyValueOutput>*> caches(N, new EvalCache<PolicyValueOutput>());
-	std::vector<std::unordered_map<HashValue, Node*>*> trans_tables(N, new std::unordered_map<HashValue, Node*>);
 	std::vector<MCTS*> players(N);
 	for (int i = 0; i < N; ++i) {
 		PolicyValueNet* pv = new PolicyValueNet(model_path + model_list[i], gpu);
@@ -326,11 +330,15 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	std::vector<std::thread> self_play_threads;
 	std::vector<MCTS> mcts_players; // MCTS players of size train_thread_num
-	EvalCache<PolicyValueOutput>* eval_cache = new EvalCache<PolicyValueOutput>();
-	std::unordered_map<HashValue, Node*>* trans_table = new std::unordered_map<HashValue, Node*>();
+	auto eval_cache = new EvalCache<PolicyValueOutput>();
+
+	auto trans_tables = std::vector<std::unordered_map<HashValue, Node*>*>();
+	trans_tables.reserve(inference_thread_num);
+	for(int i=0; i<inference_thread_num; ++i)
+		trans_tables.push_back(new std::unordered_map<HashValue, Node*>());
 
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(n_playout, &inference_model, eval_cache, trans_table);
+		mcts_players.emplace_back(n_playout, &inference_model, eval_cache, trans_tables[i]);
 		self_play_paused[i] = false;
 	}
 
