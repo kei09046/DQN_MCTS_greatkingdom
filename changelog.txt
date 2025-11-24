@@ -5,7 +5,6 @@ modelc -> modeld :
 2. optimized environment interaction part
 3. eval cache + transposition table implemented
 4. (important) fix cPuct 0.1f -> 2.0f
+-> 10000 game training took 84560 seconds ~ 23.5 hours
 test result :
 eval_cache + dihedral transformation : no big improvement over eval_cache. Cache hit rate difference were minimal(<1%)
-
-

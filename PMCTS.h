@@ -29,13 +29,14 @@ private:
     std::vector<std::pair<int, int> > legal;
     std::pair<int, int> winmove;
     EvalCache<PolicyValueOutput>* const eval_cache;
+    std::unordered_map<HashValue, Node*>* const trans_table;
 
     void expand();
 
     static std::vector<float> softmax(std::vector<float>& logit);
 
 public:
-    Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache);
+    Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
 
     float searchandPropagate(PolicyValueNet& net);
 
@@ -52,9 +53,10 @@ private:
     int playout;
     PolicyValueNet* net;
     EvalCache<PolicyValueOutput>* const eval_cache;
+    std::unordered_map<HashValue, Node*>* const trans_table;
 
 public:
-    MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache);
+    MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
 
     void runSimulation();
 

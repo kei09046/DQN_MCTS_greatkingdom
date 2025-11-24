@@ -30,8 +30,6 @@ void MCTS::resetTimeStats(){
 #endif
 
 const Hash hash;
-thread_local std::unordered_map<HashValue, Node*> trans_table;
-
 
 std::vector<float> Node::softmax(std::vector<float>& logit){
     std::vector<float> exp_logit(logit.size());
@@ -53,8 +51,9 @@ std::vector<float> Node::softmax(std::vector<float>& logit){
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-Node::Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache): game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), eval_cache(eval_cache){
+Node::Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table):
+game(g), turn(g.getTurn()), 
+N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), eval_cache(eval_cache), trans_table(trans_table){
 }
 
 void Node::expand(){
@@ -92,12 +91,12 @@ void Node::expand(){
                     HashValue newHash = hash.computeHashAfterMove(game, {i, j}, hashValue);
                     Node* childNode;
 
-                    if(trans_table.count(newHash) == 0){
-                        childNode = new Node(ng, newHash, eval_cache);
-                        trans_table[newHash] = childNode;
+                    if(trans_table->count(newHash) == 0){
+                        childNode = new Node(ng, newHash, eval_cache, trans_table);
+                        (*trans_table)[newHash] = childNode;
                     }
                     else{
-                        childNode = trans_table[newHash];
+                        childNode = (*trans_table)[newHash];
                     }
                     child.push_back(childNode);
                     legal.push_back({i, j});
@@ -128,12 +127,12 @@ void Node::expand(){
         HashValue newHash = hash.computeHashAfterMove(game, {rowSize, 0}, hashValue);
         Node* childNode;
 
-        if(trans_table.count(newHash) == 0){
-            childNode = new Node(pass, newHash, eval_cache);
-            trans_table[newHash] = childNode;
+        if(trans_table->count(newHash) == 0){
+            childNode = new Node(pass, newHash, eval_cache, trans_table);
+            (*trans_table)[newHash] = childNode;
         }
         else{
-            childNode = trans_table[newHash];
+            childNode = (*trans_table)[newHash];
         }
 
         child.push_back(childNode);
@@ -377,19 +376,20 @@ bool MCTS::jump(std::pair<int, int> move){
 }
 
 void MCTS::reset(){
-    for (auto& [hash, node] : trans_table) {
+    for (auto& [hash, node] : *trans_table) {
         delete node;
     }
-    trans_table.clear();
-    root = new Node(Game(), hash.baseHash(), eval_cache);
-    trans_table[hash.baseHash()] = root;
+    trans_table->clear();
+    root = new Node(Game(), hash.baseHash(), eval_cache, trans_table);
+    (*trans_table)[hash.baseHash()] = root;
 }
 
 void MCTS::updateModel(){
     eval_cache->clear();
 }
 
-MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache) : net(net), playout(playout), eval_cache(eval_cache){
-    root = new Node(Game(), hash.baseHash(), eval_cache);
-    trans_table[hash.baseHash()] = root;
+MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table) : 
+net(net), playout(playout), eval_cache(eval_cache), trans_table(trans_table){
+    root = new Node(Game(), hash.baseHash(), eval_cache, trans_table);
+    (*trans_table)[hash.baseHash()] = root;
 }
