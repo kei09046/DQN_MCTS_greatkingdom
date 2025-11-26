@@ -39,8 +39,8 @@ const Hash hash;
 std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vector<std::pair<int, int>>& available_moves){
     std::vector<float> n_logit;
     n_logit.reserve(available_moves.size());
-    for(auto& move : available_moves){
-        n_logit.push_back(logit[move.first * rowSize + move.second]);
+    for(const auto& move : available_moves){
+        n_logit.push_back(logit[move.first * colSize + move.second]);
     }
 
     std::vector<float> exp_logit(n_logit.size());
@@ -57,7 +57,6 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
     for (float& val : exp_logit) {
         val /= sum_exp;
     }
-
     return exp_logit;
 }
 
@@ -203,6 +202,11 @@ float Node::searchandPropagate(PolicyValueNet& net){
             std::chrono::steady_clock::time_point insert_begin = std::chrono::steady_clock::now();
             #endif
 
+            // std::cerr << "original policyvalue output : " << std::endl;
+            // for(float x : entries[0].first)
+            //     std::cerr << x << " ";
+            // std::cerr << std::endl;
+            
             eval_cache->insert(hashValue, entry);
 
             for(size_t i=0; i<available_moves.size(); ++i){
@@ -230,29 +234,10 @@ float Node::searchandPropagate(PolicyValueNet& net){
         #endif
 
         std::vector<float> p = softmax(logp, available_moves);
+
         for(int i=0; i<available_moves.size(); ++i){
             child[i]->P = p[i];
         }
-
-        // size_t gameBatchSize = std::min(available_moves.size(), 8UL);
-        // std::vector<int> idx(gameBatchSize);
-        // std::iota(idx.begin(), idx.end(), 0);
-
-        // if(available_moves.size() > 8UL){
-        //     std::partial_sort(
-        //         idx.begin(), idx.begin()+gameBatchSize, idx.end(),
-        //         [&](int a, int b){ return child[a]->P > child[b]->P; }
-        //     );
-        // }
-
-        // std::vector<const Game*> gameBatch;
-        // gameBatch.reserve(gameBatchSize);
-        // for(size_t i=0; i<gameBatchSize; ++i)
-        //     gameBatch.push_back(&(child[idx[i]]->game));
-
-        // std::vector<PolicyValueOutput> entries = net.batchEvaluate(gameBatch);
-        // for(size_t i=0; i<gameBatchSize; ++i)
-        //     eval_cache->insert(child[idx[i]]->hashValue, entries[i]);
 
         initQ = q;
         W += q;
@@ -260,7 +245,7 @@ float Node::searchandPropagate(PolicyValueNet& net){
     }
     
 
-    int maxi;
+    int maxi = -1;
     float pref, maxval = -1.0f;
 
     #ifdef measureTime
@@ -270,7 +255,7 @@ float Node::searchandPropagate(PolicyValueNet& net){
         pref = ((child[i]->N == 0) ? 0.0f : child[i]->W / child[i]->N) + cPuct * child[i]->P * sqrt(N)/(1 + child[i]->N);
         
         if(maxval < pref){
-            maxval = pref;
+            maxval = pref; 
             maxi = i;
         }
     }
@@ -279,7 +264,7 @@ float Node::searchandPropagate(PolicyValueNet& net){
     searchTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
     #endif
 
-    float r = child[maxi]->searchandPropagate(net);
+    float r = child[maxi]->searchandPropagate(net); // segfault?
     W += r;
     return -r;
 }

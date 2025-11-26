@@ -195,7 +195,6 @@ std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game& ga
 }
 
 std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
-	//std::cout << "get data " << gameBatch.size() << std::endl;
 	std::vector<float> ret(gameBatch.size() * inputDepth * inputSize, 0.0f);
 
 	const int temp = inputDepth * inputSize;
@@ -218,7 +217,6 @@ std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameB
 		}
 	}
 
-	//std::cout << "Get data finished" << std::endl;
     return ret;
 }
 
@@ -240,11 +238,8 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
     outputs.reserve(B);
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-
-    torch::Tensor batch = torch::from_blob(getData(gameBatch).data(), {B, inputDepth, rowSize, colSize}, options);
-    if(use_gpu){
-        batch = batch.to(policy_value_net->device);
-    }
+	auto batchData = getData(gameBatch);
+    torch::Tensor batch = torch::from_blob(batchData.data(), {B, inputDepth, rowSize, colSize}, options).to(policy_value_net->device);
 
     // ---- Forward pass ----
     torch::Tensor policyBatch, valueBatch;
@@ -263,25 +258,35 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
     float* pP = policyBatch.data_ptr<float>();
     float* pV = valueBatch.data_ptr<float>();
 
-    for(int b=0; b<B; ++b){
-        // policy head
-        std::vector<float> pvfn;
-        pvfn.reserve(outputSize);
-        float* src = pP + b * outputSize;
-        for(int i=0; i<outputSize; ++i){
-            pvfn.push_back(src[i]);
-        }
+    // for(int b=0; b<B; ++b){
+    //     // policy head
+    //     std::vector<float> pvfn;
+    //     pvfn.reserve(outputSize);
+    //     float* src = pP + b * outputSize;
+    //     for(int i=0; i<outputSize; ++i){
+    //         pvfn.push_back(src[i]);
+    //     }
 
-        float v = pV[b];
-        outputs.push_back({pvfn, v});
-    }
+    //     float v = pV[b];
+    //     outputs.push_back({pvfn, v});
+    // }
+
+	for(int b = 0; b < B; ++b) {
+		// policy head: copy whole row
+		float* src = pP + b * outputSize;
+		std::vector<float> pvfn(src, src + outputSize);
+
+		float v = pV[b];
+		outputs.push_back({std::move(pvfn), v});
+	}
 
     return outputs;
 }
 
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	torch::Tensor current_state = torch::from_blob(getData(game).data(), { 1, inputDepth, rowSize, colSize }, options).to(policy_value_net->device);
+	auto data = getData(game);
+	torch::Tensor current_state = torch::from_blob(data.data(), { 1, inputDepth, rowSize, colSize }, options).to(policy_value_net->device);
 	tuple<torch::Tensor, torch::Tensor> res;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
