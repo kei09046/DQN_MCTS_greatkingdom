@@ -14,6 +14,7 @@
 #include <random>
 #include <numeric>
 #include <unordered_map>
+#include <memory>
 
 
 using MoveData = std::tuple<std::pair<int, int>, std::array<float, outputSize> >; // move + move possibility
@@ -28,7 +29,7 @@ private:
     std::vector<Node*> child;
     std::vector<std::pair<int, int> > available_moves; // among game.isLegal() moves, consider actually useful moves.
     std::pair<int, int> winmove;
-    EvalCache<PolicyValueOutput>* const eval_cache;
+    EvalCache* const eval_cache;
     std::unordered_map<HashValue, Node*>* const trans_table;
 
     void expand();
@@ -36,7 +37,7 @@ private:
     static std::vector<float> softmax(const std::vector<float>& logit, const std::vector<std::pair<int, int>>& available_moves);
 
 public:
-    Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
+    Node(const Game& g, const HashValue hashValue, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
 
     float searchandPropagate(PolicyValueNet& net);
 
@@ -52,11 +53,11 @@ private:
     Node* root;
     int playout;
     PolicyValueNet* net;
-    EvalCache<PolicyValueOutput>* const eval_cache;
+    EvalCache* const eval_cache;
     std::unordered_map<HashValue, Node*>* const trans_table;
 
 public:
-    MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
+    MCTS(int playout, PolicyValueNet* net, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
 
     void runSimulation();
 

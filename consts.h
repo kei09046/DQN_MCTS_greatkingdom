@@ -46,8 +46,8 @@ constexpr u_int outputSize = boardSize + 1; // board place + pass
 constexpr float cPuct = 2.0f;
 
 //evalcache constants
-constexpr u_int shardCount = 64;
-constexpr u_int capPerShard = 4096; // shardCount * capPerShard -> maximum cache size
+constexpr u_int tableSize = 1 << 20;
+constexpr u_int mutexPoolSize = 1 << 10; // shardCount * capPerShard -> maximum cache size
 
 //train constants
 constexpr u_int n_playout = 400;

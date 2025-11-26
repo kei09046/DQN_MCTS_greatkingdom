@@ -62,7 +62,7 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-Node::Node(const Game& g, const HashValue hashValue, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table):
+Node::Node(const Game& g, const HashValue hashValue, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
 N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), eval_cache(eval_cache), trans_table(trans_table){
 }
@@ -175,7 +175,7 @@ float Node::searchandPropagate(PolicyValueNet& net){
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         #endif
 
-        PolicyValueOutput entry;
+        std::shared_ptr<PolicyValueOutput> entry;
 
         #ifdef measureTime
             std::chrono::steady_clock::time_point find_begin = std::chrono::steady_clock::now();
@@ -197,13 +197,20 @@ float Node::searchandPropagate(PolicyValueNet& net){
                 gameBatch.push_back(&(c->game));
 
             std::vector<PolicyValueOutput> entries = net.batchEvaluate(gameBatch);
-            entry = entries[0];
+            entry = std::make_shared<PolicyValueOutput>(entries[0]);
+
             #ifdef measureTime
             std::chrono::steady_clock::time_point insert_begin = std::chrono::steady_clock::now();
+            #endif
+
             eval_cache->insert(hashValue, entry);
 
-            for(size_t i=0; i<available_moves.size(); ++i)
-                eval_cache->insert(child[i]->hashValue, entries[i+1]);
+            for(size_t i=0; i<available_moves.size(); ++i){
+                auto ce = std::make_shared<PolicyValueOutput>(entries[i+1]);
+                eval_cache->insert(child[i]->hashValue, ce);
+            }
+            
+            #ifdef measureTime
             std::chrono::steady_clock::time_point insert_end = std::chrono::steady_clock::now();
             evalCacheInsertTime += std::chrono::duration_cast<std::chrono::microseconds>(insert_end - insert_begin).count();
             #endif
@@ -214,8 +221,8 @@ float Node::searchandPropagate(PolicyValueNet& net){
         }
         #endif
 
-        auto logp = entry.first;
-        auto q = entry.second;
+        auto& logp = entry->first;
+        auto q = entry->second;
 
         #ifdef measureTime
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
@@ -421,7 +428,7 @@ void MCTS::updateModel(){
     eval_cache->clear();
 }
 
-MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache<PolicyValueOutput>* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table) : 
+MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table) : 
 net(net), playout(playout), eval_cache(eval_cache), trans_table(trans_table){
     root = new Node(Game(), hash.baseHash(), eval_cache, trans_table);
     (*trans_table)[hash.baseHash()] = root;
