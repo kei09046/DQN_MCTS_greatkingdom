@@ -8,3 +8,5 @@ modelc -> modeld :
 -> 10000 game training took 84560 seconds ~ 23.5 hours
 test result :
 eval_cache + dihedral transformation : no big improvement over eval_cache. Cache hit rate difference were minimal(<1%)
+
+modelf : larger model, several optimizations

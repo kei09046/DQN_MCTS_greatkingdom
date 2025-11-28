@@ -305,10 +305,10 @@ void Game::displayBoardGUI(bool showScore) const{
         std::cout << "\n";
     }
 
-    for(size_t i=0; i<rowSize; ++i){
-        for(size_t j=0; j<colSize; ++j){
-            std::cout << static_cast<int>(scoreBoard[i][j]) << " ";
-        }
-        std::cout << "\n";
-    }
+    // for(size_t i=0; i<rowSize; ++i){
+    //     for(size_t j=0; j<colSize; ++j){
+    //         std::cout << static_cast<int>(scoreBoard[i][j]) << " ";
+    //     }
+    //     std::cout << "\n";
+    // }
 }
