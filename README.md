@@ -1,2 +1,4 @@
-# example-app
-Modified version of greatKingdom repo. Fixed major bugs, add optimization etc. First practically usable code.
+# GreatKingdom
+Game designed by Lee sae dol
+Adopted simple dqn + mcts engine
+Supports full C++ implementation of dqn + mcts
