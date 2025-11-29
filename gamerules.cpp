@@ -256,13 +256,6 @@ color Game::getTurn() const{
     return currentTurn;
 }
 
-void Game::getBoardStatus() const{
-    for(size_t i=0; i<rowSize; ++i)
-        for(size_t j=0; j<colSize; ++j){
-            std::cout << i << " " << j << " " << board[i][j] << " " << scoreBoard[i][j] << " ";
-        }
-}
-
 void Game::displayBoardGUI(bool showScore) const{
     char display[rowSize][colSize];
 

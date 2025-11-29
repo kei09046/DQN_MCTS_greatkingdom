@@ -10,3 +10,5 @@ test result :
 eval_cache + dihedral transformation : no big improvement over eval_cache. Cache hit rate difference were minimal(<1%)
 
 modelf : larger model, several optimizations
+
+modelf -> modelg : provided territory information about the board to NN. (channels : 4 -> 6).

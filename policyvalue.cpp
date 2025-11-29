@@ -178,7 +178,7 @@ std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game& ga
 	color state;
 
     ret.fill(0.0f);
-	for(int i=0; i<inputSize; ++i){
+	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard(i / colSize, i % colSize);
 		if(state == turn)
 			ret[i] = 1.0f;
@@ -188,8 +188,19 @@ std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game& ga
 			ret[2 * inputSize + i] = 1.0f;
 	}
 
-	for(int i = 3*inputSize; i < 4*inputSize; ++i){
-		ret[i] = static_cast<float>(turn);
+	for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
+		ret[i] = (turn == BLACK) ? 0.0f : 1.0f;
+	}
+
+	color terr;
+	for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
+		terr = game.getScoreBoard(i/colSize, i%colSize);
+		if(terr == BLACK){
+			ret[4*inputSize + i] = 1.0f;
+		}
+		else if(terr == WHITE){
+			ret[5*inputSize + i] = 1.0f;
+		}
 	}
     return ret;
 }

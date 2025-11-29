@@ -25,8 +25,8 @@ constexpr color EMPTY = 4U;
 constexpr uint8_t ADJTOBLACK = 8U;
 constexpr uint8_t ADJTOWHITE = 16U;
 
-constexpr uint8_t rowSize = 7;
-constexpr uint8_t colSize = 7;
+constexpr u_int rowSize = 7;
+constexpr u_int colSize = 7;
 constexpr int boardSize = rowSize * colSize;
 constexpr float komi = 2.5f;
 constexpr std::pair<int, int> neutral = {3, 3};
@@ -41,7 +41,7 @@ constexpr u_int inputCol = colSize;
 constexpr u_int outputRow = rowSize;
 constexpr u_int outputCol = colSize;
 constexpr u_int inputSize = inputRow * inputCol;
-constexpr u_int inputDepth = 4;
+constexpr u_int inputDepth = 6;
 constexpr u_int outputSize = boardSize + 1; // board place + pass
 constexpr float cPuct = 2.0f;
 

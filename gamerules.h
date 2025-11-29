@@ -91,12 +91,14 @@ public:
 
     color getTurn() const;
 
-    void getBoardStatus() const;
-
     void displayBoardGUI(bool showScore = true) const;
 
-    inline color getBoard(uint8_t r, uint8_t c) const{
+    inline color getBoard(u_int r, u_int c) const{
         return board[r][c];
+    }
+
+    inline color getScoreBoard(u_int r, u_int c) const{
+        return scoreBoard[r][c];
     }
 
     static inline color reverseColor(color c){
