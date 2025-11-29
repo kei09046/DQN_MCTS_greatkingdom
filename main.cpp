@@ -77,7 +77,7 @@ int main(){
         std::cin >> model_file >> game_num >> num_thread >> is_shown;
         TrainPipeline line(model_file, model_file, true); // use gpu
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        line.run(game_num, num_thread, is_shown, 0.5f, "modelf"); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
+        line.run(game_num, num_thread, is_shown, 0.5f, "modelg"); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
         std::cout << "total time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
     }
