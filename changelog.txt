@@ -12,3 +12,4 @@ eval_cache + dihedral transformation : no big improvement over eval_cache. Cache
 modelf : larger model, several optimizations
 
 modelf -> modelg : provided territory information about the board to NN. (channels : 4 -> 6).
+modelg19000.pt ~ : added dirichlet noise
