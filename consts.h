@@ -34,7 +34,7 @@ constexpr char dr[4] = {-1, 0, 1, 0};
 constexpr char dc[4] = {0, 1, 0, -1};
 // constexpr std::vector<std::pair<int, int>> adjCells;
 
-//policyvalue constants
+//neuralNet constants
 constexpr u_int batchSize = 512;
 constexpr u_int inputRow = rowSize;
 constexpr u_int inputCol = colSize;

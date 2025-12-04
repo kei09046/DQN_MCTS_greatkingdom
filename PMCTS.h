@@ -2,7 +2,7 @@
 #define PMCTS_H
 
 #include "gamerules.h"
-#include "policyvalue.h"
+#include "neuralNet.h"
 #include "random.h"
 #include "memorypool.h"
 #include "hash.h"

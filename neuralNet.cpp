@@ -1,4 +1,4 @@
-#include "policyvalue.h"
+#include "neuralNet.h"
 #include <cmath>
 #include <iostream>
 using namespace std;
@@ -279,19 +279,6 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
     // ---- Extract each result ----
     float* pP = policyBatch.data_ptr<float>();
     float* pV = valueBatch.data_ptr<float>();
-
-    // for(int b=0; b<B; ++b){
-    //     // policy head
-    //     std::vector<float> pvfn;
-    //     pvfn.reserve(outputSize);
-    //     float* src = pP + b * outputSize;
-    //     for(int i=0; i<outputSize; ++i){
-    //         pvfn.push_back(src[i]);
-    //     }
-
-    //     float v = pV[b];
-    //     outputs.push_back({pvfn, v});
-    // }
 
 	for(int b = 0; b < B; ++b) {
 		// policy head: copy whole row

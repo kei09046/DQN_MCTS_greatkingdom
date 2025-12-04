@@ -3,7 +3,7 @@
 
 #include "PMCTS.h"
 #include "memory.h"
-#include "policyvalue.h"
+#include "neuralNet.h"
 #include "random.h"
 #include "rotation.h"
 #include "elo.h"

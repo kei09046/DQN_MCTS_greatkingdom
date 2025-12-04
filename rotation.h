@@ -4,7 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <array>
-#include "policyvalue.h"
+#include "neuralNet.h"
 
 using inputMatrix = std::array<float, inputSize * inputDepth>;
 using outputMatrix = std::array<float, outputSize>;

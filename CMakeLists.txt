@@ -45,7 +45,7 @@ add_executable(train
     memorypool.cpp
     dirichlet.cpp 
     PMCTS.cpp 
-    policyvalue.cpp 
+    neuralNet.cpp 
     random.cpp 
     rotation.cpp
     elo.cpp 
