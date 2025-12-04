@@ -5,42 +5,42 @@
 #include "gamerules.h"
 #include "consts.h"
 
-class NetImpl : public torch::nn::Module{
+
+struct ResidualBlockImpl : torch::nn::Module {
+    torch::nn::Conv2d conv1{nullptr}, conv2{nullptr};
+    torch::nn::BatchNorm2d bn1{nullptr}, bn2{nullptr};
+
+    ResidualBlockImpl(size_t channels) {
+        conv1 = torch::nn::Conv2d(torch::nn::Conv2dOptions(channels, channels, 3).padding(1).bias(false));
+        bn1 = torch::nn::BatchNorm2d(channels);
+        conv2 = torch::nn::Conv2d(torch::nn::Conv2dOptions(channels, channels, 3).padding(1).bias(false));
+        bn2 = torch::nn::BatchNorm2d(channels);
+    }
+
+    torch::Tensor forward(torch::Tensor x) {
+        auto out = torch::relu(bn1(conv1(x)));
+        out = bn2(conv2(out));
+        return torch::relu(out + x);
+    }
+};
+TORCH_MODULE(ResidualBlock);
+
+
+class NetBase : public torch::nn::Module {
 public:
-	NetImpl(bool use_gpu);
-	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state);
+    virtual std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
+    virtual ~NetBase() = default;
+};
+
+
+class GNet : public NetBase{
+public:
+	GNet();
+	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
-	torch::nn::Conv2d rb1_conv1;
-	torch::nn::BatchNorm2d rb1_bn1;
-	torch::nn::Conv2d rb1_conv2;
-	torch::nn::BatchNorm2d rb1_bn2;
-
-	torch::nn::Conv2d rb2_conv1;
-	torch::nn::BatchNorm2d rb2_bn1;
-	torch::nn::Conv2d rb2_conv2;
-	torch::nn::BatchNorm2d rb2_bn2;
-
-	torch::nn::Conv2d rb3_conv1;
-	torch::nn::BatchNorm2d rb3_bn1;
-	torch::nn::Conv2d rb3_conv2;
-	torch::nn::BatchNorm2d rb3_bn2;
-
-	torch::nn::Conv2d rb4_conv1;
-	torch::nn::BatchNorm2d rb4_bn1;
-	torch::nn::Conv2d rb4_conv2;
-	torch::nn::BatchNorm2d rb4_bn2;
-
-	torch::nn::Conv2d rb5_conv1;
-	torch::nn::BatchNorm2d rb5_bn1;
-	torch::nn::Conv2d rb5_conv2;
-	torch::nn::BatchNorm2d rb5_bn2;
-
-	torch::nn::Conv2d rb6_conv1;
-	torch::nn::BatchNorm2d rb6_bn1;
-	torch::nn::Conv2d rb6_conv2;
-	torch::nn::BatchNorm2d rb6_bn2;
+	std::vector<ResidualBlock> blocks;
 	
 	torch::nn::Conv2d at_cv3;
 	torch::nn::BatchNorm2d at_bn3;
@@ -49,19 +49,20 @@ public:
 	torch::nn::BatchNorm2d v_bn3;
 	torch::nn::Linear v_fc1;
 	torch::nn::Linear v_fc2;
-
-	torch::Device device;
 };
-TORCH_MODULE(Net);
 
 class PolicyValueNet {
 private:
 	bool use_gpu;
+	torch::Device device;
 	float l2_const = 0.0001f;
-	torch::optim::Adam* optimizer;
+	std::unique_ptr<torch::optim::Adam> optimizer;
+	const std::string model_type;
 
 public:
-	Net policy_value_net;
+	std::shared_ptr<NetBase> policy_value_net;
+
+	PolicyValueNet(const std::string& model_file, const std::string& model_type, bool use_gpu);
 
 	PolicyValueNet(const std::string& model_file, bool use_gpu);
 
@@ -73,14 +74,10 @@ public:
 
 	PolicyValueOutput evaluate(const Game& game);
 
-	//PolicyValueOutput evaluate(const Game& game, const std::vector<std::pair<int, int> > legal);
-
 	void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
 		std::array<float, batchSize>& winner_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
-
-	void load_model(const std::string& model_file);
 };
 
 #endif

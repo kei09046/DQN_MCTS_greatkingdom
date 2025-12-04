@@ -5,130 +5,30 @@ using namespace std;
 
 
 // net : action probability 의 log와 value (-1, 1)을 추정한다.
-NetImpl::NetImpl(bool use_gpu = false): cv1(torch::nn::Conv2dOptions(inputChannel, 128, 3).padding(1).bias(false)),
+GNet::GNet(): cv1(torch::nn::Conv2dOptions(inputChannel, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
-// Residual block 1
-rb1_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb1_bn1(torch::nn::BatchNorm2d(128)),
-rb1_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb1_bn2(torch::nn::BatchNorm2d(128)),
-
-// Residual block 2
-rb2_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb2_bn1(torch::nn::BatchNorm2d(128)),
-rb2_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb2_bn2(torch::nn::BatchNorm2d(128)),
-
-// Residual block 3
-rb3_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb3_bn1(torch::nn::BatchNorm2d(128)),
-rb3_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb3_bn2(torch::nn::BatchNorm2d(128)),
-
-// Residual block 4
-rb4_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb4_bn1(torch::nn::BatchNorm2d(128)),
-rb4_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb4_bn2(torch::nn::BatchNorm2d(128)),
-
-// Residual block 5
-rb5_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb5_bn1(torch::nn::BatchNorm2d(128)),
-rb5_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb5_bn2(torch::nn::BatchNorm2d(128)),
-
-// Residual block 6
-rb6_conv1(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb6_bn1(torch::nn::BatchNorm2d(128)),
-rb6_conv2(torch::nn::Conv2dOptions(128, 128, 3).padding(1).bias(false)),
-rb6_bn2(torch::nn::BatchNorm2d(128)),
-
-// Policy head (unchanged)
+// Policy head
 at_cv3(torch::nn::Conv2dOptions(128, 2, 1).bias(false)),
 at_bn3(torch::nn::BatchNorm2d(2)),
 at_fc1(2 * inputSize, outputSize),
 
-// Value head (unchanged)
+// Value head
 v_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
 v_bn3(torch::nn::BatchNorm2d(1)),
 v_fc1(inputSize, 256),
-v_fc2(256, 1),
-device(use_gpu ? torch::kCUDA : torch::kCPU){
-
-	cv1->to(device);
-	bn1->to(device);
-
-	rb1_conv1->to(device);
-	rb1_bn1->to(device);
-	rb1_conv2->to(device);
-	rb1_bn2->to(device);
-
-	rb2_conv1->to(device);
-	rb2_bn1->to(device);
-	rb2_conv2->to(device);
-	rb2_bn2->to(device);
-
-	rb3_conv1->to(device);
-	rb3_bn1->to(device);
-	rb3_conv2->to(device);
-	rb3_bn2->to(device);
-
-	rb4_conv1->to(device);
-	rb4_bn1->to(device);
-	rb4_conv2->to(device);
-	rb4_bn2->to(device);
-
-	rb5_conv1->to(device);
-	rb5_bn1->to(device);
-	rb5_conv2->to(device);
-	rb5_bn2->to(device);
-
-	rb6_conv1->to(device);
-	rb6_bn1->to(device);
-	rb6_conv2->to(device);
-	rb6_bn2->to(device);
-
-	at_cv3->to(device);
-	at_bn3->to(device);
-	at_fc1->to(device);
-	v_cv3->to(device);
-	v_bn3->to(device);
-	v_fc1->to(device);
-	v_fc2->to(device);
+v_fc2(256, 1){
+	for (int i = 1; i < 7; i++) {
+        auto rb = ResidualBlock(128);
+		register_module("rb" + std::to_string(i) + "_conv1", rb->conv1);
+		register_module("rb" + std::to_string(i) + "_bn1",   rb->bn1);
+		register_module("rb" + std::to_string(i) + "_conv2", rb->conv2);
+		register_module("rb" + std::to_string(i) + "_bn2",   rb->bn2);
+		blocks.push_back(rb);
+    }
 	
 	register_module("cv1", cv1);
 	register_module("bn1", bn1);
-
-	register_module("rb1_conv1", rb1_conv1);
-	register_module("rb1_bn1", rb1_bn1);
-	register_module("rb1_conv2", rb1_conv2);
-	register_module("rb1_bn2", rb1_bn2);
-	
-	register_module("rb2_conv1", rb2_conv1);
-	register_module("rb2_bn1", rb2_bn1);
-	register_module("rb2_conv2", rb2_conv2);
-	register_module("rb2_bn2", rb2_bn2);
-	
-	register_module("rb3_conv1", rb3_conv1);
-	register_module("rb3_bn1", rb3_bn1);
-	register_module("rb3_conv2", rb3_conv2);
-	register_module("rb3_bn2", rb3_bn2);
-	
-	register_module("rb4_conv1", rb4_conv1);
-	register_module("rb4_bn1", rb4_bn1);
-	register_module("rb4_conv2", rb4_conv2);
-	register_module("rb4_bn2", rb4_bn2);
-
-	register_module("rb5_conv1", rb5_conv1);
-	register_module("rb5_bn1", rb5_bn1);
-	register_module("rb5_conv2", rb5_conv2);
-	register_module("rb5_bn2", rb5_bn2);
-
-	register_module("rb6_conv1", rb6_conv1);
-	register_module("rb6_bn1", rb6_bn1);
-	register_module("rb6_conv2", rb6_conv2);
-	register_module("rb6_bn2", rb6_bn2);
 
 	register_module("at_cv3", at_cv3);
 	register_module("at_bn3", at_bn3);
@@ -139,27 +39,12 @@ device(use_gpu ? torch::kCUDA : torch::kCPU){
 	register_module("v_fc2", v_fc2);
 }
 
-std::tuple<torch::Tensor, torch::Tensor> NetImpl::forward(const torch::Tensor& state)
+std::tuple<torch::Tensor, torch::Tensor> GNet::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
-	x = torch::nn::functional::relu(rb1_bn1(rb1_conv1(x)));
-	x = torch::nn::functional::relu(rb1_bn2(rb1_conv2(x)));
-
-	x = torch::nn::functional::relu(rb2_bn1(rb2_conv1(x)));
-	x = torch::nn::functional::relu(rb2_bn2(rb2_conv2(x)));
-
-	x = torch::nn::functional::relu(rb3_bn1(rb3_conv1(x)));
-	x = torch::nn::functional::relu(rb3_bn2(rb3_conv2(x)));
-
-	x = torch::nn::functional::relu(rb4_bn1(rb4_conv1(x)));
-	x = torch::nn::functional::relu(rb4_bn2(rb4_conv2(x)));
-
-	x = torch::nn::functional::relu(rb5_bn1(rb5_conv1(x)));
-	x = torch::nn::functional::relu(rb5_bn2(rb5_conv2(x)));
-
-	x = torch::nn::functional::relu(rb6_bn1(rb6_conv1(x)));
-	x = torch::nn::functional::relu(rb6_bn2(rb6_conv2(x)));
-
+	for (auto& rb : blocks) {
+		x = rb->forward(x);
+	}
 	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
 	log_act = log_act.view({ -1, 2 * inputSize });
 	log_act = at_fc1(log_act);
@@ -242,16 +127,32 @@ std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameB
     return ret;
 }
 
-PolicyValueNet::PolicyValueNet(const string& model_file, bool use_gpu): use_gpu(use_gpu), policy_value_net(use_gpu)
+PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_type, bool use_gpu):
+ use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type)
 {
 	if (model_file.ends_with(".pt")) {
-		torch::load(policy_value_net, model_file);
-		cout << "model_loaded" << endl;
+		std::shared_ptr<GNet> net;
+
+		if(model_type == "g")
+			net = std::make_shared<GNet>();
+		else{
+			throw std::runtime_error("Unknown model type: " + model_type);
+		}
+		torch::load(net, model_file);   
+		policy_value_net = std::move(net);
+	}   
+	else{
+		policy_value_net = std::make_shared<GNet>();
 	}
 
-	optimizer = new torch::optim::Adam(policy_value_net->parameters(), l2_const);
-	return;
+	policy_value_net->to(device);
+	torch::optim::AdamOptions opts(l2_const);
+	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), opts);
+	std::cout << "Model loaded: " << model_file << std::endl;
 }
+
+PolicyValueNet::PolicyValueNet(const string& model_file, bool use_gpu): PolicyValueNet(model_file, string(1, model_file[5]), use_gpu)
+{} // model file name like "modelg10000.pt"
 
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
@@ -261,7 +162,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto batchData = getData(gameBatch);
-    torch::Tensor batch = torch::from_blob(batchData.data(), {B, inputChannel, rowSize, colSize}, options).to(policy_value_net->device);
+    torch::Tensor batch = torch::from_blob(batchData.data(), {B, inputChannel, rowSize, colSize}, options).to(device);
 
     // ---- Forward pass ----
     torch::Tensor policyBatch, valueBatch;
@@ -288,14 +189,13 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		float v = pV[b];
 		outputs.push_back({std::move(pvfn), v});
 	}
-
     return outputs;
 }
 
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto data = getData(game);
-	torch::Tensor current_state = torch::from_blob(data.data(), { 1, inputChannel, rowSize, colSize }, options).to(policy_value_net->device);
+	torch::Tensor current_state = torch::from_blob(data.data(), { 1, inputChannel, rowSize, colSize }, options).to(device);
 	tuple<torch::Tensor, torch::Tensor> res;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
@@ -315,41 +215,13 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	return { pvfn, get<1>(res).index({0, 0}).item<float>() };
 }
 
-// PolicyValueOutput PolicyValueNet::evaluate(const Game& game, const std::vector<std::pair<int, int> > legal)
-// {
-// 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-// 	torch::Tensor current_state = torch::from_blob(getData(game).data(), { 1, inputChannel, rowSize, colSize }, options).to(policy_value_net->device);
-// 	tuple<torch::Tensor, torch::Tensor> res;
-// 	if (use_gpu) {
-// 		auto r = policy_value_net->forward(current_state);
-// 		get<0>(res) = get<0>(r).to(torch::kCPU);
-// 		get<1>(res) = get<1>(r).to(torch::kCPU);
-// 	}
-// 	else {
-// 		res = policy_value_net->forward(current_state);
-// 	}
-
-// 	std::vector<float> pvfn;
-// 	float* pt = get<0>(res).data_ptr<float>();
-// 	for (auto [r, c] : legal) {
-// 		pvfn.push_back(pt[r * colSize + c]);
-// 	}
-
-// 	return { pvfn, get<1>(res).index({0, 0}).item<float>() };
-// }
-
 void PolicyValueNet::train_step(array<float, batchSize * inputChannel * inputSize>& state_batch, 
     array<float, batchSize * outputSize>& nextmove_batch, array<float, batchSize>& winner_batch, float lr) {
-	// std::cout << "winner batch : " << winner_batch[0] << " " << winner_batch[1] << std::endl;
-	// std::cout << "move batch" << std::endl;
-	// for(int i=0; i<outputSize; ++i)
-	// 	std::cout << nextmove_batch[i] << " ";
-	// std::cout << std::endl;
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-    torch::Tensor sb = torch::from_blob(state_batch.data(), { batchSize, inputChannel, inputRow, inputCol }, options).to(policy_value_net->device);
-    torch::Tensor mp = torch::from_blob(nextmove_batch.data(), { batchSize, outputSize }, options).to(policy_value_net->device);
-    torch::Tensor wb = torch::from_blob(winner_batch.data(), { batchSize }, options).to(policy_value_net->device);
+    torch::Tensor sb = torch::from_blob(state_batch.data(), { batchSize, inputChannel, inputRow, inputCol }, options).to(device);
+    torch::Tensor mp = torch::from_blob(nextmove_batch.data(), { batchSize, outputSize }, options).to(device);
+    torch::Tensor wb = torch::from_blob(winner_batch.data(), { batchSize }, options).to(device);
 
     optimizer->zero_grad();
     static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
@@ -371,9 +243,14 @@ void PolicyValueNet::train_step(array<float, batchSize * inputChannel * inputSiz
 
 void PolicyValueNet::save_model(const string& model_file) const
 {
-	torch::save(policy_value_net, model_file);
-}
-
-void PolicyValueNet::load_model(const string& model_file){
-	torch::load(policy_value_net, model_file);
+	if(model_type == "g"){
+		auto net = std::dynamic_pointer_cast<GNet>(policy_value_net);
+		if(!net){
+			throw std::runtime_error("Model type mismatch when saving: " + model_file);
+		}
+		torch::save(net, model_file);
+	}
+	else{
+		throw std::runtime_error("Unknown model type when saving: " + model_type);
+	}
 }
