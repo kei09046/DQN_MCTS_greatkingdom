@@ -5,7 +5,7 @@ using namespace std;
 
 
 // net : action probability 의 log와 value (-1, 1)을 추정한다.
-NetImpl::NetImpl(bool use_gpu = false): cv1(torch::nn::Conv2dOptions(inputDepth, 128, 3).padding(1).bias(false)),
+NetImpl::NetImpl(bool use_gpu = false): cv1(torch::nn::Conv2dOptions(inputChannel, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
 // Residual block 1
@@ -172,12 +172,12 @@ std::tuple<torch::Tensor, torch::Tensor> NetImpl::forward(const torch::Tensor& s
 	return make_tuple(log_act, val);
 }
 
-std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game& game){
-    std::array<float, inputDepth * inputSize> ret;
+InputMatrix PolicyValueNet::getData(const Game& game){
+    InputMatrix ret;
 	color turn = game.getTurn();
 	color state;
 
-    ret.fill(0.0f);
+	ret.fill(0.0f);
 	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard(i / colSize, i % colSize);
 		if(state == turn)
@@ -206,9 +206,9 @@ std::array<float, inputDepth * inputSize> PolicyValueNet::getData(const Game& ga
 }
 
 std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
-	std::vector<float> ret(gameBatch.size() * inputDepth * inputSize, 0.0f);
+	std::vector<float> ret(gameBatch.size() * inputChannel * inputSize, 0.0f);
 
-	const int temp = inputDepth * inputSize;
+	const int temp = inputChannel * inputSize;
 	for(int num = 0; num < gameBatch.size(); ++num){
 		color turn = gameBatch[num]->getTurn();
 		color state;
@@ -261,7 +261,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto batchData = getData(gameBatch);
-    torch::Tensor batch = torch::from_blob(batchData.data(), {B, inputDepth, rowSize, colSize}, options).to(policy_value_net->device);
+    torch::Tensor batch = torch::from_blob(batchData.data(), {B, inputChannel, rowSize, colSize}, options).to(policy_value_net->device);
 
     // ---- Forward pass ----
     torch::Tensor policyBatch, valueBatch;
@@ -295,7 +295,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto data = getData(game);
-	torch::Tensor current_state = torch::from_blob(data.data(), { 1, inputDepth, rowSize, colSize }, options).to(policy_value_net->device);
+	torch::Tensor current_state = torch::from_blob(data.data(), { 1, inputChannel, rowSize, colSize }, options).to(policy_value_net->device);
 	tuple<torch::Tensor, torch::Tensor> res;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
@@ -318,7 +318,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // PolicyValueOutput PolicyValueNet::evaluate(const Game& game, const std::vector<std::pair<int, int> > legal)
 // {
 // 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-// 	torch::Tensor current_state = torch::from_blob(getData(game).data(), { 1, inputDepth, rowSize, colSize }, options).to(policy_value_net->device);
+// 	torch::Tensor current_state = torch::from_blob(getData(game).data(), { 1, inputChannel, rowSize, colSize }, options).to(policy_value_net->device);
 // 	tuple<torch::Tensor, torch::Tensor> res;
 // 	if (use_gpu) {
 // 		auto r = policy_value_net->forward(current_state);
@@ -338,7 +338,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // 	return { pvfn, get<1>(res).index({0, 0}).item<float>() };
 // }
 
-void PolicyValueNet::train_step(array<float, batchSize * inputDepth * inputSize>& state_batch, 
+void PolicyValueNet::train_step(array<float, batchSize * inputChannel * inputSize>& state_batch, 
     array<float, batchSize * outputSize>& nextmove_batch, array<float, batchSize>& winner_batch, float lr) {
 	// std::cout << "winner batch : " << winner_batch[0] << " " << winner_batch[1] << std::endl;
 	// std::cout << "move batch" << std::endl;
@@ -347,7 +347,7 @@ void PolicyValueNet::train_step(array<float, batchSize * inputDepth * inputSize>
 	// std::cout << std::endl;
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-    torch::Tensor sb = torch::from_blob(state_batch.data(), { batchSize, inputDepth, inputRow, inputCol }, options).to(policy_value_net->device);
+    torch::Tensor sb = torch::from_blob(state_batch.data(), { batchSize, inputChannel, inputRow, inputCol }, options).to(policy_value_net->device);
     torch::Tensor mp = torch::from_blob(nextmove_batch.data(), { batchSize, outputSize }, options).to(policy_value_net->device);
     torch::Tensor wb = torch::from_blob(winner_batch.data(), { batchSize }, options).to(policy_value_net->device);
 

@@ -144,7 +144,7 @@ std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(model_path + init_model, gpu), inference_model(model_path + init_model, gpu),
 	prev_policy(model_path + test_model, gpu){
-	state_batch = new std::array<float, inputDepth * batchSize * inputSize>();
+	state_batch = new std::array<float, inputChannel * batchSize * inputSize>();
 	nextmove_batch = new std::array<float, batchSize* (outputSize)>();
 	winner_batch = new std::array<float, batchSize>();
 	game_buffer = new std::deque<TrainData*>();
@@ -161,7 +161,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	Game game_manager = Game();
 	int moveCnt = 0;
 	MoveData moveProb;
-	std::array<float, inputDepth * inputSize> state;
+	InputMatrix state;
 	color result;
 
 	std::vector<std::pair<float, float>> sequence;
@@ -172,7 +172,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	#endif
 
 	while (true) {
-		// 처음 네 수 dirichlet factor 0.5. 
 		state = PolicyValueNet::getData(game_manager);
 
 		if(moveCnt < 4)
@@ -286,8 +285,8 @@ void TrainPipeline::train(){
 	// copy data from game_buffer to batch
 	for(int i=0; i < batchSize; ++i){ // copies data to batch
 		TrainData* data = (*game_buffer)[indices[i]];
-		for(int j=0; j < inputDepth * inputSize; ++j){ 
-			(*state_batch)[i * inputDepth * inputSize + j] = std::get<0>(*data)[j];
+		for(int j=0; j < inputChannel * inputSize; ++j){ 
+			(*state_batch)[i * inputChannel * inputSize + j] = std::get<0>(*data)[j];
 		}
 
 		for(int j=0; j < outputSize; ++j){
@@ -297,7 +296,7 @@ void TrainPipeline::train(){
 		(*winner_batch)[i] = std::get<2>(*data);
 	}
 	// std::cout << "state batch : " << std::endl;
-	// for(int i=0; i<inputDepth * inputSize; ++i)
+	// for(int i=0; i<inputChannel * inputSize; ++i)
 	// 	std::cout << (*state_batch)[i] << " ";
 	// std::cout << "\n nextmove batch : ";
 

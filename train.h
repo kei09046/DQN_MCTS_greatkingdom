@@ -40,15 +40,15 @@ private:
 
 public:
     std::deque<TrainData*>* game_buffer;
-	std::array<float, inputDepth * batchSize * inputSize>* state_batch;
+	std::array<float, inputChannel * batchSize * inputSize>* state_batch;
 	std::array<float, batchSize * outputSize>* nextmove_batch;
 	std::array<float, batchSize>* winner_batch;
 
 
-	static float start_play(std::array<MCTS*, 2> player_list, // 서로 다른 모델들끼리 경기(학습확인용)
+	static float start_play(std::array<MCTS*, 2> player_list, // two models play against each other
 		std::ostream& part_res, bool is_shown = false, float temp = 0.1f);
 
-	static void play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // 사람과 경기
+	static void play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // play against human
 
 	static float policy_evaluate(const std::string& mod_one, const std::string& mod_two, 
 		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100);
@@ -59,7 +59,7 @@ public:
 
 	TrainPipeline(std::string init_model, std::string test_model, bool gpu = false);
 
-	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // 학습 중 경기(학습용)
+	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // used during training
 
 	void insert_data(TrainData data);
 

@@ -65,7 +65,7 @@ public:
 
 	PolicyValueNet(const std::string& model_file, bool use_gpu);
 
-	static std::array<float, inputDepth * inputSize> getData(const Game& game);
+	static InputMatrix getData(const Game& game);
 
 	static std::vector<float> getData(const std::vector<const Game*>& gameBatch);
 
@@ -75,7 +75,7 @@ public:
 
 	//PolicyValueOutput evaluate(const Game& game, const std::vector<std::pair<int, int> > legal);
 
-	void train_step(std::array<float, inputDepth * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
+	void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
 		std::array<float, batchSize>& winner_batch, float lr);
 
 	void save_model(const std::string& model_file) const;

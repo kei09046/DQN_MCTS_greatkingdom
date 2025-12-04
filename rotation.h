@@ -6,23 +6,18 @@
 #include <array>
 #include "neuralNet.h"
 
-using inputMatrix = std::array<float, inputSize * inputDepth>;
-using outputMatrix = std::array<float, outputSize>;
-using delete_flag = char; // decides whether data gets deleted during buffer replacement or training
-using TrainData = std::tuple<inputMatrix, outputMatrix, float, delete_flag>;
+InputMatrix rotate90(const InputMatrix mat);
 
-inputMatrix rotate90(const inputMatrix mat);
+InputMatrix reflectHorizontal(const InputMatrix mat);
 
-inputMatrix reflectHorizontal(const inputMatrix mat);
-
-std::vector<inputMatrix> generateDihedralTransformations(const inputMatrix mat);
+std::vector<InputMatrix> generateDihedralTransformations(const InputMatrix mat);
 
 
-outputMatrix rotate90(const outputMatrix mat);
+OutputMatrix rotate90(const OutputMatrix mat);
 
-outputMatrix reflectHorizontal(const outputMatrix mat);
+OutputMatrix reflectHorizontal(const OutputMatrix mat);
 
-std::vector<outputMatrix> generateDihedralTransformations(const outputMatrix mat);
+std::vector<OutputMatrix> generateDihedralTransformations(const OutputMatrix mat);
 
 std::vector<TrainData*> generateDihedralTransformations(const TrainData& data);
 
