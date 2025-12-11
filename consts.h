@@ -7,6 +7,14 @@
 #include <vector>
 #include <array>
 
+// Uncomment to enable features
+// measure time taken by various MCTS components(used for debugging)
+#define measureTime
+// use transposition table(used in self-play)
+#define transTable
+// add dirichlet noise to the prior probabilities(used in self-play)
+#define dirichletNoise
+
 using u_int = unsigned int;
 
 // for hash
