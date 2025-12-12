@@ -58,12 +58,13 @@ class alignas(64) MCTS{
 private:
     Node* root;
     int playout;
-    Evaluator* evaluator; // shared along multiple MCTS instances Do not delete here.
-    std::unordered_map<HashValue, Node*>* const trans_table;
+    Evaluator* evaluator; // shared along multiple MCTS instances
+    std::unordered_map<HashValue, Node*>* trans_table;
 
 public:
-    MCTS(int playout, Evaluator* evaluator, std::unordered_map<HashValue, Node*>* const trans_table);
+    MCTS(int playout, Evaluator* evaluator);
     ~MCTS();
+    MCTS(MCTS&& other) noexcept;
 
     void runSimulation();
 

@@ -61,7 +61,10 @@ void Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { /
     }
 
     // enqueue request
-    q.push({&buf, game});
+    {
+        std::lock_guard<std::mutex> lk(qmutex);
+        q.push({&buf, game});
+    }
     qcv.notify_one();
 
     // wait for result

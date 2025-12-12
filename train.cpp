@@ -37,9 +37,8 @@ float TrainPipeline::start_play(std::array<MCTS*, 2> player_list, std::ostream& 
 void TrainPipeline::play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(model_path + model, gpu);
-	auto trans_table = new std::unordered_map<HashValue, Node*>();
+	MCTS player = MCTS(playout, evaluator);
 
-	MCTS player = MCTS(playout, evaluator, trans_table);
 	std::pair<int, int> cord;
 	color res;
 
@@ -71,10 +70,8 @@ float TrainPipeline::policy_evaluate(const std::string& mod_one, const std::stri
 	bool gpu, float temp, int n_games) {
 	auto eo = new Evaluator(model_path + mod_one, gpu);
 	auto et = new Evaluator(model_path + mod_two, gpu);
-	auto trans_table_o = new std::unordered_map<HashValue, Node*>();
-	auto trans_table_t = new std::unordered_map<HashValue, Node*>();
-	MCTS* base_player = new MCTS(n_playout, eo, trans_table_o);
-	MCTS* oppo_player = new MCTS(n_playout, et, trans_table_t);
+	MCTS* base_player = new MCTS(n_playout, eo);
+	MCTS* oppo_player = new MCTS(n_playout, et);
 
 	std::vector<bool> b = play_match(base_player, oppo_player, total_res, is_shown, temp, n_games);
 
@@ -92,9 +89,8 @@ std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model
 	std::vector<Evaluator*> evaluators(N);
 
 	for (int i = 0; i < N; ++i) {
-		auto trans_table = new std::unordered_map<HashValue, Node*>();
 		evaluators[i] = new Evaluator(model_path + model_list[i], gpu);
-		players[i] = new MCTS(n_playout, evaluators[i], trans_table);
+		players[i] = new MCTS(n_playout, evaluators[i]);
 	}
 
 	bool load_from_file = false;
@@ -320,10 +316,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	std::vector<std::thread> self_play_threads;
 	std::vector<MCTS> mcts_players; // MCTS players of size train_thread_num
-	auto evaluator = new Evaluator(&inference_model);
+	mcts_players.reserve(inference_thread_num);
 
+	auto evaluator = new Evaluator(&inference_model);
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(n_playout, evaluator, new std::unordered_map<HashValue, Node*>());
+		mcts_players.emplace_back(n_playout, evaluator);
 		self_play_paused[i] = false;
 	}
 
@@ -394,6 +391,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 	stop_flag = true;
     train_cv.notify_one();
     train_thread.join();
+	delete evaluator;
 }
 
 std::vector<bool> TrainPipeline::play_match(MCTS* player_one, MCTS* player_two,

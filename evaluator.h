@@ -13,7 +13,7 @@
 struct NNResultBuf{
     std::condition_variable resultcv;
     std::mutex resultmutex;
-    std::shared_ptr<PolicyValueOutput> result;
+    std::shared_ptr<PolicyValueOutput> result = nullptr;
 };
 
 struct evalRequest {

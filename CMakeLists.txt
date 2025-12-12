@@ -25,6 +25,7 @@ add_executable(train
     gamerules.cpp 
     hash.cpp
     evalcache.cpp
+    evaluator.cpp
     memorypool.cpp
     dirichlet.cpp 
     PMCTS.cpp 

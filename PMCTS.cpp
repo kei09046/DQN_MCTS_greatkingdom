@@ -103,6 +103,7 @@ void Node::expand(){
 
                     #ifdef transTable
                     if(trans_table->count(newHash) == 0){
+                        //std::cerr << newHash << "\n";
                         childNode = new Node(ng, newHash, trans_table);
                         (*trans_table)[newHash] = childNode;
                     }
@@ -367,12 +368,21 @@ void Node::deleteTree(Node* exception){
 #endif
 
 
-MCTS::MCTS(int playout, Evaluator* evaluator, std::unordered_map<HashValue, Node*>* const trans_table) : 
-playout(playout), evaluator(evaluator), trans_table(trans_table){
+MCTS::MCTS(int playout, Evaluator* evaluator) : 
+playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
     root = new Node(Game(), hash.baseHash(), trans_table);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
     #endif
+}
+
+MCTS::MCTS(MCTS&& other) noexcept
+    : root(other.root), playout(other.playout),
+      evaluator(other.evaluator), trans_table(other.trans_table)
+{
+    other.root = nullptr;
+    other.evaluator = nullptr;
+    other.trans_table = nullptr;
 }
 
 MCTS::~MCTS(){
