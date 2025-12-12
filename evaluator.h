@@ -30,7 +30,6 @@ private:
     std::condition_variable qcv;
     std::queue<evalRequest> q;
     bool stop;
-    int cacheHits;
 
     void createHandlerThreads();
     void HandlerWork(); // should collect evaluate requests and create vector of game, then call net->batchEvaluate
@@ -40,7 +39,7 @@ public:
     Evaluator(const std::string& model_file, const std::string& model_type, bool use_gpu);
     Evaluator(const std::string& model_file, bool use_gpu);
     ~Evaluator();
-    void evaluate(NNResultBuf& buf, const Game* game, HashValue hash);
+    bool evaluate(NNResultBuf& buf, const Game* game, HashValue hash); // return true if cache hit
     void updateModel(PolicyValueNet* updatedNet);
 };
 #endif

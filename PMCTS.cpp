@@ -186,7 +186,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
         #endif
 
         NNResultBuf buf;
-        evaluator->evaluate(buf, &game, hashValue);
+        bool cacheHit = evaluator->evaluate(buf, &game, hashValue);
         auto entry = buf.result;
         auto& logp = entry->first;
         auto q = entry->second;
@@ -194,6 +194,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
         #ifdef measureTime
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
         evaluateTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+        evalCacheHit += cacheHit ? 1 : 0;
         #endif
 
         std::vector<float> p = softmax(logp, available_moves);

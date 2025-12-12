@@ -39,25 +39,24 @@ void Evaluator::HandlerWork() {
     }
 }
 
-Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false), cacheHits(0) {
+Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
     createHandlerThreads();
 }
 Evaluator::Evaluator(const std::string& model_file, const std::string& model_type, bool use_gpu)
-    : net(new PolicyValueNet(model_file, model_type, use_gpu)), stop(false), cacheHits(0) {
+    : net(new PolicyValueNet(model_file, model_type, use_gpu)), stop(false){
     createHandlerThreads();
 }
 Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
-    : net(new PolicyValueNet(model_file, use_gpu)), stop(false), cacheHits(0) {
+    : net(new PolicyValueNet(model_file, use_gpu)), stop(false){
     createHandlerThreads();
 }
 Evaluator::~Evaluator() { stop = true; qcv.notify_all(); handler.join(); }
 
-void Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
+bool Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
     // cache lookup
     bool cacheHit = cache.get(hash, buf.result);
     if(cacheHit) {
-        cacheHits++;
-        return;
+        return true;
     }
 
     // enqueue request
@@ -73,6 +72,7 @@ void Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { /
 
     // store in cache
     cache.insert(hash, buf.result);
+    return false;
 }
 
 void Evaluator::updateModel(PolicyValueNet* updatedNet) {
