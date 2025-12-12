@@ -6,7 +6,7 @@
 #include "random.h"
 #include "memorypool.h"
 #include "hash.h"
-#include "evalcache.h"
+#include "evaluator.h"
 #include "dirichlet.h"
 #include <vector>
 #include <utility>
@@ -30,7 +30,6 @@ private:
     std::vector<Node*> child;
     std::vector<std::pair<int, int> > available_moves; // among game.isLegal() moves, consider actually useful moves.
     std::pair<int, int> winmove;
-    EvalCache* const eval_cache;
     std::unordered_map<HashValue, Node*>* const trans_table;
 
     void expand();
@@ -38,9 +37,9 @@ private:
     static std::vector<float> softmax(const std::vector<float>& logit, const std::vector<std::pair<int, int>>& available_moves);
 
 public:
-    Node(const Game& g, const HashValue hashValue, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
+    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);
 
-    float searchandPropagate(PolicyValueNet& net);
+    float searchandPropagate(Evaluator* evaluator);
 
     std::pair<int, int> selectMove(float temperature);
 
@@ -59,12 +58,12 @@ class alignas(64) MCTS{
 private:
     Node* root;
     int playout;
-    PolicyValueNet* net;
-    EvalCache* const eval_cache;
+    Evaluator* evaluator; // shared along multiple MCTS instances Do not delete here.
     std::unordered_map<HashValue, Node*>* const trans_table;
 
 public:
-    MCTS(int playout, PolicyValueNet* net, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table);
+    MCTS(int playout, Evaluator* evaluator, std::unordered_map<HashValue, Node*>* const trans_table);
+    ~MCTS();
 
     void runSimulation();
 
@@ -75,8 +74,6 @@ public:
     bool jump(std::pair<int, int> move);
 
     void reset();
-
-    void updateModel(); // what to do when model gets updated. 
 
     #ifdef measureTime
     std::vector<int> getTimeStats() const;

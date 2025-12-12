@@ -36,11 +36,10 @@ float TrainPipeline::start_play(std::array<MCTS*, 2> player_list, std::ostream& 
 
 void TrainPipeline::play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
-	PolicyValueNet pv(model_path + model, gpu);
-	auto eval_cache = new EvalCache();
+	auto evaluator = new Evaluator(model_path + model, gpu);
 	auto trans_table = new std::unordered_map<HashValue, Node*>();
 
-	MCTS player = MCTS(playout, &pv, eval_cache, trans_table);
+	MCTS player = MCTS(playout, evaluator, trans_table);
 	std::pair<int, int> cord;
 	color res;
 
@@ -64,51 +63,38 @@ void TrainPipeline::play(const std::string& model, color side, int playout, floa
         player.jump(cord);
 	}
 
-	delete trans_table;
-	delete eval_cache;
+	delete evaluator;
 	return;
 }
 
 float TrainPipeline::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
 	bool gpu, float temp, int n_games) {
-	PolicyValueNet po(model_path + mod_one, gpu);
-	PolicyValueNet pt(model_path + mod_two, gpu);
-	auto eval_cache_o = new EvalCache();
-	auto eval_cache_t = new EvalCache();
+	auto eo = new Evaluator(model_path + mod_one, gpu);
+	auto et = new Evaluator(model_path + mod_two, gpu);
 	auto trans_table_o = new std::unordered_map<HashValue, Node*>();
 	auto trans_table_t = new std::unordered_map<HashValue, Node*>();
-	MCTS* base_player = new MCTS(n_playout, &po, eval_cache_o, trans_table_o);
-	MCTS* oppo_player = new MCTS(n_playout, &pt, eval_cache_t, trans_table_t);
+	MCTS* base_player = new MCTS(n_playout, eo, trans_table_o);
+	MCTS* oppo_player = new MCTS(n_playout, et, trans_table_t);
 
 	std::vector<bool> b = play_match(base_player, oppo_player, total_res, is_shown, temp, n_games);
 
 	delete base_player;
 	delete oppo_player;
-	delete eval_cache_o;
-	delete eval_cache_t;
-	delete trans_table_o;
-	delete trans_table_t;
+	delete eo;
+	delete et;
 	return std::count(b.begin(), b.end(), true) / static_cast<float>(n_games << 1);
 }
 
 std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model_list,
 	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games) {
 	int N = model_list.size();
-	
-	auto trans_tables = std::vector<std::unordered_map<HashValue, Node*>*>();
-	trans_tables.reserve(N);
-	for(int i=0; i<N; ++i)
-		trans_tables.push_back(new std::unordered_map<HashValue, Node*>());
-
-	auto caches = std::vector<EvalCache*>();
-	caches.reserve(N);
-	for(int i=0; i<N; ++i)
-		caches.push_back(new EvalCache());
-
 	std::vector<MCTS*> players(N);
+	std::vector<Evaluator*> evaluators(N);
+
 	for (int i = 0; i < N; ++i) {
-		PolicyValueNet* pv = new PolicyValueNet(model_path + model_list[i], gpu);
-		players[i] = new MCTS(n_playout, pv, caches[i], trans_tables[i]);
+		auto trans_table = new std::unordered_map<HashValue, Node*>();
+		evaluators[i] = new Evaluator(model_path + model_list[i], gpu);
+		players[i] = new MCTS(n_playout, evaluators[i], trans_table);
 	}
 
 	bool load_from_file = false;
@@ -134,9 +120,8 @@ std::vector<float> TrainPipeline::policy_evaluate(std::vector<std::string> model
 	}
 
 	for(int i=0; i<N; ++i){
+		delete evaluators[i];
 		delete players[i];
-		delete caches[i];
-		delete trans_tables[i];
 	}
 	return ratings;
 }
@@ -335,15 +320,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	std::vector<std::thread> self_play_threads;
 	std::vector<MCTS> mcts_players; // MCTS players of size train_thread_num
-	auto eval_cache = new EvalCache();
-
-	auto trans_tables = std::vector<std::unordered_map<HashValue, Node*>*>();
-	trans_tables.reserve(inference_thread_num);
-	for(int i=0; i<inference_thread_num; ++i)
-		trans_tables.push_back(new std::unordered_map<HashValue, Node*>());
+	auto evaluator = new Evaluator(&inference_model);
 
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(n_playout, &inference_model, eval_cache, trans_tables[i]);
+		mcts_players.emplace_back(n_playout, evaluator, new std::unordered_map<HashValue, Node*>());
 		self_play_paused[i] = false;
 	}
 
@@ -374,8 +354,8 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 					// critical section
 					model_file = model_prefix + std::to_string(games_played + save_cnt);
-					synchronize_model(inference_model, train_model, mcts_players); // synchronize train_model and inference_model
-					inference_model.save_model(model_path + model_file + std::string(".pt")); // save model to file
+					evaluator->updateModel(&train_model); // synchronize train_model and inference_model
+					train_model.save_model(model_path + model_file + std::string(".pt")); // save model to file
 					std::cout << "model properly saved" << std::endl;
 					pause_flag.store(false); // restart train thread
 					train_cv.notify_one(); // notify train thread
@@ -431,21 +411,6 @@ std::vector<bool> TrainPipeline::play_match(MCTS* player_one, MCTS* player_two,
 		// total_res << win_cnt << "/" << i + 1 << std::std::endl;
 	}
 	return result;
-}
-
-void TrainPipeline::synchronize_model(PolicyValueNet& target, PolicyValueNet& source, std::vector<MCTS>& players) {
-	torch::NoGradGuard no_grad;
-	auto src_state = source.policy_value_net->named_parameters();
-	auto dst_state = target.policy_value_net->named_parameters();
-
-	for (auto& item : src_state) {
-		dst_state[item.key()].copy_(item.value());
-	}
-	for (auto& item : dst_state) {
-		target.policy_value_net->named_parameters()[item.key()].copy_(item.value());
-	}
-
-	players[0].updateModel(); // only one player needs to clear cache.
 }
 
 void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){

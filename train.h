@@ -35,7 +35,7 @@ private:
 
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
-	void synchronize_model(PolicyValueNet& target, PolicyValueNet& source, std::vector<MCTS>& players);
+
 	void pin_threads_to_core(std::thread& th, int core_id);
 
 public:

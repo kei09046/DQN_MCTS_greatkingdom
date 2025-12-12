@@ -61,9 +61,9 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-Node::Node(const Game& g, const HashValue hashValue, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table):
+Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), eval_cache(eval_cache), trans_table(trans_table){
+N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::expand(){
@@ -103,7 +103,7 @@ void Node::expand(){
 
                     #ifdef transTable
                     if(trans_table->count(newHash) == 0){
-                        childNode = new Node(ng, newHash, eval_cache, trans_table);
+                        childNode = new Node(ng, newHash, trans_table);
                         (*trans_table)[newHash] = childNode;
                     }
                     else{
@@ -144,7 +144,7 @@ void Node::expand(){
 
         #ifdef transTable
         if(trans_table->count(newHash) == 0){
-            childNode = new Node(pass, newHash, eval_cache, trans_table);
+            childNode = new Node(pass, newHash, trans_table);
             (*trans_table)[newHash] = childNode;
         }
         else{
@@ -152,7 +152,7 @@ void Node::expand(){
         }
         #endif
         #ifndef transTable
-        childNode = new Node(pass, newHash, eval_cache, trans_table);
+        childNode = new Node(pass, newHash, trans_table);
         #endif
 
         child.push_back(childNode);
@@ -165,7 +165,7 @@ void Node::expand(){
     #endif
 }
 
-float Node::searchandPropagate(PolicyValueNet& net){
+float Node::searchandPropagate(Evaluator* evaluator){
     if(N++ == 0){
         expand();
     }
@@ -184,52 +184,9 @@ float Node::searchandPropagate(PolicyValueNet& net){
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         #endif
 
-        std::shared_ptr<PolicyValueOutput> entry;
-
-        #ifdef measureTime
-            std::chrono::steady_clock::time_point find_begin = std::chrono::steady_clock::now();
-        #endif
-        bool cacheHit = eval_cache->get(hashValue, entry);
-        #ifdef measureTime
-            std::chrono::steady_clock::time_point find_end = std::chrono::steady_clock::now();
-            evalCacheFindTime += (std::chrono::duration_cast<std::chrono::microseconds>(find_end - find_begin).count());
-        #endif
-
-        if(!cacheHit){ // cache miss
-            // entry = net.evaluate(game);
-            // instead, compute chlidren nodes at once.
-            std::vector<const Game*> gameBatch;
-            gameBatch.reserve((1 + available_moves.size()));
-
-            gameBatch.push_back(&game);
-            for(auto c : child)
-                gameBatch.push_back(&(c->game));
-
-            std::vector<PolicyValueOutput> entries = net.batchEvaluate(gameBatch);
-            entry = std::make_shared<PolicyValueOutput>(entries[0]);
-
-            #ifdef measureTime
-            std::chrono::steady_clock::time_point insert_begin = std::chrono::steady_clock::now();
-            #endif
-            
-            eval_cache->insert(hashValue, entry);
-
-            for(size_t i=0; i<available_moves.size(); ++i){
-                auto ce = std::make_shared<PolicyValueOutput>(entries[i+1]);
-                eval_cache->insert(child[i]->hashValue, ce);
-            }
-            
-            #ifdef measureTime
-            std::chrono::steady_clock::time_point insert_end = std::chrono::steady_clock::now();
-            evalCacheInsertTime += std::chrono::duration_cast<std::chrono::microseconds>(insert_end - insert_begin).count();
-            #endif
-        }
-        #ifdef measureTime
-        else{
-            evalCacheHit++;
-        }
-        #endif
-
+        NNResultBuf buf;
+        evaluator->evaluate(buf, &game, hashValue);
+        auto entry = buf.result;
         auto& logp = entry->first;
         auto q = entry->second;
 
@@ -278,7 +235,7 @@ float Node::searchandPropagate(PolicyValueNet& net){
     searchTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
     #endif
 
-    float r = child[maxi]->searchandPropagate(net); // rarely, NN eval seems to contain corrupted value.
+    float r = child[maxi]->searchandPropagate(evaluator); // rarely, NN eval seems to contain corrupted value.
     W += r;
     return -r;
 }
@@ -410,18 +367,22 @@ void Node::deleteTree(Node* exception){
 #endif
 
 
-MCTS::MCTS(int playout, PolicyValueNet* net, EvalCache* const eval_cache, std::unordered_map<HashValue, Node*>* const trans_table) : 
-net(net), playout(playout), eval_cache(eval_cache), trans_table(trans_table){
-    root = new Node(Game(), hash.baseHash(), eval_cache, trans_table);
+MCTS::MCTS(int playout, Evaluator* evaluator, std::unordered_map<HashValue, Node*>* const trans_table) : 
+playout(playout), evaluator(evaluator), trans_table(trans_table){
+    root = new Node(Game(), hash.baseHash(), trans_table);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
     #endif
 }
 
+MCTS::~MCTS(){
+    delete trans_table;
+}
+
 void MCTS::runSimulation(){
     for(int i=0; i<playout; ++i){
         //std::cout << "on playout " << i << std::endl;
-        root->searchandPropagate(*net);
+        root->searchandPropagate(evaluator);
     }
 }
 
@@ -454,12 +415,8 @@ void MCTS::reset(){
     #ifndef transTable
     root->deleteTree();
     #endif
-    root = new Node(Game(), hash.baseHash(), eval_cache, trans_table);
+    root = new Node(Game(), hash.baseHash(), trans_table);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
     #endif
-}
-
-void MCTS::updateModel(){
-    eval_cache->clear();
 }
