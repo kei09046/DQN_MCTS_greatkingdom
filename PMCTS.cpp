@@ -10,7 +10,7 @@ thread_local size_t extraTime = 0;
 thread_local size_t evalCacheInsertTime = 0;
 thread_local size_t evalCacheFindTime = 0;
 thread_local size_t evalCacheHit = 0;
-thread_local size_t evalCacheNorotHit = 0;
+thread_local size_t terminalHit = 0;
 
 std::vector<int> MCTS::getTimeStats() const{
     std::vector<int> stats;
@@ -22,7 +22,7 @@ std::vector<int> MCTS::getTimeStats() const{
     stats[4] = makeMoveTime;
     stats[5] = extraTime;
     stats[6] = evalCacheHit;
-    stats[7] = evalCacheNorotHit;
+    stats[7] = terminalHit;
     stats[8] = evalCacheInsertTime;
     stats[9] = evalCacheFindTime;
     return stats;
@@ -30,7 +30,7 @@ std::vector<int> MCTS::getTimeStats() const{
 
 void MCTS::resetTimeStats(){
     expandTime = evaluateTime = searchTime = copyTime = makeMoveTime = extraTime = 
-    evalCacheHit = evalCacheNorotHit = evalCacheInsertTime = evalCacheFindTime = 0;
+    evalCacheHit = terminalHit = evalCacheInsertTime = evalCacheFindTime = 0;
 }
 #endif
 
@@ -173,10 +173,16 @@ float Node::searchandPropagate(Evaluator* evaluator){
     
     if(winmove.first >= 0){ // position is won
         W--;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
         return 1.0f;
     }
     if(available_moves.size() == 0){ // position is lost
         W++;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
         return -1.0f;
     }
 

@@ -215,7 +215,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				std::cout << "average cache insert time : " << timeStats[8] / sequence.size() << "[us]\n";
 				std::cout << "average cache find time : " << timeStats[9] / sequence.size() << "[us]\n";
 				std::cout << "eval cache hit rate : " << static_cast<float>(timeStats[6]) / (sequence.size() * n_playout) << "\n";
-				//std::cout << "eval norot cache hit rate : " << static_cast<float>(timeStats[7]) / (sequence.size() * n_playout) << "\n";
+				std::cout << "terminal hit rate : " << static_cast<float>(timeStats[7]) / (sequence.size() * n_playout) << "\n";
 				std::cout << "average move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() / sequence.size() << "[ms]\n";
 				std::cout << "move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() << "[ms]\n";
 				std::cout << "total time : " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";

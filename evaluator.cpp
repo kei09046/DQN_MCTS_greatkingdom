@@ -56,6 +56,7 @@ bool Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { /
     // cache lookup
     bool cacheHit = cache.get(hash, buf.result);
     if(cacheHit) {
+        //std::cerr << "cache hit\n";
         return true;
     }
 
