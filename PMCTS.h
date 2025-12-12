@@ -18,8 +18,6 @@
 #include <memory>
 
 
-using MoveData = std::tuple<std::pair<int, int>, std::array<float, outputSize> >; // move + move possibility
-
 class alignas(64) Node{
 private:
     const Game game; // includes position, territory, valid moves etc. for heuristic
@@ -28,24 +26,26 @@ private:
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
     std::vector<Node*> child;
-    std::vector<std::pair<int, int> > available_moves; // among game.isLegal() moves, consider actually useful moves.
-    std::pair<int, int> winmove;
+    std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
+    Move winmove;
     std::unordered_map<HashValue, Node*>* const trans_table;
+
+    void addChild(int r, int c, Game ng);
 
     void expand();
 
-    static std::vector<float> softmax(const std::vector<float>& logit, const std::vector<std::pair<int, int>>& available_moves);
+    static std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves);
 
 public:
     Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);
 
     float searchandPropagate(Evaluator* evaluator);
 
-    std::pair<int, int> selectMove(float temperature);
+    Move selectMove(float temperature);
 
     MoveData selectMoveProb(float temperature);
 
-    Node* jump(std::pair<int, int> move);
+    Node* jump(Move move);
 
     #ifndef transTable
     void deleteTree();
@@ -68,11 +68,11 @@ public:
 
     void runSimulation();
 
-    std::pair<int, int> getMove(float temperature);
+    Move getMove(float temperature);
 
     MoveData getMoveProb(float temperature);
 
-    bool jump(std::pair<int, int> move);
+    bool jump(Move move);
 
     void reset();
 

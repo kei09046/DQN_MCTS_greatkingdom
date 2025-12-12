@@ -188,18 +188,20 @@ uint8_t Game::getLegalMoveCount() const{
     return ret;
 }
 
-color Game::makeMove(int r, int c){
-    if(r < 0){ // resign
+color Game::makeMove(Move move){
+    if(move == resignMove){ // resign
         switchTurn();
         return currentTurn;
     }
 
-    if(r == rowSize){ // pass
+    if(move == passMove){ // pass
         switchTurn();
         moveCount++;
         return EMPTY;
     }
 
+    uint8_t r = move.first;
+    uint8_t c = move.second;
     // update board & scoreBoard
     board[r][c] = currentTurn;
     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
@@ -219,6 +221,51 @@ color Game::makeMove(int r, int c){
     
     switchTurn();
     moveCount++;
+
+    if(getLegalMoveCount() == 0 || moveCount > boardSize){
+        return gameEnd();
+    }
+    return EMPTY;
+}
+
+color Game::makeMoveNoScoreUpdate(Move move){
+    if(move == resignMove){ // resign
+        switchTurn();
+        return currentTurn;
+    }
+
+    if(move == passMove){ // pass
+        switchTurn();
+        moveCount++;
+        return EMPTY;
+    }
+
+    uint8_t r = move.first;
+    uint8_t c = move.second;
+    // update board & scoreBoard
+    board[r][c] = currentTurn;
+    scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
+
+    for(size_t i=0; i<4; ++i){ // make sure it can't be used for opponent
+        uint8_t nr = r + dr[i];
+        uint8_t nc = c + dc[i];
+        if(inbound(nr, nc)){
+            scoreBoard[nr][nc] |= adjTo(currentTurn);
+        }
+    }
+
+    color clr = captureResultbyMove(r, c);
+    if(clr != EMPTY)
+        return clr;
+    
+    switchTurn();
+    moveCount++;
+    return EMPTY;
+}
+
+color Game::updateScoreAfter(Move move){
+    if(moveCount >= 2)
+        updateScore(move.first, move.second);
 
     if(getLegalMoveCount() == 0 || moveCount > boardSize){
         return gameEnd();
@@ -246,14 +293,6 @@ Game::Game(){
     visitId = 0;
     board[neutral.first][neutral.second] = NEUTRAL;
     scoreBoard[neutral.first][neutral.second] = NEUTRAL;
-}
-
-color Game::scoreWinner() const{
-    return score[BLACK] - score[WHITE] - komi > 0 ? BLACK : WHITE;
-}
-
-color Game::getTurn() const{
-    return currentTurn;
 }
 
 void Game::displayBoardGUI(bool showScore) const{

@@ -3,14 +3,14 @@
 float TrainPipeline::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
 	Game game_manager = Game();
 	int diff, idx = 0;
-	std::pair<int, int> move;
+	Move move;
     color res;
-	std::vector<std::pair<int, int>> seq;
+	std::vector<Move> seq;
 
 	while (true) {
 		move = player_list[idx]->getMove(temp);
 		seq.push_back(move);
-        res = game_manager.makeMove(move.first, move.second);
+        res = game_manager.makeMove(move);
 
 		if (res == EMPTY) {
             player_list[0]->jump(move);
@@ -39,7 +39,7 @@ void TrainPipeline::play(const std::string& model, color side, int playout, floa
 	auto evaluator = new Evaluator(model_path + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
 
-	std::pair<int, int> cord;
+	Move cord;
 	color res;
 
 	while (true) {
@@ -53,7 +53,7 @@ void TrainPipeline::play(const std::string& model, color side, int playout, floa
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		res = game_manager.makeMove(cord.first, cord.second);
+		res = game_manager.makeMove(cord);
 		game_manager.displayBoardGUI();
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
@@ -162,7 +162,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		
 		auto m = std::get<0>(moveProb);
 		sequence.push_back(m);
-		result = game_manager.makeMove(m.first, m.second);
+		result = game_manager.makeMove(m);
 
 		if (result == EMPTY) {
 			buffer.emplace_back(state, std::get<1>(moveProb), 0.0f, 0);
@@ -198,10 +198,10 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			if (is_shown) {
 				std::cout << "\n";
-				// for(auto& i : sequence){
-				// 	std::cout << i.first << "," << i.second << " ";
-				// }
-				// std::cout << "\n";
+				for(auto& i : sequence){
+					std::cout << i.first << "," << i.second << " ";
+				}
+				std::cout << "\n";
 				std::cout << "episode length : " << sequence.size() << " winner : " << static_cast<int>(result) << "\n\n";
 				
 				#ifdef measureTime

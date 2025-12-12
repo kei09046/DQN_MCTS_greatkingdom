@@ -36,7 +36,7 @@ void MCTS::resetTimeStats(){
 
 const Hash hash;
 
-std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vector<std::pair<int, int>>& available_moves){
+std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
     std::vector<float> n_logit;
     n_logit.reserve(available_moves.size());
     for(const auto& move : available_moves){
@@ -63,7 +63,27 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
 // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove({-1, -1}), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table){
+}
+
+void Node::addChild(int r, int c, Game ng){
+    HashValue newHash = hash.computeHashAfterMove(game, {r, c}, hashValue);
+    Node* childNode;
+
+    #ifdef transTable
+    if(trans_table->count(newHash) == 0){
+        childNode = new Node(ng, newHash, trans_table);
+        (*trans_table)[newHash] = childNode;
+    }
+    else{
+        childNode = (*trans_table)[newHash];
+    }
+    #endif
+    #ifndef transTable
+    childNode = new Node(ng, newHash, eval_cache, trans_table);
+    #endif
+    child.push_back(childNode);
+    available_moves.push_back({r, c});
 }
 
 void Node::expand(){
@@ -72,94 +92,64 @@ void Node::expand(){
     #endif
 
     color clr;
+    std::vector<Game> nextGames(boardSize + 1, game); // +1 for pass
+    std::bitset<boardSize + 1> candidateLegal; // mark candidate legal moves
 
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
+    // improve performance by first checking capture for all moves -> calculate territory for all moves -> reduce options
+    for(uint8_t i=0; i<rowSize; ++i){
+        for(uint8_t j=0; j<colSize; ++j){
             if(game.isLegal(i, j)){
-                #ifdef measureTime
-                std::chrono::steady_clock::time_point copyBegin = std::chrono::steady_clock::now();
-                #endif
-                Game ng = game;
-
-                #ifdef measureTime
-                std::chrono::steady_clock::time_point copyEnd = std::chrono::steady_clock::now();
-                copyTime += (std::chrono::duration_cast<std::chrono::microseconds>(copyEnd - copyBegin).count());
-
-                std::chrono::steady_clock::time_point moveBegin = std::chrono::steady_clock::now();
-                #endif
-
-                clr = ng.makeMove(i, j);
-
-                #ifdef measureTime
-                std::chrono::steady_clock::time_point moveEnd = std::chrono::steady_clock::now();
-                makeMoveTime += (std::chrono::duration_cast<std::chrono::microseconds>(moveEnd - moveBegin).count());
-
-                std::chrono::steady_clock::time_point extraBegin = std::chrono::steady_clock::now();
-                #endif
+                clr = nextGames[i * colSize + j].makeMoveNoScoreUpdate({i, j}); // only check if capture occurs
 
                 if(clr == EMPTY){
-                    HashValue newHash = hash.computeHashAfterMove(game, {i, j}, hashValue);
-                    Node* childNode;
-
-                    #ifdef transTable
-                    if(trans_table->count(newHash) == 0){
-                        //std::cerr << newHash << "\n";
-                        childNode = new Node(ng, newHash, trans_table);
-                        (*trans_table)[newHash] = childNode;
-                    }
-                    else{
-                        childNode = (*trans_table)[newHash];
-                    }
-                    #endif
-                    #ifndef transTable
-                    childNode = new Node(ng, newHash, eval_cache, trans_table);
-                    #endif
-                    child.push_back(childNode);
-                    available_moves.push_back({i, j});
+                    candidateLegal[i * colSize + j] = true;
                 }
 
                 else if(clr == turn){
                     winmove = {i, j};
-                    #ifdef measureTime
-                    std::chrono::steady_clock::time_point extraEnd = std::chrono::steady_clock::now();
-                    extraTime += (std::chrono::duration_cast<std::chrono::microseconds>(extraEnd - extraBegin).count());
-                    expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(extraEnd - begin).count());
-                    #endif
                     return;
                 }
-
-                #ifdef measureTime
-                std::chrono::steady_clock::time_point extraEnd = std::chrono::steady_clock::now();
-                extraTime += (std::chrono::duration_cast<std::chrono::microseconds>(extraEnd - extraBegin).count());
-                #endif
             }
         }
     }
 
     if(game.scoreWinner() == game.getTurn()){ // can pass only if it's beneficial
-        Game pass = game;
-        pass.makeMove(rowSize, 0);
-
-        HashValue newHash = hash.computeHashAfterMove(game, {rowSize, 0}, hashValue);
-        Node* childNode;
-
-        #ifdef transTable
-        if(trans_table->count(newHash) == 0){
-            childNode = new Node(pass, newHash, trans_table);
-            (*trans_table)[newHash] = childNode;
-        }
-        else{
-            childNode = (*trans_table)[newHash];
-        }
-        #endif
-        #ifndef transTable
-        childNode = new Node(pass, newHash, trans_table);
-        #endif
-
-        child.push_back(childNode);
-        available_moves.push_back({rowSize, 0}); // pass
+        nextGames[boardSize].makeMoveNoScoreUpdate(passMove);
+        candidateLegal[boardSize] = true;
     }
 
+    if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
+        for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+            if(candidateLegal[idx]){
+                uint8_t r = idx / colSize;
+                uint8_t c = idx % colSize;
+                clr = nextGames[idx].updateScoreAfter({r, c});
+
+                if(clr == turn){
+                    winmove = {r, c};
+                    return;
+                }
+
+                else if(clr == EMPTY){
+                    candidateLegal &= nextGames[idx].getLegalMoves();
+                    candidateLegal[idx] = true; // keep itself
+                }
+            }
+        }
+    }
+
+    // finally add child
+    for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+        if(candidateLegal[idx]){
+            uint8_t r = idx / colSize;
+            uint8_t c = idx % colSize;
+            addChild(r, c, nextGames[idx]);
+        }
+    }
+
+    // for(Move m : available_moves){
+    //     std::cerr << "available move after expand : " << static_cast<int>(m.first) << "," << static_cast<int>(m.second) << std::endl;
+    // }
     #ifdef measureTime
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
@@ -169,10 +159,12 @@ void Node::expand(){
 float Node::searchandPropagate(Evaluator* evaluator){
     if(N++ == 0){
         expand();
+        //std::cerr << available_moves.size() << " children expanded." << std::endl;
     }
     
-    if(winmove.first >= 0){ // position is won
+    if(winmove != resignMove){ // position is won
         W--;
+        //std::cerr << static_cast<int>(winmove.first) << "," << static_cast<int>(winmove.second) << " is winning move." << std::endl;
         #ifdef measureTime
         terminalHit++;
         #endif
@@ -180,6 +172,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
     }
     if(available_moves.size() == 0){ // position is lost
         W++;
+        //std::cerr << "no available moves, lost position" << std::endl;
         #ifdef measureTime
         terminalHit++;
         #endif
@@ -248,11 +241,11 @@ float Node::searchandPropagate(Evaluator* evaluator){
     return -r;
 }
 
-std::pair<int, int> Node::selectMove(float temp){
-    if(winmove.first >= 0)
+Move Node::selectMove(float temp){
+    if(winmove != resignMove)
         return winmove;
     if(available_moves.size() == 0){ // if lost, resign
-        return {-1, -1};
+        return resignMove;
     }
 
     std::vector<float> weights(available_moves.size());
@@ -289,10 +282,10 @@ MoveData Node::selectMoveProb(float temp){
     std::array<float, outputSize> visitPortion;
     visitPortion.fill(0.0f);
 
-    if(winmove.first >= 0)
+    if(winmove != resignMove)
         return {winmove, visitPortion};
     if(available_moves.size() == 0){ // if lost, resign
-        return {{-1, -1}, visitPortion};
+        return {resignMove, visitPortion};
     }
 
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
@@ -332,7 +325,7 @@ MoveData Node::selectMoveProb(float temp){
     return {available_moves[maxi], visitPortion};
 }
 
-Node* Node::jump(std::pair<int, int> move){
+Node* Node::jump(Move move){
     if(N == 0){
         expand();
         N++;
@@ -398,12 +391,12 @@ MCTS::~MCTS(){
 
 void MCTS::runSimulation(){
     for(int i=0; i<playout; ++i){
-        //std::cout << "on playout " << i << std::endl;
+        //std::cerr << "on playout " << i << std::endl;
         root->searchandPropagate(evaluator);
     }
 }
 
-std::pair<int, int> MCTS::getMove(float temp){
+Move MCTS::getMove(float temp){
     runSimulation();
     return root->selectMove(temp);
 }
@@ -413,7 +406,7 @@ MoveData MCTS::getMoveProb(float temp){
     return root->selectMoveProb(temp);
 }
 
-bool MCTS::jump(std::pair<int, int> move){
+bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
     #ifndef transTable

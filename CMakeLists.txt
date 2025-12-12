@@ -21,7 +21,7 @@ endif()
 
 # Create the executable
 add_executable(train 
-    main.cpp 
+    main.cpp
     gamerules.cpp 
     hash.cpp
     evalcache.cpp

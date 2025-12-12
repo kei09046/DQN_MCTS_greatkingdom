@@ -54,6 +54,11 @@ constexpr u_int inputChannel = 6;
 constexpr u_int outputSize = boardSize + 1; // board place + pass
 
 //mcts constants
+using Move = std::pair<uint8_t, uint8_t>;
+using MoveData = std::tuple<Move, std::array<float, outputSize> >; // move + move possibility
+constexpr Move passMove = {rowSize, 0};
+constexpr Move resignMove = {255, 255};
+
 #ifdef dirichletNoise
 constexpr float alpha = 0.03f * 361 / inputRow / inputCol; // dirichlet noise parameter
 constexpr float eps = 0.25f;   // dirichlet noise weight

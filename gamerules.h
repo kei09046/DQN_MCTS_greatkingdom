@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <algorithm>
 #include <cstdint>
+#include <bitset>
 #include "consts.h"
 
 
@@ -69,9 +70,9 @@ private:
 
     uint8_t checkScore(uint8_t r, uint8_t c, color clr);
 
-    void updateScore(uint8_t r, uint8_t c);
-
     void getScore();
+
+    void updateScore(uint8_t r, uint8_t c);
 
     color gameEnd();
 
@@ -83,13 +84,37 @@ public:
         return (board[r][c] == EMPTY) && (scoreBoard[r][c] & EMPTY);
     }
 
+    std::bitset<boardSize + 1> getLegalMoves() const{
+        std::bitset<boardSize + 1> legal;
+        for(uint8_t i=0; i<rowSize; ++i){
+            for(uint8_t j=0; j<colSize; ++j){
+                legal[i * colSize + j] = isLegal(i, j);
+            }
+        }
+
+        legal.set(rowSize * colSize);
+        return legal;
+    }
+
     void onGameEnd(color winner);
 
-    color makeMove(int r, int c);
+    color makeMoveNoScoreUpdate(Move move);
 
-    color scoreWinner() const;
+    color updateScoreAfter(Move move);
 
-    color getTurn() const;
+    color makeMove(Move move);
+
+    inline color scoreWinner() const {
+        return score[BLACK] - score[WHITE] - komi > 0 ? BLACK : WHITE;
+    };
+
+    inline color getTurn() const{
+        return currentTurn;
+    };
+
+    inline int getMoveCount() const{
+        return moveCount;
+    };
 
     void displayBoardGUI(bool showScore = true) const;
 
