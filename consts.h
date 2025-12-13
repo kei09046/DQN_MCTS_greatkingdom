@@ -17,6 +17,10 @@
 
 using u_int = unsigned int;
 
+//for model management
+constexpr std::string model_path = "./models/";
+constexpr std::string default_model_type = "h";
+
 // for hash
 using HashValue = uint64_t;
 using PolicyValueOutput = std::pair<std::vector<float>, float>;
@@ -82,6 +86,4 @@ constexpr u_int check_freq = 100;
 constexpr u_int save_freq = 100;
 constexpr u_int capacity = 10000;
 constexpr float thres = 0.1f;
-const std::string model_path = "./models/";
-
 #endif

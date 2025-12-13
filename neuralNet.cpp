@@ -143,7 +143,7 @@ PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_typ
 	if (model_file.ends_with(".pt")) {
 		std::shared_ptr<GNet> net;
 
-		if(model_type == "g")
+		if(model_type == "g" || model_type == "h")
 			net = std::make_shared<GNet>();
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -162,8 +162,8 @@ PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_typ
 }
 
 PolicyValueNet::PolicyValueNet(const string& model_file, bool use_gpu): 
-PolicyValueNet(model_file, string(1, model_file[model_file.rfind("model") + 5]), use_gpu)
-{} // model file name like "./models/modelg10000.pt"
+PolicyValueNet(model_file, default_model_type, use_gpu)
+{}
 
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
@@ -254,7 +254,7 @@ void PolicyValueNet::train_step(array<float, batchSize * inputChannel * inputSiz
 
 void PolicyValueNet::save_model(const string& model_file) const
 {
-	if(model_type == "g"){
+	if(model_type == "g" || model_type == "h"){
 		auto net = std::dynamic_pointer_cast<GNet>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
