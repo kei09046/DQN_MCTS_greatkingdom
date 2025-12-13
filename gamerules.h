@@ -104,6 +104,10 @@ public:
 
     color makeMove(Move move);
 
+    inline float scoreDiff(color turn) const {
+        return (score[BLACK] - score[WHITE] - komi) * ((turn == BLACK) ? 1.0f : -1.0f);
+    };
+
     inline color scoreWinner() const {
         return score[BLACK] - score[WHITE] - komi > 0 ? BLACK : WHITE;
     };

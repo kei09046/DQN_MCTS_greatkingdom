@@ -20,7 +20,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # Create the executable
-add_executable(train 
+add_executable(play 
     main.cpp
     gamerules.cpp 
     hash.cpp
@@ -38,17 +38,17 @@ add_executable(train
 )
 
 # Link against LibTorch
-target_link_libraries(train "${TORCH_LIBRARIES}")
-target_link_libraries(train Boost::headers)
+target_link_libraries(play "${TORCH_LIBRARIES}")
+target_link_libraries(play Boost::headers)
 
 # Include directories
-target_include_directories(train PRIVATE 
+target_include_directories(play PRIVATE 
     "/home/me/libtorch/include" 
     "/home/me/libtorch/include/torch/csrc/api/include"
 )
 
 # Set C++ standard
-set_property(TARGET train PROPERTY CXX_STANDARD 20)
+set_property(TARGET play PROPERTY CXX_STANDARD 20)
 
 # Ensure build type is not overridden unexpectedly
 if (NOT CMAKE_BUILD_TYPE)

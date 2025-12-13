@@ -44,7 +44,9 @@ void TrainPipeline::play(const std::string& model, color side, int playout, floa
 
 	while (true) {
 		if (side == game_manager.getTurn()) {
-			std::cin >> cord.first >> cord.second;
+			u_int r, c;
+			std::cin >> r >> c;
+			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 		}
 		else {
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();

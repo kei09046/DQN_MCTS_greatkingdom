@@ -80,12 +80,17 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	color terr;
 	for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
 		terr = game.getScoreBoard(i/colSize, i%colSize);
-		if(terr == BLACK){
+		if(terr == turn){
 			ret[4*inputSize + i] = 1.0f;
 		}
-		else if(terr == WHITE){
+		else if(terr == Game::reverseColor(turn)){
 			ret[5*inputSize + i] = 1.0f;
 		}
+	}
+
+	float diff = game.scoreDiff(turn) / boardSize;
+	for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
+		ret[6*inputSize + i] = diff;
 	}
     return ret;
 }
@@ -115,12 +120,17 @@ std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameB
 		color terr;
 		for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
 			terr = gameBatch[num]->getScoreBoard(i/colSize, i%colSize);
-			if(terr == BLACK){
+			if(terr == turn){
 				ret[temp * num + 4*inputSize + i] = 1.0f;
 			}
-			else if(terr == WHITE){
+			else if(terr == Game::reverseColor(turn)){
 				ret[temp * num + 5*inputSize + i] = 1.0f;
 			}
+		}
+
+		float diff = gameBatch[num]->scoreDiff(turn) / boardSize;
+		for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
+			ret[temp * num + 6*inputSize + i] = diff;
 		}
 	}
 

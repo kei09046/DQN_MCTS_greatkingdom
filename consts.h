@@ -9,11 +9,11 @@
 
 // Uncomment to enable features
 // measure time taken by various MCTS components(used for debugging)
-#define measureTime
+//#define measureTime
 // use transposition table(used in self-play)
-#define transTable
+//#define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
-#define dirichletNoise
+//#define dirichletNoise
 
 using u_int = unsigned int;
 
@@ -50,7 +50,7 @@ constexpr u_int inputCol = colSize;
 constexpr u_int outputRow = rowSize;
 constexpr u_int outputCol = colSize;
 constexpr u_int inputSize = inputRow * inputCol;
-constexpr u_int inputChannel = 6;
+constexpr u_int inputChannel = 7;
 constexpr u_int outputSize = boardSize + 1; // board place + pass
 
 //mcts constants

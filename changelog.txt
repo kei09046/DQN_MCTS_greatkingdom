@@ -13,3 +13,7 @@ modelf : larger model, several optimizations
 
 modelf -> modelg : provided territory information about the board to NN. (channels : 4 -> 6).
 modelg19000.pt ~ : added dirichlet noise
+modelg -> modelh : added 1 more input channel (difference of score), switch channel 4&5 according to turn for symmetry,
+ added evaluator class which improved multithread performance significantly. (~50% speedup on 4 threads compared to ~12% before)
+ added more domain knowledge in move selection
+

@@ -80,7 +80,7 @@ void Node::addChild(int r, int c, Game ng){
     }
     #endif
     #ifndef transTable
-    childNode = new Node(ng, newHash, eval_cache, trans_table);
+    childNode = new Node(ng, newHash, trans_table);
     #endif
     child.push_back(childNode);
     available_moves.push_back({r, c});
@@ -272,7 +272,8 @@ Move Node::selectMove(float temp){
     }
 
     for(int i=0; i<available_moves.size(); ++i){
-        std::cout << "move : " << available_moves[i].first << " " << available_moves[i].second << " sc: " << child[i]->N << " wc: " << 
+        std::cout << "move : " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
+        " sc: " << child[i]->N << " wc: " << 
         child[i]->W << " initQ : " << child[i]->initQ << " P " << child[i]->P << std::endl;
     }
     return available_moves[maxi];
@@ -345,7 +346,7 @@ Node* Node::jump(Move move){
     std::cout << std::endl;
     std::cerr << "available options : " << std::endl;
     for(auto p : available_moves)
-        std::cerr << p << " ";
+        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
 
     return nullptr;
 }
