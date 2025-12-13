@@ -9,11 +9,13 @@ modelc -> modeld :
 test result :
 eval_cache + dihedral transformation : no big improvement over eval_cache. Cache hit rate difference were minimal(<1%)
 
-modelf : larger model, several optimizations
+modelf : larger model(1.5 residual blocks -> 6blocks), several optimizations
 
 modelf -> modelg : provided territory information about the board to NN. (channels : 4 -> 6).
 modelg19000.pt ~ : added dirichlet noise
+
 modelg -> modelh : added 1 more input channel (difference of score), switch channel 4&5 according to turn for symmetry,
  added evaluator class which improved multithread performance significantly. (~50% speedup on 4 threads compared to ~12% before)
  added more domain knowledge in move selection
+ On 16 threads, 14mins/100 games(next version) on local environment, 21mins/100 games on colab A100 GPU.
 

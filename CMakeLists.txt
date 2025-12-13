@@ -35,6 +35,7 @@ add_executable(train
     elo.cpp 
     consts.cpp
     train.cpp
+    modelcompare.cpp
 )
 
 # Link against LibTorch
