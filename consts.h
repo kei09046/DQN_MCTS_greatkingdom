@@ -18,8 +18,8 @@
 using u_int = unsigned int;
 
 //for model management
-constexpr std::string model_path = "./models/";
-constexpr std::string default_model_type = "h";
+const std::string model_path = "./models/";
+const std::string default_model_type = "h";
 
 // for hash
 using HashValue = uint64_t;
