@@ -130,7 +130,7 @@ void TrainPipeline::insert_data(TrainData data) {
 }
 
 void TrainPipeline::train(){
-	std::vector<int> indices = select_indices(game_buffer->size(), batchSize); // randomly select samples from buffer
+	std::vector<int> indices = select_indices(std::min(game_buffer->size(), capacity), batchSize); // randomly select samples from buffer
 	std::vector<TrainData*> batch_data(batchSize);
 
 	buffer_mutex.lock(); 
@@ -143,7 +143,7 @@ void TrainPipeline::train(){
 
 	// copy data from game_buffer to batch
 	for(int i=0; i < batchSize; ++i){ // copies data to batch
-		TrainData* data = (*game_buffer)[indices[i]];
+		TrainData* data = batch_data[i];
 		for(int j=0; j < inputChannel * inputSize; ++j){ 
 			(*state_batch)[i * inputChannel * inputSize + j] = std::get<0>(*data)[j];
 		}
