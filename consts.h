@@ -82,8 +82,8 @@ using TrainData = std::tuple<InputMatrix, OutputMatrix, float, delete_flag>;
 constexpr u_int n_playout = 400;
 constexpr u_int play_batch_size = 1;
 constexpr u_int epochs = 5;
-constexpr u_int check_freq = 100;
-constexpr u_int save_freq = 100;
+constexpr u_int check_freq = 96;
+constexpr u_int save_freq = 96;
 constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;
 #endif
