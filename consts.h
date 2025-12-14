@@ -9,11 +9,11 @@
 
 // Uncomment to enable features
 // measure time taken by various MCTS components(used for debugging)
-#define measureTime
+//#define measureTime
 // use transposition table(used in self-play)
-#define transTable
+//#define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
-#define dirichletNoise
+//#define dirichletNoise
 
 using u_int = unsigned int;
 
@@ -84,6 +84,6 @@ constexpr u_int play_batch_size = 1;
 constexpr u_int epochs = 5;
 constexpr u_int check_freq = 100;
 constexpr u_int save_freq = 100;
-constexpr u_int capacity = 10000;
+constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;
 #endif

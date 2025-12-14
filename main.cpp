@@ -1,18 +1,19 @@
 #include "train.h"
+#include "modelcompare.h"
 #include <iostream>
 #include <tuple>
 #include <string>
 #include <algorithm>
 
-int main(){
-    std::string mod;
-    std::cin >> mod;
+int main(int argc, char** argv) {
+    std::string mod = argv[1];
 
     if(mod == "train"){
-        std::string model_file;
-        int game_num, num_thread;
-        bool is_shown;
-        std::cin >> model_file >> game_num >> num_thread >> is_shown;
+        std::string model_file = argv[2];
+        int game_num = std::stoi(argv[3]);
+        int num_thread = std::stoi(argv[4]);
+        bool is_shown = static_cast<bool>(std::stoi(argv[5]));
+
         TrainPipeline line(model_file, model_file, true); // use gpu
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         line.run(game_num, num_thread, is_shown, 0.5f, default_model_type); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
@@ -20,29 +21,32 @@ int main(){
         std::cout << "total time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
     }
     else if(mod == "play"){
-        std::string model_file;
-        int co, playout;
-        std::cin >> model_file >> co >> playout; // human color
+        std::string model_file = argv[2];
+        int co = std::stoi(argv[3]); // human color
+        int playout = std::stoi(argv[4]);
         ModelCompare::play(model_file, (color)co, playout, 10.0f, true, true);
     }
+    else if(mod == "gtp"){
+        std::string model_file = argv[2];
+        int co = std::stoi(argv[3]); // human color
+        int playout = std::stoi(argv[4]);
+        ModelCompare::playGTP(model_file, (color)co, playout, 10.0f, true, false);
+    }
     else if(mod == "evaluate_two"){
-        std::string target, compare;
-        int n_games;
-        float temp;
-        std::cin >> target >> compare;
-        std::cin >> n_games;
-        std::cin >> temp; // < 1.0f
+        std::string target = argv[2];
+        std::string compare = argv[3];
+        int n_games = std::stoi(argv[4]);
+        float temp = std::stof(argv[5]); // < 1.0f
         ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, true, true, temp, n_games);
     }
     else if(mod == "evaluate_multi"){
-        int n_models, n_games;
-        float temp;
-        std::cin >> n_models;
+        int n_models = argc - 4;
         std::vector<std::string> model_list(n_models);
         for(int i=0; i<n_models; ++i)
-            std::cin >> model_list[i];
-        std::cin >> n_games;
-        std::cin >> temp; // < 1.0f
+            model_list[i] = argv[2 + i];
+
+        int n_games = std::stoi(argv[2 + n_models]);
+        float temp = std::stof(argv[3 + n_models]); // < 1.0f
         ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games);
     }
 }

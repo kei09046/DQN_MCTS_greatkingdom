@@ -1,3 +1,6 @@
+#ifndef MODELCOMPARE_H
+#define MODELCOMPARE_H
+
 #include <array>
 #include <string>
 #include "PMCTS.h"
@@ -39,3 +42,5 @@ private:
 
 	static void cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp);
 };
+
+#endif
