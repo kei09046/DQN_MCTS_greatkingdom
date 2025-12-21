@@ -19,7 +19,7 @@ using u_int = unsigned int;
 
 //for model management
 const std::string model_path = "./models/";
-const std::string default_model_type = "h";
+const std::string default_model_type = "i";
 
 // for hash
 using HashValue = uint64_t;

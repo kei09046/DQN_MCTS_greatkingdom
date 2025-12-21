@@ -25,11 +25,11 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 
 		if (is_shown) {
 			for (auto& moves : seq)
-				part_res << moves.first << moves.second << " ";
+				part_res << static_cast<int>(moves.first) << static_cast<int>(moves.second) << " ";
 		}
 
         if(is_shown)
-            part_res << res << std::endl;
+            part_res << static_cast<int>(res) << std::endl;
         return res == BLACK ? 1.0f : 0.0f;
 	}
 }
@@ -138,6 +138,7 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	delete oppo_player;
 	delete eo;
 	delete et;
+	total_res << "win count : " << std::count(b.begin(), b.end(), true) << std::endl;
 	return std::count(b.begin(), b.end(), true) / static_cast<float>(n_games << 1);
 }
 
