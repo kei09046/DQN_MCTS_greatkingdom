@@ -3,6 +3,8 @@
 
 #include <array>
 #include <string>
+#include <iostream>
+#include <fstream>
 #include "PMCTS.h"
 #include "consts.h"
 #include "elo.h"
@@ -14,7 +16,7 @@ public:
 
 	static void play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // play against human
 
-	static void playGTP(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // play against human via GTP
+	static void playGTP(const std::string& model, int playout, float temp, bool gpu); // play against human via GTP
 
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);

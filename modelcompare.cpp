@@ -68,7 +68,7 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 	return;
 }
 
-void ModelCompare::playGTP(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
+void ModelCompare::playGTP(const std::string& model, int playout, float temp, bool gpu) {
     Game game_manager = Game();
 	auto evaluator = new Evaluator(model_path + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
@@ -83,18 +83,22 @@ void ModelCompare::playGTP(const std::string& model, color side, int playout, fl
         iss >> cmd;
 
         if (cmd == "protocol_version") ok("2");
-        else if (cmd == "name") ok("MyEngine");
+        else if (cmd == "name") ok(model_path + model);
         else if (cmd == "version") ok("0.1");
         else if (cmd == "list_commands")
         ok("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
-        else if (cmd == "boardsize") ok();
+        else if (cmd == "boardsize") ok(std::to_string(boardSize));
         else if (cmd == "clear_board") {
             game_manager = Game();
             player.reset();
             ok();
         }
-        else if (cmd == "play") cmd_play(iss, game_manager, player);
-        else if (cmd == "genmove") cmd_genmove(iss, game_manager, player, temp);
+        else if (cmd == "play"){ 
+			cmd_play(iss, game_manager, player);
+		}
+        else if (cmd == "genmove") {
+			cmd_genmove(iss, game_manager, player, temp);
+		}
         else if (cmd == "quit") { ok(); break; }
         else ok();
     }
@@ -180,6 +184,12 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 
 Move ModelCompare::parse_vertex(const std::string& v) {
     // e.g. "D4"
+	if(v == "pass"){
+		return passMove;
+	}
+	if(v == "resign"){
+		return resignMove;
+	}
     char col = v[0];
     int row = std::stoi(v.substr(1));
 
@@ -194,7 +204,6 @@ void ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& pl
     Move m = parse_vertex(v);
     color res = game_manager.makeMove(m);
     player.jump(m);
-
     ok();
 }
 
@@ -213,11 +222,18 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
     color res = game_manager.makeMove(m);
     player.jump(m);
 
-    // convert to GTP coord
-    char col = m.second + 'A';
-    std::string v;
-    v += col;
-    v += std::to_string(m.first + 1);
-
-    ok(v);
+	if(m == passMove){
+		ok("pass");
+	}
+	else if(m == resignMove){
+		ok("resign");
+	}
+	else{
+		// convert to GTP coord
+		char col = m.second + 'A';
+		std::string v;
+		v += col;
+		v += std::to_string(m.first + 1);
+		ok(v);
+	}
 }

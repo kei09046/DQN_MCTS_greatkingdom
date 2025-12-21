@@ -28,9 +28,8 @@ int main(int argc, char** argv) {
     }
     else if(mod == "gtp"){
         std::string model_file = argv[2];
-        int co = std::stoi(argv[3]); // human color
-        int playout = std::stoi(argv[4]);
-        ModelCompare::playGTP(model_file, (color)co, playout, 10.0f, true, false);
+        int playout = std::stoi(argv[3]);
+        ModelCompare::playGTP(model_file, playout, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
         std::string target = argv[2];
