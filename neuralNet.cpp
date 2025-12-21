@@ -74,6 +74,24 @@ v_fc2(256, 1){
 	register_module("v_fc2", v_fc2);
 }
 
+std::tuple<torch::Tensor, torch::Tensor> INet::forward(const torch::Tensor& state)
+{
+	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
+	for (auto& rb : blocks) {
+		x = rb->forward(x);
+	}
+	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
+	log_act = log_act.view({ -1, 2 * inputSize });
+	log_act = at_fc1(log_act);
+
+	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
+	val = val.view({-1, inputSize});
+	val = torch::nn::functional::relu(v_fc1(val));
+	val = v_fc2(val);
+	val = torch::tanh(val);
+	return make_tuple(log_act, val);
+}
+
 std::tuple<torch::Tensor, torch::Tensor> GNet::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
