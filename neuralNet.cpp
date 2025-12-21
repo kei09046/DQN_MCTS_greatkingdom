@@ -194,10 +194,14 @@ PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_typ
  use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type)
 {
 	if (model_file.ends_with(".pt")) {
-		std::shared_ptr<GNet> net;
+		std::shared_ptr<NetBase> net;
 
-		if(model_type == "g" || model_type == "h")
+		if(model_type == "g" || model_type == "h"){
 			net = std::make_shared<GNet>();
+		}
+		else if(model_type == "i"){
+			net = std::make_shared<INet>();
+		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
 		}
@@ -205,7 +209,7 @@ PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_typ
 		policy_value_net = std::move(net);
 	}   
 	else{
-		policy_value_net = std::make_shared<GNet>();
+		policy_value_net = std::make_shared<INet>();
 	}
 
 	policy_value_net->to(device);
