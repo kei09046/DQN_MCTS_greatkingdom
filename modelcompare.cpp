@@ -124,7 +124,6 @@ std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
 	return result;
 }
 
-
 float ModelCompare::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
 	bool gpu, float temp, int n_games) {
 	auto eo = new Evaluator(model_path + mod_one, gpu);

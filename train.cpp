@@ -2,7 +2,7 @@
 
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(model_path + init_model, gpu), inference_model(model_path + init_model, gpu),
-	prev_policy(model_path + test_model, gpu){
+	prev_policy(model_path + test_model, gpu), current_best_model_path(model_path + test_model){
 	state_batch = new std::array<float, inputChannel * batchSize * inputSize>();
 	nextmove_batch = new std::array<float, batchSize* (outputSize)>();
 	winner_batch = new std::array<float, batchSize>();
@@ -227,11 +227,23 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
 							return s; }); // wait until all train and self_play threads are paused
 
+					const std::string save_path = model_path + model_file;
+					train_model.save_model(save_path); // save model to file
+					#ifdef googleDrive
+					train_model.save_model(save_path); // save model to file
+					#endif
+
+					float win_rate = ModelCompare::policy_evaluate(save_path, current_best_model_path, std::cout, std::cout, false, true, 0.5f, 10);
+					if(win_rate > 0.55f){
+						std::cout << "Best model updated! " << current_best_model_path << " to " << save_path;
+						current_best_model_path = save_path;
+					}
+
 					// critical section
 					model_file = model_prefix + std::to_string(games_played + save_cnt);
 					evaluator->updateModel(&train_model); // synchronize train_model and inference_model
-					train_model.save_model(model_path + model_file + std::string(".pt")); // save model to file
-					std::cout << "model properly saved" << std::endl;
+					
+					std::cout << "model properly saved " << games_played << std::endl;
 					pause_flag.store(false); // restart train thread
 					train_cv.notify_one(); // notify train thread
 				}

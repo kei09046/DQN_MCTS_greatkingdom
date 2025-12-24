@@ -7,6 +7,7 @@
 #include "random.h"
 #include "rotation.h"
 #include "consts.h"
+#include "modelcompare.h"
 #include <string>
 #include <deque>
 #include <utility>
@@ -31,6 +32,8 @@ private:
 	PolicyValueNet prev_policy; // used for comparison
 	PolicyValueNet inference_model, train_model;
 	std::mutex buffer_mutex;
+	
+	std::string current_best_model_path;
 
 	void pin_threads_to_core(std::thread& th, int core_id);
 
