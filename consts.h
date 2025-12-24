@@ -14,7 +14,7 @@
 #define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
 #define dirichletNoise
-// save to google drive
+// save to google drive. Only in colab.
 #define googleDrive
 
 using u_int = unsigned int;
@@ -23,7 +23,7 @@ using u_int = unsigned int;
 const std::string model_path = "./models/";
 const std::string default_model_type = "i";
 #ifdef googleDrive
-const std::string drive_path = "../drive/MyDrive";
+const std::string drive_path = "../drive/MyDrive/";
 #endif
 
 // for hash
