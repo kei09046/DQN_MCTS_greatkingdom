@@ -5,6 +5,8 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <thread>
+#include <atomic>
 #include "PMCTS.h"
 #include "consts.h"
 #include "elo.h"
@@ -22,7 +24,7 @@ public:
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
 
 	static float policy_evaluate(const std::string& mod_one, const std::string& mod_two, 
-		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100);
+		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 96, int n_thread=16);
 
 	static std::vector<float> policy_evaluate(std::vector<std::string> model_list, // return list of elo
 		std::ostream& total_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100);

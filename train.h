@@ -33,7 +33,7 @@ private:
 	PolicyValueNet inference_model, train_model;
 	std::mutex buffer_mutex;
 	
-	std::string current_best_model_path;
+	std::string current_best_model_file;
 
 	void pin_threads_to_core(std::thread& th, int core_id);
 

@@ -125,20 +125,39 @@ std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
 }
 
 float ModelCompare::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
-	bool gpu, float temp, int n_games) {
+	bool gpu, float temp, int n_games, int n_thread) {
 	auto eo = new Evaluator(model_path + mod_one, gpu);
 	auto et = new Evaluator(model_path + mod_two, gpu);
+	std::vector<MCTS*> base_players, oppo_players;
+
+	for(int i=0; i<n_thread; ++i){
+		base_players.emplace_back(n_playout, eo);
+		oppo_players.emplace_back(n_playout, et);
+	}
 	MCTS* base_player = new MCTS(n_playout, eo);
 	MCTS* oppo_player = new MCTS(n_playout, et);
 
-	std::vector<bool> b = play_match(base_player, oppo_player, total_res, is_shown, temp, n_games);
+	std::vector<std::thread> evaluate_threads;
+	std::atomic<int> total_win = 0;
+	for(int i=0; i<n_thread; ++i){
+		evaluate_threads.emplace_back([&, i]{
+			std::vector<bool> b = play_match(base_players[i], oppo_players[i], total_res, is_shown, temp, n_games / n_thread);
+			total_win += std::count(b.begin(), b.end(), true);
+		}
+		);
+	}
+	for(auto& th : evaluate_threads){
+		th.join();
+	}
 
-	delete base_player;
-	delete oppo_player;
+	for(int i=0; i<n_thread; ++i){
+		delete base_players[i];
+		delete oppo_players[i];
+	}
 	delete eo;
 	delete et;
-	total_res << "win count : " << std::count(b.begin(), b.end(), true) << std::endl;
-	return std::count(b.begin(), b.end(), true) / static_cast<float>(n_games << 1);
+	total_res << "win count : " << total_win << std::endl;
+	return total_win / static_cast<float>(n_games << 1);
 }
 
 std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_list,
@@ -181,21 +200,6 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 	return ratings;
 }
 
-
-Move ModelCompare::parse_vertex(const std::string& v) {
-    // e.g. "D4"
-	if(v == "pass"){
-		return passMove;
-	}
-	if(v == "resign"){
-		return resignMove;
-	}
-    char col = v[0];
-    int row = std::stoi(v.substr(1));
-
-    return {static_cast<uint8_t>(row - 1), static_cast<uint8_t>(col - 'A')};
-}
-
 void ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
     char c;
     std::string v;
@@ -236,4 +240,18 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
 		v += std::to_string(m.first + 1);
 		ok(v);
 	}
+}
+
+Move ModelCompare::parse_vertex(const std::string& v) {
+    // e.g. "D4"
+	if(v == "pass"){
+		return passMove;
+	}
+	if(v == "resign"){
+		return resignMove;
+	}
+    char col = v[0];
+    int row = std::stoi(v.substr(1));
+
+    return {static_cast<uint8_t>(row - 1), static_cast<uint8_t>(col - 'A')};
 }
