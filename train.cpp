@@ -235,7 +235,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					#endif
 					std::cout << "model properly saved " << games_played << std::endl;
 					
-					if((games_played + save_cnt) % save_freq == 0){
+					if((games_played + save_cnt) % check_freq == 0){
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
 							std::cout, std::cout, false, true, 0.5f, compare_game_cnt / 2, compare_threads);
 						std::cout << "model " << model_file << " vs " << current_best_model_file << " winrate " << win_rate << std::endl;
