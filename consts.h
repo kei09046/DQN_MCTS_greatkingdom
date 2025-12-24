@@ -9,13 +9,13 @@
 
 // Uncomment to enable features
 // measure time taken by various MCTS components(used for debugging)
- #define measureTime
+#define measureTime
 // use transposition table(used in self-play)
- #define transTable
+#define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
- #define dirichletNoise
+#define dirichletNoise
 // save to google drive
-// #define googleDrive
+#define googleDrive
 
 using u_int = unsigned int;
 
@@ -87,8 +87,8 @@ using TrainData = std::tuple<InputMatrix, OutputMatrix, float, delete_flag>;
 constexpr u_int n_playout = 400;
 constexpr u_int play_batch_size = 1;
 constexpr u_int epochs = 5;
-constexpr u_int check_freq = 32;
-constexpr u_int save_freq = 32; // 96
+constexpr u_int check_freq = 480;
+constexpr u_int save_freq = 96; // 96
 constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;
 #endif
