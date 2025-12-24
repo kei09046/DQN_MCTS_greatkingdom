@@ -11,11 +11,11 @@
 // measure time taken by various MCTS components(used for debugging)
 // #define measureTime
 // use transposition table(used in self-play)
-// #define transTable
+#define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
-// #define dirichletNoise
+#define dirichletNoise
 // save to google drive
-// #define googleDrive
+#define googleDrive
 
 using u_int = unsigned int;
 
@@ -23,7 +23,7 @@ using u_int = unsigned int;
 const std::string model_path = "./models/";
 const std::string default_model_type = "i";
 #ifdef googleDrive
-const std::string drive_path = "../drive/"
+const std::string drive_path = "../drive/MyDrive";
 #endif
 
 // for hash
