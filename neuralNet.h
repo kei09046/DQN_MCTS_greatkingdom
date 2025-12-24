@@ -96,6 +96,8 @@ public:
 		std::array<float, batchSize>& winner_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
+
+	void load_model(const std::string& model_file);
 };
 
 #endif

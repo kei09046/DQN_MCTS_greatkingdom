@@ -18,4 +18,6 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
  added evaluator class which improved multithread performance significantly. (~50% speedup on 4 threads compared to ~12% before)
  added more domain knowledge in move selection
  On 16 threads, 14mins/100 games(next version) on local environment, 21mins/100 games on colab A100 GPU.
+ Added gtp support
+ Added multithread model comparison(~6x faster on 16threads)
 

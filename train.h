@@ -31,6 +31,7 @@ private:
 	unsigned int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet prev_policy; // used for comparison
 	PolicyValueNet inference_model, train_model;
+	bool gpu;
 	std::mutex buffer_mutex;
 	
 	std::string current_best_model_file;

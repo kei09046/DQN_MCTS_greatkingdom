@@ -2,7 +2,7 @@
 
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(model_path + init_model, gpu), inference_model(model_path + init_model, gpu),
-	prev_policy(model_path + test_model, gpu), current_best_model_file(test_model){
+	prev_policy(model_path + test_model, gpu), current_best_model_file(test_model), gpu(gpu){
 	state_batch = new std::array<float, inputChannel * batchSize * inputSize>();
 	nextmove_batch = new std::array<float, batchSize* (outputSize)>();
 	winner_batch = new std::array<float, batchSize>();
@@ -235,11 +235,17 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					#endif
 					std::cout << "model properly saved " << games_played << std::endl;
 					
-					std::cout << "evaluating models..." << std::endl;
-					float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, std::cout, std::cout, false, true, 0.5f, 96, 16);
-					if(win_rate > 0.55f){
-						std::cout << "Best model updated! " << current_best_model_file << " to " << model_file;
-						current_best_model_file = model_file;
+					if((games_played + save_cnt) % save_freq == 0){
+						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, std::cout, std::cout, false, true, 0.5f, 64, 16);
+						std::cout << "model " << model_file << " vs " << current_best_model_file << " winrate " << win_rate << std::endl;
+						if(win_rate > 0.55f){
+							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
+							current_best_model_file = model_file;
+						}
+						else if(win_rate < 0.45f){
+							std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
+							train_model.load_model(model_path + current_best_model_file);
+						}
 					}
 
 					// critical section

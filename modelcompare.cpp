@@ -114,12 +114,10 @@ std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
 	for (int i = 0; i < n_games; ++i) {
 		//player_one plays as black
 		result[i] = static_cast<bool>(ModelCompare::start_play({ player_one, player_two }, total_res, is_shown, temp));
-		// total_res << win_cnt << "/" << i + 1 << std::endl;
 	}
 
 	for (int i = n_games; i < (n_games << 1); ++i) {
 		result[i] = !static_cast<bool>(ModelCompare::start_play({ player_two, player_one }, total_res, is_shown, temp));
-		// total_res << win_cnt << "/" << i + 1 << std::std::endl;
 	}
 	return result;
 }
@@ -130,12 +128,10 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	auto et = new Evaluator(model_path + mod_two, gpu);
 	std::vector<MCTS*> base_players, oppo_players;
 
-	for(int i=0; i<n_thread; ++i){
-		base_players.emplace_back(n_playout, eo);
-		oppo_players.emplace_back(n_playout, et);
+	for(int i=0; i<n_thread; ++i){ // doesn't work. cannot convert ‘Evaluator*’ to ‘MCTS*’ in initialization
+		base_players.push_back(new MCTS(n_playout, eo));
+		oppo_players.push_back(new MCTS(n_playout, et));
 	}
-	MCTS* base_player = new MCTS(n_playout, eo);
-	MCTS* oppo_player = new MCTS(n_playout, et);
 
 	std::vector<std::thread> evaluate_threads;
 	std::atomic<int> total_win = 0;

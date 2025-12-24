@@ -193,29 +193,7 @@ std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameB
 PolicyValueNet::PolicyValueNet(const string& model_file, const string& model_type, bool use_gpu):
  use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type)
 {
-	if (model_file.ends_with(".pt")) {
-		std::shared_ptr<NetBase> net;
-
-		if(model_type == "g" || model_type == "h"){
-			net = std::make_shared<GNet>();
-		}
-		else if(model_type == "i"){
-			net = std::make_shared<INet>();
-		}
-		else{
-			throw std::runtime_error("Unknown model type: " + model_type);
-		}
-		torch::load(net, model_file);   
-		policy_value_net = std::move(net);
-	}   
-	else{
-		policy_value_net = std::make_shared<INet>();
-	}
-
-	policy_value_net->to(device);
-	torch::optim::AdamOptions opts(l2_const);
-	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), opts);
-	std::cout << "Model loaded: " << model_file << std::endl;
+	load_model(model_file);
 }
 
 PolicyValueNet::PolicyValueNet(const string& model_file, bool use_gpu): 
@@ -328,4 +306,30 @@ void PolicyValueNet::save_model(const string& model_file) const
 	else{
 		throw std::runtime_error("Unknown model type when saving: " + model_type);
 	}
+}
+
+void PolicyValueNet::load_model(const string& model_file){
+	if (model_file.ends_with(".pt")) {
+		std::shared_ptr<NetBase> net;
+
+		if(model_type == "g" || model_type == "h"){
+			net = std::make_shared<GNet>();
+		}
+		else if(model_type == "i"){
+			net = std::make_shared<INet>();
+		}
+		else{
+			throw std::runtime_error("Unknown model type: " + model_type);
+		}
+		torch::load(net, model_file);   
+		policy_value_net = std::move(net);
+	}   
+	else{
+		policy_value_net = std::make_shared<INet>();
+	}
+
+	policy_value_net->to(device);
+	torch::optim::AdamOptions opts(l2_const);
+	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), opts);
+	std::cout << "Model loaded: " << model_file << std::endl;
 }

@@ -6,8 +6,9 @@
 #include <algorithm>
 
 int main(int argc, char** argv) {
-    std::string mod = argv[1];
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
+    std::string mod = argv[1];
     if(mod == "train"){
         std::string model_file = argv[2];
         int game_num = std::stoi(argv[3]);
@@ -15,10 +16,7 @@ int main(int argc, char** argv) {
         bool is_shown = static_cast<bool>(std::stoi(argv[5]));
 
         TrainPipeline line(model_file, model_file, true); // use gpu
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         line.run(game_num, num_thread, is_shown, 0.5f, default_model_type); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        std::cout << "total time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
     }
     else if(mod == "play"){
         std::string model_file = argv[2];
@@ -34,9 +32,11 @@ int main(int argc, char** argv) {
     else if(mod == "evaluate_two"){
         std::string target = argv[2];
         std::string compare = argv[3];
-        int n_games = std::stoi(argv[4]);
-        float temp = std::stof(argv[5]); // < 1.0f
-        ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, true, true, temp, n_games);
+        float temp = std::stof(argv[4]); // < 1.0f
+        int n_games = std::stoi(argv[5]);
+        int n_threads = std::stoi(argv[6]);
+        float winRate = ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, false, true, temp, n_games, n_threads);
+        std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){
         int n_models = argc - 4;
@@ -48,4 +48,7 @@ int main(int argc, char** argv) {
         float temp = std::stof(argv[3 + n_models]); // < 1.0f
         ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games);
     }
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "total time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
 }
