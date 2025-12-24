@@ -227,7 +227,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
 							return s; }); // wait until all train and self_play threads are paused
 
-					const std::string save_path = model_path + model_file;
+					const std::string save_path = model_path + model_file + ".pt";
 					train_model.save_model(save_path); // save model to file
 					#ifdef googleDrive
 					train_model.save_model(save_path); // save model to file
