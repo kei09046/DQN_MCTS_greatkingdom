@@ -159,7 +159,25 @@ void Node::expand(){
 float Node::searchandPropagate(Evaluator* evaluator){
     if(N++ == 0){
         expand(); // expansion phase, assign children for each possible move
+    }
 
+    // if terminal case
+    if(winmove != resignMove){ // position is won
+        W--;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
+        return 1.0f;
+    }
+    if(available_moves.size() == 0){ // position is lost
+        W++;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
+        return -1.0f;
+    }
+
+    if(N == 1){
         #ifdef measureTime
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         #endif
@@ -185,21 +203,6 @@ float Node::searchandPropagate(Evaluator* evaluator){
     }
 
     // selection phase
-    if(winmove != resignMove){ // position is won
-        W--;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return 1.0f;
-    }
-    if(available_moves.size() == 0){ // position is lost
-        W++;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return -1.0f;
-    }
-    
     // in non terminal case, pick move based on cPUCT formula.
     int maxi = 0;
     float pref, maxval = -1.0f;
@@ -385,11 +388,13 @@ MCTS::~MCTS(){
 }
 
 void MCTS::runSimulation(){
+    root->searchandPropagate(evaluator);
+    
     #ifdef dirichletNoise
     root->addDirichletNoise();
     #endif
 
-    for(int i=0; i<playout; ++i){
+    for(int i=0; i<playout-1; ++i){
         root->searchandPropagate(evaluator);
     }
 }
