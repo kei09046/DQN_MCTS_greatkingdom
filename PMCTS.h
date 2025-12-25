@@ -16,12 +16,15 @@
 #include <numeric>
 #include <unordered_map>
 #include <memory>
+#include <atomic>
 
 
 class alignas(64) Node{
 private:
     const Game game; // includes position, territory, valid moves etc. for heuristic
-    float N, W, P, initQ; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    float N, W, initQ; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    std::vector<float> edgeP;
+    std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
     const color turn;
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
@@ -46,6 +49,10 @@ public:
     MoveData selectMoveProb(float temperature);
 
     Node* jump(Move move);
+
+    #ifdef dirichletNoise
+    void addDirichletNoise();
+    #endif
 
     #ifndef transTable
     void deleteTree();

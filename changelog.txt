@@ -20,4 +20,7 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
  On 16 threads, 14mins/100 games(next version) on local environment, 21mins/100 games on colab A100 GPU.
  Added gtp support
  Added multithread model comparison(~6x faster on 16threads)
+ Found bug on transposition table; If transposition table is used, edge statistics should be managed separately with node statistics.(visit count)
+ Turn transposition table off until fixed. 
+ Also fixed dirichlet noise(only affects node)
 

@@ -60,10 +60,10 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
     return exp_logit;
 }
 
-// N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+// N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), P(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::addChild(int r, int c, Game ng){
@@ -158,34 +158,14 @@ void Node::expand(){
 
 float Node::searchandPropagate(Evaluator* evaluator){
     if(N++ == 0){
-        expand();
-        //std::cerr << available_moves.size() << " children expanded." << std::endl;
-    }
-    
-    if(winmove != resignMove){ // position is won
-        W--;
-        //std::cerr << static_cast<int>(winmove.first) << "," << static_cast<int>(winmove.second) << " is winning move." << std::endl;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return 1.0f;
-    }
-    if(available_moves.size() == 0){ // position is lost
-        W++;
-        //std::cerr << "no available moves, lost position" << std::endl;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return -1.0f;
-    }
+        expand(); // expansion phase, assign children for each possible move
 
-    if(N == 1){
         #ifdef measureTime
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         #endif
 
         NNResultBuf buf;
-        bool cacheHit = evaluator->evaluate(buf, &game, hashValue);
+        bool cacheHit = evaluator->evaluate(buf, &game, hashValue); // evaluation phase, set p q
         auto entry = buf.result;
         auto& logp = entry->first;
         auto q = entry->second;
@@ -196,27 +176,31 @@ float Node::searchandPropagate(Evaluator* evaluator){
         evalCacheHit += cacheHit ? 1 : 0;
         #endif
 
-        std::vector<float> p = softmax(logp, available_moves);
-
-        #ifdef dirichletNoise
-        std::vector<float> eta = sample_dirichlet(available_moves.size(), alpha);
-        for(int i=0; i<available_moves.size(); ++i){
-            child[i]->P = (1-eps) * p[i] + eps * eta[i];
-        }
-        #endif
-
-        #ifndef dirichletNoise
-        for(int i=0; i<available_moves.size(); ++i){
-            child[i]->P = p[i];
-        }
-        #endif
+        edgeP = softmax(logp, available_moves);
+        edgeN = std::vector<float>(edgeP.size(), 0.0f);
 
         initQ = q;
         W += q;
         return -q;
     }
-    
 
+    // selection phase
+    if(winmove != resignMove){ // position is won
+        W--;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
+        return 1.0f;
+    }
+    if(available_moves.size() == 0){ // position is lost
+        W++;
+        #ifdef measureTime
+        terminalHit++;
+        #endif
+        return -1.0f;
+    }
+    
+    // in non terminal case, pick move based on cPUCT formula.
     int maxi = 0;
     float pref, maxval = -1.0f;
 
@@ -224,7 +208,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     #endif
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((child[i]->N == 0) ? 0.0f : child[i]->W / child[i]->N) + cPuct * child[i]->P * sqrt(N)/(1 + child[i]->N);
+        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
@@ -236,7 +220,9 @@ float Node::searchandPropagate(Evaluator* evaluator){
     searchTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
     #endif
 
-    float r = child[maxi]->searchandPropagate(evaluator); // rarely, NN eval seems to contain corrupted value.
+    edgeN[maxi]++;
+    float r = child[maxi]->searchandPropagate(evaluator);
+    // backprop phase
     W += r;
     return -r;
 }
@@ -253,11 +239,11 @@ Move Node::selectMove(float temp){
 
     int maxi, maxn = -1, index;
     for(int i=0; i<available_moves.size(); ++i){
-        if(child[i]->N > maxn){
-            maxn = child[i]->N;
+        if(edgeN[i] > maxn){
+            maxn = edgeN[i];
             maxi = i;
         }
-        weights[i] = std::pow(child[i]->N, temp);
+        weights[i] = std::pow(edgeN[i], temp);
     }
 
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -273,8 +259,8 @@ Move Node::selectMove(float temp){
 
     for(int i=0; i<available_moves.size(); ++i){
         std::cerr << "move : " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
-        " sc: " << child[i]->N << " wc: " << 
-        child[i]->W << " initQ : " << child[i]->initQ << " P " << child[i]->P << std::endl;
+        " sc: " << edgeN[i] << " Q: " << 
+        child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " P " << edgeP[i] << std::endl;
     }
     return available_moves[maxi];
 }
@@ -292,12 +278,12 @@ MoveData Node::selectMoveProb(float temp){
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
     int maxi, maxn = -1;
     for(int i=0; i<available_moves.size(); ++i){
-        if(child[i]->N > maxn){
-            maxn = child[i]->N;
+        if(edgeN[i] > maxn){
+            maxn = edgeN[i];
             maxi = i;
         }
-        weights[i] = std::pow(child[i]->N, temp);
-        visitPortion[available_moves[i].first * colSize + available_moves[i].second] = child[i]->N/N;
+        weights[i] = std::pow(edgeN[i], temp);
+        visitPortion[available_moves[i].first * colSize + available_moves[i].second] = edgeN[i]/N;
     }
 
     // std::cout << "visit portion" << std::endl;
@@ -368,6 +354,14 @@ void Node::deleteTree(Node* exception){
 }
 #endif
 
+#ifdef dirichletNoise 
+void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not added to same node twice. In greatKingdom, there's no repetition. 
+    std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
+    for(int i=0; i<edgeP.size(); ++i)
+        edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
+}
+#endif
+
 
 MCTS::MCTS(int playout, Evaluator* evaluator) : 
 playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
@@ -391,8 +385,11 @@ MCTS::~MCTS(){
 }
 
 void MCTS::runSimulation(){
+    #ifdef dirichletNoise
+    root->addDirichletNoise();
+    #endif
+
     for(int i=0; i<playout; ++i){
-        //std::cerr << "on playout " << i << std::endl;
         root->searchandPropagate(evaluator);
     }
 }
