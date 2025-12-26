@@ -36,34 +36,41 @@ void MCTS::resetTimeStats(){
 
 const Hash hash;
 
-std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
+std::vector<std::atomic<float>> Node::softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
     std::vector<float> n_logit;
-    n_logit.reserve(available_moves.size());
+    int size = available_moves.size();
+
+    n_logit.reserve(size);
     for(const auto& move : available_moves){
         n_logit.push_back(logit[move.first * colSize + move.second]);
     }
-
-    std::vector<float> exp_logit(n_logit.size());
     float max_logit = *std::max_element(n_logit.begin(), n_logit.end()); // For numerical stability
 
     // Compute exponentials after subtracting max_logit
+    std::vector<float> exp_logit(size);
     float sum_exp = 0.0f;
-    for (size_t i = 0; i < n_logit.size(); ++i) {
+    for (size_t i = 0; i < size; ++i) {
         exp_logit[i] = std::exp(n_logit[i] - max_logit);
         sum_exp += exp_logit[i];
     }
 
     // Normalize
-    for (float& val : exp_logit) {
+    for (auto& val : exp_logit) {
         val /= sum_exp;
     }
-    return exp_logit;
+
+    std::vector<std::atomic<float>> ret(size);
+    for(size_t i=0; i<size; ++i)
+        ret[i].store(exp_logit[i]);
+
+    return ret;
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
-Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
+Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table, Evaluator* evaluator):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table),
+ evaluator(evaluator), state(NodeState_::NEEDEXPAND){
 }
 
 void Node::addChild(int r, int c, Game ng){
@@ -72,7 +79,7 @@ void Node::addChild(int r, int c, Game ng){
 
     #ifdef transTable
     if(trans_table->count(newHash) == 0){
-        childNode = new Node(ng, newHash, trans_table);
+        childNode = new Node(ng, newHash, trans_table, evaluator);
         (*trans_table)[newHash] = childNode;
     }
     else{
@@ -80,7 +87,7 @@ void Node::addChild(int r, int c, Game ng){
     }
     #endif
     #ifndef transTable
-    childNode = new Node(ng, newHash, trans_table);
+    childNode = new Node(ng, newHash, trans_table, evaluator);
     #endif
     child.push_back(childNode);
     available_moves.push_back({r, c});
@@ -156,78 +163,103 @@ void Node::expand(){
     #endif
 }
 
-float Node::searchandPropagate(Evaluator* evaluator){
-    if(N++ == 0){
-        expand(); // expansion phase, assign children for each possible move
+float Node::evaluate(){
+    NNResultBuf buf;
+    bool cacheHit = evaluator->evaluate(buf, &game, hashValue); // evaluation phase, set p q
+    auto entry = buf.result;
+    auto& logp = entry->first;
+    auto q = entry->second;
+
+    edgeP = softmax(logp, available_moves);
+    edgeN = std::vector<std::atomic<float>>(edgeP.size());
+    for(auto& v : edgeN)
+        v.store(0.0f);
+
+    initQ = q;
+    W.fetch_add(q);
+    N.fetch_add(1.0f);
+    return q;
+}
+
+float Node::searchandPropagate(){
+    NodeState_ current_state = state.load(std::memory_order_acquire); // thread-wise copy of current state
+
+    if(current_state == NodeState_::NEEDEXPAND){
+        bool suc = state.compare_exchange_strong(current_state, NodeState_::EXPANDING, std::memory_order_acq_rel);
+        if(!suc){ // other thread is here and handling the work. From here on, it's guaranteed that only one thread is handling this part.
+            return errorReturn; // don't count
+        }
+        expand(); // expansion phase, assign children for each possible move. Modifies available_move and winmove.
+        state.store(NodeState_::NEEDEVAL, std::memory_order_release);
+        current_state = NodeState_::NEEDEVAL;
+    }
+    else if(current_state == NodeState_::EXPANDING){
+        return errorReturn;
     }
 
-    // if terminal case
+    // terminal states
     if(winmove != resignMove){ // position is won
-        W--;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
+        N.fetch_add(1.0f);
+        W.fetch_add(-1.0f);
         return 1.0f;
     }
     if(available_moves.size() == 0){ // position is lost
-        W++;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
+        N.fetch_add(1.0f);
+        W.fetch_add(1.0f);
         return -1.0f;
     }
 
-    if(N == 1){
-        #ifdef measureTime
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        #endif
-
-        NNResultBuf buf;
-        bool cacheHit = evaluator->evaluate(buf, &game, hashValue); // evaluation phase, set p q
-        auto entry = buf.result;
-        auto& logp = entry->first;
-        auto q = entry->second;
-
-        #ifdef measureTime
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        evaluateTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-        evalCacheHit += cacheHit ? 1 : 0;
-        #endif
-
-        edgeP = softmax(logp, available_moves);
-        edgeN = std::vector<float>(edgeP.size(), 0.0f);
-
-        initQ = q;
-        W += q;
+    // evaluation phase; TODO : make it asynchronous.
+    if(current_state == NodeState_::NEEDEVAL){
+        bool suc = state.compare_exchange_strong(current_state, NodeState_::EVALUATING, std::memory_order_acq_rel);
+        if(!suc){ // other thread is here and handling the work. From here on, it's guaranteed that only one thread is handling this part.
+            return errorReturn; // don't count
+        }
+        
+        float q = evaluate(); // handles internal state update as well.
+        state.store(NodeState_::FINAL, std::memory_order_release);
         return -q;
     }
+    else if(current_state == NodeState_::EVALUATING){
+        return errorReturn;
+    }
 
-    // selection phase
-    // in non terminal case, pick move based on cPUCT formula.
+    // selection phase;
+    // in non terminal case, pick move based on cPUCT formula. May apply FPU(first Player Urgency)
+    assert(current_state == NodeState_::FINAL);
+
     int maxi = 0;
     float pref, maxval = -1.0f;
-
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-    #endif
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        pref = ((edgeN[i].load() == 0.0f) ? -(W.load()/N.load()) : child[i]->W.load() / child[i]->N.load()) +
+         cPuct * edgeP[i] * sqrt(N.load())/(1 + edgeN[i].load());
         
         if(maxval < pref){
             maxval = pref; 
             maxi = i;
         }
     }
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    searchTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-    #endif
 
-    edgeN[maxi]++;
-    float r = child[maxi]->searchandPropagate(evaluator);
+    //apply virtual loss
+    child[maxi]->N.fetch_add(1.0f);
+    child[maxi]->W.fetch_add(-1.0f);
+
+    float r = child[maxi]->searchandPropagate();
+
+    //revert virtual loss
+    child[maxi]->N.fetch_add(-1.0f);
+    child[maxi]->W.fetch_add(1.0f);
+
     // backprop phase
-    W += r;
-    return -r;
+    if(r == errorReturn){
+        return r;
+    }
+    else{
+        N.fetch_add(1.0f);
+        edgeN[maxi].fetch_add(1.0f);
+        W.fetch_add(r);
+        return -r;
+    }
 }
 
 Move Node::selectMove(float temp){
@@ -318,7 +350,7 @@ MoveData Node::selectMoveProb(float temp){
 Node* Node::jump(Move move){
     if(N == 0){
         expand();
-        N++;
+        N.fetch_add(1.0f);
     }
 
     int idx = -1;
@@ -358,7 +390,20 @@ void Node::deleteTree(Node* exception){
 #endif
 
 #ifdef dirichletNoise 
-void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not added to same node twice. In greatKingdom, there's no repetition. 
+void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not added to same node twice. In greatKingdom, there's no repetition.
+    // Have to make sure that expansion and evaluation are done before adding dirichlet noise
+    assert(state == NodeState_::NEEDEXPAND || state == NodeState_::NEEDEVAL || state == NodeState_::FINAL);
+
+    if(state == NodeState_::NEEDEXPAND){
+        expand();
+    }
+    if(winmove != resignMove || available_moves.size() == 0) // if terminal state
+        return;
+
+    if(state == NodeState_::NEEDEVAL || state == NodeState_::NEEDEXPAND){
+        evaluate();
+    }
+    state = NodeState_::FINAL;
     std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
     for(int i=0; i<edgeP.size(); ++i)
         edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
@@ -367,8 +412,8 @@ void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not
 
 
 MCTS::MCTS(int playout, Evaluator* evaluator) : 
-playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
-    root = new Node(Game(), hash.baseHash(), trans_table);
+playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()), thread_pool(search_thread_num){
+    root = new Node(Game(), hash.baseHash(), trans_table, evaluator);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
     #endif
@@ -385,18 +430,27 @@ MCTS::MCTS(MCTS&& other) noexcept
 
 MCTS::~MCTS(){
     delete trans_table;
+    thread_pool.join();
 }
 
 void MCTS::runSimulation(){
-    root->searchandPropagate(evaluator);
-    
     #ifdef dirichletNoise
+    // expands/evaluates if needed
     root->addDirichletNoise();
     #endif
 
-    for(int i=0; i<playout-1; ++i){
-        root->searchandPropagate(evaluator);
+    std::latch done(search_thread_num);
+    for(int j=0; j<search_thread_num; ++j){
+        boost::asio::post(thread_pool, [&, j]{
+            int cnt = 0;
+            while(cnt < playout/search_thread_num){
+                bool suc = (root->searchandPropagate() != errorReturn);
+                if(suc) cnt++;
+            }
+            done.count_down();
+        });
     }
+    done.wait();
 }
 
 Move MCTS::getMove(float temp){
@@ -428,7 +482,7 @@ void MCTS::reset(){
     #ifndef transTable
     root->deleteTree();
     #endif
-    root = new Node(Game(), hash.baseHash(), trans_table);
+    root = new Node(Game(), hash.baseHash(), trans_table, evaluator);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
     #endif

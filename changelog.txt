@@ -23,4 +23,9 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
  Found bug on transposition table; If transposition table is used, edge statistics should be managed separately with node statistics.(visit count)
  Turn transposition table off until fixed. 
  Also fixed dirichlet noise(only affects node)
+ Implemented APV-MCTS. 
+ TODO : 
+ 1. Implement thread-safe transposition table.(Currently std::unordered_map.) As of now, disable transposition table.
+ 2. Solve terminal state overexploration issue
+ 3. Implement threadpool. // done. Doesn't seem to affect performance too much.
 
