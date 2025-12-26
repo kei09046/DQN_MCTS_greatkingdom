@@ -9,13 +9,13 @@
 
 // Uncomment to enable features
 // measure time taken by various MCTS components(used for debugging)
-#define measureTime
+// #define measureTime
 // use transposition table(used in self-play)
-#define transTable
+// #define transTable
 // add dirichlet noise to the prior probabilities(used in self-play)
-#define dirichletNoise
+// #define dirichletNoise
 // save to google drive. Only in colab.
-#define googleDrive
+// #define googleDrive
 
 using u_int = unsigned int;
 
@@ -89,7 +89,8 @@ constexpr u_int play_batch_size = 1;
 constexpr u_int epochs = 5;
 constexpr u_int check_freq = 480;
 constexpr u_int compare_game_cnt = 128; // number of games played to compare models
-constexpr u_int compare_threads = 16; // should divide compare_game_cnt / 2
+constexpr u_int compare_thread_num = 16; // should divide compare_game_cnt / 2
+constexpr u_int search_thread_num = 4; // PMCTS threads
 constexpr u_int save_freq = 96; // 96
 constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;
