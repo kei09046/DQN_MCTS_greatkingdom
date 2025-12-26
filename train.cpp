@@ -202,6 +202,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 		self_play_paused[i] = false;
 	}
 
+	int train_iter = 0;
 	// Self-play threads
 	for(int j=0; j<inference_thread_num; ++j){
 		self_play_threads.emplace_back([&, j] {
@@ -234,11 +235,13 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					train_model.save_model(drive_path + model_file); // save model to file
 					#endif
 					std::cout << "model properly saved " << games_played << std::endl;
+					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
 					
 					if((games_played + save_cnt) % check_freq == 0){
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
-							std::cout, std::cout, false, true, 0.5f, compare_game_cnt / 2, compare_threads);
-						std::cout << "model " << model_file << " vs " << current_best_model_file << " winrate " << win_rate << std::endl;
+							std::cout, std::cout, false, true, 0.5f, compare_game_cnt / 2, compare_thread_num);
+						std::cout << "model " << model_file << " vs " << current_best_model_file << 
+						" winrate " << win_rate << std::endl;
 						if(win_rate > 0.55f){
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
@@ -278,6 +281,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 			}
             else if (game_buffer->size() > batchSize && !pause_flag) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(3200 / inference_thread_num));
+				train_iter++;
                 train(); 
             }
         }
