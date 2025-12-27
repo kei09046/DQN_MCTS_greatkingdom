@@ -74,7 +74,7 @@ void ModelCompare::playGTP(const std::string& model, int playout, float temp, bo
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
-	color res;
+	color res = EMPTY;
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -94,10 +94,15 @@ void ModelCompare::playGTP(const std::string& model, int playout, float temp, bo
             ok();
         }
         else if (cmd == "play"){ 
-			cmd_play(iss, game_manager, player);
+			res = cmd_play(iss, game_manager, player);
+			if(res != EMPTY)
+				std::cerr << "Game Over! Winner is : " << ((res == BLACK) ? "BLACK" : "WHITE") << std::endl;
 		}
         else if (cmd == "genmove") {
-			cmd_genmove(iss, game_manager, player, temp);
+			if(res == EMPTY)
+				cmd_genmove(iss, game_manager, player, temp);
+			else
+				ok("resign");
 		}
         else if (cmd == "quit") { ok(); break; }
         else ok();
@@ -196,15 +201,18 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 	return ratings;
 }
 
-void ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
+color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
     char c;
     std::string v;
     iss >> c >> v;
 
     Move m = parse_vertex(v);
     color res = game_manager.makeMove(m);
-    player.jump(m);
-    ok();
+	if(res == EMPTY){
+    	player.jump(m);
+    	ok();
+	}
+	return res;
 }
 
 void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp) {

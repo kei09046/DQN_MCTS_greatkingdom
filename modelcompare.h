@@ -42,7 +42,7 @@ private:
 
 	static Move parse_vertex(const std::string& v);
 
-	static void cmd_play(std::istringstream& iss, Game game_manager, MCTS& player);
+	static color cmd_play(std::istringstream& iss, Game game_manager, MCTS& player);
 
 	static void cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp);
 };

@@ -232,7 +232,7 @@ float Node::searchandPropagate(){
     float pref, maxval = -1.0f;
     for(int i=0; i<available_moves.size(); ++i){
         pref = ((edgeN[i].load() == 0.0f) ? -(W.load()/N.load()) : child[i]->W.load() / child[i]->N.load()) +
-         cPuct * edgeP[i] * sqrt(N.load())/(1 + edgeN[i].load());
+         cPuct * edgeP[i].load() * sqrt(N.load())/(1 + edgeN[i].load());
         
         if(maxval < pref){
             maxval = pref; 
