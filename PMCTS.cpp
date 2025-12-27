@@ -211,7 +211,8 @@ float Node::searchandPropagate(Evaluator* evaluator){
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     #endif
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        // apply FPU(First Player Urgency)
+        pref = ((edgeN[i] == 0.0f) ? -(W / N) : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
