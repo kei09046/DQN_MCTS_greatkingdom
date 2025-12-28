@@ -72,7 +72,7 @@ constexpr Move resignMove = {255, 255};
 constexpr float alpha = 0.03f * 361 / inputRow / inputCol; // dirichlet noise parameter
 constexpr float eps = 0.25f;   // dirichlet noise weight
 #endif
-constexpr float cPuct = 2.0f;
+constexpr float cPuct = 5.0f;
 
 //evalcache constants
 constexpr u_int tableSize = 1 << 20;
@@ -90,7 +90,7 @@ constexpr u_int epochs = 5;
 constexpr u_int check_freq = 480;
 constexpr u_int compare_game_cnt = 128; // number of games played to compare models
 constexpr u_int compare_thread_num = 16; // should divide compare_game_cnt / 2
-constexpr u_int search_thread_num = 4; // PMCTS threads
+constexpr u_int search_thread_num = 8; // PMCTS threads
 constexpr u_int save_freq = 96; // 96
 constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;

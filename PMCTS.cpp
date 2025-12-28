@@ -204,6 +204,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
 
     // selection phase
     // in non terminal case, pick move based on cPUCT formula.
+    // FPU(First Player Urgency) seems to have negative impact during training.
     int maxi = 0;
     float pref, maxval = -1.0f;
 
@@ -212,7 +213,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
     #endif
     for(int i=0; i<available_moves.size(); ++i){
         // apply FPU(First Player Urgency)
-        pref = ((edgeN[i] == 0.0f) ? -(W / N) : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
