@@ -69,6 +69,24 @@ public:
 	torch::nn::Linear v_fc2;
 };
 
+class ANet : public NetBase{
+public:
+	ANet();
+	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
+	torch::nn::Conv2d cv1;
+	torch::nn::BatchNorm2d bn1;
+
+	std::vector<ResidualBlock> blocks;
+	
+	torch::nn::Conv2d at_cv3;
+	torch::nn::BatchNorm2d at_bn3;
+	torch::nn::Linear at_fc1;
+	torch::nn::Conv2d v_cv3;
+	torch::nn::BatchNorm2d v_bn3;
+	torch::nn::Linear v_fc1;
+	torch::nn::Linear v_fc2;
+};
+
 class PolicyValueNet {
 private:
 	bool use_gpu;

@@ -74,6 +74,59 @@ v_fc2(256, 1){
 	register_module("v_fc2", v_fc2);
 }
 
+// For 9*9 board, same size as INet.
+ANet::ANet(): cv1(torch::nn::Conv2dOptions(inputChannel, 128, 3).padding(1).bias(false)),
+bn1(torch::nn::BatchNorm2d(128)),
+
+// Policy head
+at_cv3(torch::nn::Conv2dOptions(128, 2, 1).bias(false)),
+at_bn3(torch::nn::BatchNorm2d(2)),
+at_fc1(2 * inputSize, outputSize),
+
+// Value head
+v_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
+v_bn3(torch::nn::BatchNorm2d(1)),
+v_fc1(inputSize, 256),
+v_fc2(256, 1){
+	for (int i = 1; i < 13; i++) {
+        auto rb = ResidualBlock(128);
+		register_module("rb" + std::to_string(i) + "_conv1", rb->conv1);
+		register_module("rb" + std::to_string(i) + "_bn1",   rb->bn1);
+		register_module("rb" + std::to_string(i) + "_conv2", rb->conv2);
+		register_module("rb" + std::to_string(i) + "_bn2",   rb->bn2);
+		blocks.push_back(rb);
+    }
+	
+	register_module("cv1", cv1);
+	register_module("bn1", bn1);
+
+	register_module("at_cv3", at_cv3);
+	register_module("at_bn3", at_bn3);
+	register_module("at_fc1", at_fc1);
+	register_module("v_cv3", v_cv3);
+	register_module("v_bn3", v_bn3);
+	register_module("v_fc1", v_fc1);
+	register_module("v_fc2", v_fc2);
+}
+
+std::tuple<torch::Tensor, torch::Tensor> GNet::forward(const torch::Tensor& state)
+{
+	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
+	for (auto& rb : blocks) {
+		x = rb->forward(x);
+	}
+	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
+	log_act = log_act.view({ -1, 2 * inputSize });
+	log_act = at_fc1(log_act);
+
+	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
+	val = val.view({-1, inputSize});
+	val = torch::nn::functional::relu(v_fc1(val));
+	val = v_fc2(val);
+	val = torch::tanh(val);
+	return make_tuple(log_act, val);
+}
+
 std::tuple<torch::Tensor, torch::Tensor> INet::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
@@ -92,7 +145,7 @@ std::tuple<torch::Tensor, torch::Tensor> INet::forward(const torch::Tensor& stat
 	return make_tuple(log_act, val);
 }
 
-std::tuple<torch::Tensor, torch::Tensor> GNet::forward(const torch::Tensor& state)
+std::tuple<torch::Tensor, torch::Tensor> ANet::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& rb : blocks) {
@@ -303,6 +356,13 @@ void PolicyValueNet::save_model(const string& model_file) const
 		}
 		torch::save(net, model_file);
 	}
+	else if(model_type == "A"){
+		auto net = std::dynamic_pointer_cast<ANet>(policy_value_net);
+		if(!net){
+			throw std::runtime_error("Model type mismatch when saving: " + model_file);
+		}
+		torch::save(net, model_file);
+	}
 	else{
 		throw std::runtime_error("Unknown model type when saving: " + model_type);
 	}
@@ -317,6 +377,9 @@ void PolicyValueNet::load_model(const string& model_file){
 		}
 		else if(model_type == "i"){
 			net = std::make_shared<INet>();
+		}
+		else if(model_type == "A"){
+			net = std::make_shared<ANet>();
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);

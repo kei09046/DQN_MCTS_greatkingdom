@@ -230,7 +230,9 @@ float Node::searchandPropagate(){
     int maxi = 0;
     float pref, maxval = -1.0f;
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i].load() == 0.0f) ? -(W.load()/N.load()) : child[i]->W.load() / child[i]->N.load()) +
+        //assert(child[i]->N.load() >= edgeN[i].load()); // sometimes fail on multithread; don't know why.
+
+        pref = ((child[i]->N.load() == 0.0f) ? 0.0f : child[i]->W.load() / child[i]->N.load()) +
          cPuct * edgeP[i].load() * sqrt(N.load())/(1 + edgeN[i].load());
         
         if(maxval < pref){
