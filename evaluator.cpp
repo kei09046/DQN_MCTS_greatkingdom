@@ -29,7 +29,8 @@ void Evaluator::HandlerWork() {
             auto buf = batchBufs[i];
             {
                 std::lock_guard<std::mutex> lk2(buf->resultmutex);
-                buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
+                buf->result = new PolicyValueOutput(outputs[i]);
+                //buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
             }
             buf->resultcv.notify_one();
         }

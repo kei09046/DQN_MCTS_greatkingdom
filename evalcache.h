@@ -6,11 +6,12 @@
 #include <memory>
 #include "consts.h"
 
-class EvalCache {
+template<typename T>
+class Cache {
 private:
     struct Entry {
         HashValue hash = 0;
-        std::shared_ptr<PolicyValueOutput> ptr = nullptr;
+        T* ptr = nullptr;
     };
 
     size_t tableMask;
@@ -28,15 +29,15 @@ private:
     }
 
 public:
-    EvalCache() : mutexPool(mutexPoolSize), tableMask(tableSize - 1), mutexPoolMask(mutexPoolSize - 1){
+    Cache() : mutexPool(mutexPoolSize), tableMask(tableSize - 1), mutexPoolMask(mutexPoolSize - 1){
         table = new Entry[tableSize];
     }
 
-    ~EvalCache() {
+    ~Cache() {
         delete[] table;
     }
 
-    bool get(HashValue h, std::shared_ptr<PolicyValueOutput>& out) {
+    bool get(HashValue h, T*& out) {
         size_t idx = indexOf(h);
         std::mutex& m = mutexOf(idx);
         std::lock_guard<std::mutex> lock(m);
@@ -49,30 +50,36 @@ public:
         return true;
     }
 
-    void insert(HashValue h, const std::shared_ptr<PolicyValueOutput>& val) {
+    void insert(HashValue h, T*& val) {
         size_t idx = indexOf(h);
         std::mutex& m = mutexOf(idx);
 
         // Local copy before locking
-        std::shared_ptr<PolicyValueOutput> buf(val);
+        T* buf = val;
 
         {
             std::lock_guard<std::mutex> lock(m);
             Entry& e = table[idx];
 
+            if(e.ptr != nullptr){
+                return;
+            }
             e.hash = h;
-            // swap to avoid freeing old value under lock
-            e.ptr.swap(buf);
+            e.ptr = buf;
         }
-
         // Old value in buf is freed outside the lock
+        // if(buf != nullptr)
+        //     delete buf;
     }
 
     void clear() {
         for(size_t i = 0; i < tableSize; i++) {
             std::mutex& m = mutexOf(i);
             std::lock_guard<std::mutex> lock(m);
-            table[i].ptr = nullptr;
+            if(table[i].ptr != nullptr){
+                delete table[i].ptr;
+                table[i].ptr = nullptr;
+            }
             table[i].hash = 0;
         }
     }

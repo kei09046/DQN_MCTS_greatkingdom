@@ -67,7 +67,7 @@ std::vector<std::atomic<float>> Node::softmax(const std::vector<float>& logit, c
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
-Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table, Evaluator* evaluator):
+Node::Node(const Game& g, const HashValue hashValue, TransTable* const trans_table, Evaluator* evaluator):
 game(g), turn(g.getTurn()), 
 N(0.0f), W(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table),
  evaluator(evaluator), state(NodeState_::NEEDEXPAND){
@@ -78,12 +78,10 @@ void Node::addChild(int r, int c, Game ng){
     Node* childNode;
 
     #ifdef transTable
-    if(trans_table->count(newHash) == 0){
+    if(!trans_table->get(newHash, childNode)){
         childNode = new Node(ng, newHash, trans_table, evaluator);
-        (*trans_table)[newHash] = childNode;
-    }
-    else{
-        childNode = (*trans_table)[newHash];
+        trans_table->insert(newHash, childNode);
+        //(*trans_table)[newHash] = childNode;
     }
     #endif
     #ifndef transTable
@@ -225,7 +223,8 @@ float Node::searchandPropagate(){
     }
 
     // selection phase;
-    // in non terminal case, pick move based on cPUCT formula. May apply FPU(first Player Urgency)
+    // in non terminal case, pick move based on cPUCT formula. 
+    // Unlike training, on play, FPU seems to be okay.
     assert(current_state == NodeState_::FINAL);
 
     int maxi = 0;
@@ -412,10 +411,11 @@ void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not
 
 
 MCTS::MCTS(int playout, Evaluator* evaluator) : 
-playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()), thread_pool(search_thread_num){
+playout(playout), evaluator(evaluator), trans_table(new TransTable()), thread_pool(search_thread_num){
     root = new Node(Game(), hash.baseHash(), trans_table, evaluator);
     #ifdef transTable
-    (*trans_table)[hash.baseHash()] = root;
+    trans_table->insert(hash.baseHash(), root);
+    //(*trans_table)[hash.baseHash()] = root;
     #endif
 }
 
@@ -439,18 +439,24 @@ void MCTS::runSimulation(){
     root->addDirichletNoise();
     #endif
 
-    std::latch done(search_thread_num);
-    for(int j=0; j<search_thread_num; ++j){
-        boost::asio::post(thread_pool, [&, j]{
-            int cnt = 0;
-            while(cnt < playout/search_thread_num){
-                bool suc = (root->searchandPropagate() != errorReturn);
-                if(suc) cnt++;
-            }
-            done.count_down();
-        });
+    if(search_thread_num > 1){
+        std::latch done(search_thread_num);
+        for(int j=0; j<search_thread_num; ++j){
+            boost::asio::post(thread_pool, [&, j]{
+                int cnt = 0;
+                while(cnt < playout/search_thread_num){
+                    bool suc = (root->searchandPropagate() != errorReturn);
+                    if(suc) cnt++;
+                }
+                done.count_down();
+            });
+        }
+        done.wait();
     }
-    done.wait();
+    else{ // no apv-mcts
+        for(int i=0; i<playout; ++i)
+            root->searchandPropagate();
+    }
 }
 
 Move MCTS::getMove(float temp){
@@ -474,16 +480,19 @@ bool MCTS::jump(Move move){
 
 void MCTS::reset(){
     #ifdef transTable
-    for (auto& [hash, node] : *trans_table) {
-        delete node;
-    }
-    trans_table->clear();
+    // for (auto& [hash, node] : *trans_table) {
+    //     delete node;
+    // }
+    // trans_table->clear();
+    delete trans_table;
+    trans_table = new TransTable();
     #endif
     #ifndef transTable
     root->deleteTree();
     #endif
     root = new Node(Game(), hash.baseHash(), trans_table, evaluator);
     #ifdef transTable
-    (*trans_table)[hash.baseHash()] = root;
+    trans_table->insert(hash.baseHash(), root);
+    //(*trans_table)[hash.baseHash()] = root;
     #endif
 }

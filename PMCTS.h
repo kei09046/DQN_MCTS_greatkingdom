@@ -13,7 +13,6 @@
 #include <iostream>
 #include <random>
 #include <numeric>
-#include <unordered_map>
 #include <memory>
 #include <atomic>
 #include <latch>
@@ -28,9 +27,11 @@ enum NodeState_{
     EVALUATING,
     FINAL
 };
-using NodeState = std::atomic<NodeState_>;
-constexpr static float errorReturn = 10.0f;
 
+class Node;
+using NodeState = std::atomic<NodeState_>;
+using TransTable = Cache<Node>;
+constexpr static float errorReturn = 10.0f;
 
 class alignas(64) Node{
 private:
@@ -44,7 +45,7 @@ private:
     Move winmove;
     const color turn;
 
-    std::unordered_map<HashValue, Node*>* const trans_table;
+    TransTable* const trans_table;
     Evaluator* evaluator;
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
@@ -59,7 +60,7 @@ private:
     static std::vector<std::atomic<float>> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves);
 
 public:
-    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table, Evaluator* evaluator);
+    Node(const Game& g, const HashValue hashValue, TransTable* const trans_table, Evaluator* evaluator);
 
     float searchandPropagate();
 
@@ -85,7 +86,7 @@ private:
     Node* root;
     int playout;
     Evaluator* evaluator; // shared along multiple MCTS instances
-    std::unordered_map<HashValue, Node*>* trans_table;
+    TransTable* trans_table;
     boost::asio::thread_pool thread_pool;
 
 public:

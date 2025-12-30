@@ -10,10 +10,12 @@
 #include "evalcache.h"
 #include "neuralNet.h"
 
+using EvalCache = Cache<PolicyValueOutput>;
+
 struct NNResultBuf{
     std::condition_variable resultcv;
     std::mutex resultmutex;
-    std::shared_ptr<PolicyValueOutput> result = nullptr;
+    PolicyValueOutput* result = nullptr;
 };
 
 struct evalRequest {
