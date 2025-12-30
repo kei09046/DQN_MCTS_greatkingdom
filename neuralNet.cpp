@@ -388,7 +388,7 @@ void PolicyValueNet::load_model(const string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{
-		policy_value_net = std::make_shared<INet>();
+		policy_value_net = std::make_shared<ANet>();
 	}
 
 	policy_value_net->to(device);
