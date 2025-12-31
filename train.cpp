@@ -280,7 +280,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				pause_cv.notify_one();
 			}
             else if (game_buffer->size() > batchSize && !pause_flag) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(3200 / inference_thread_num));
+				std::this_thread::sleep_for(std::chrono::milliseconds(train_wait_time / inference_thread_num));
 				train_iter++;
                 train(); 
             }

@@ -5,8 +5,8 @@ import copy
 class RuleManager:
 
     Max = 2 ** 16 - 1
-    boardSize = 7
-    neutral = [(3, 3)]
+    boardSize = 9
+    neutral = [(4, 4)]
     penalty = 2.5
     x_adj = [-1, 0, 1, 0]
     y_adj = [0, 1, 0, -1]
