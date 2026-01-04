@@ -85,8 +85,5 @@ void Evaluator::updateModel(PolicyValueNet* updatedNet) {
 	for (auto& item : src_state) {
 		dst_state[item.key()].copy_(item.value());
 	}
-	for (auto& item : dst_state) {
-		net->policy_value_net->named_parameters()[item.key()].copy_(item.value());
-	}
     cache.clear();
 }

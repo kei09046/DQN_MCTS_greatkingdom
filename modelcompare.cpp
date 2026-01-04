@@ -230,18 +230,20 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
     color res = game_manager.makeMove(m);
     player.jump(m);
 
-	if(m == passMove){
+	if(m == PASSMOVE){
 		ok("pass");
 	}
-	else if(m == resignMove){
+	else if(m == RESIGNMOVE){
 		ok("resign");
 	}
 	else{
 		// convert to GTP coord
-		char col = m.second + 'A';
+		char col = static_cast<int>(m.second) + 'A';
+		if(col >= 'I') col++; // there is no 'I' in sabaki cord.
 		std::string v;
 		v += col;
 		v += std::to_string(m.first + 1);
+		std::cerr << "move made : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << " " << v << std::endl;
 		ok(v);
 	}
 }
@@ -249,10 +251,10 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
 Move ModelCompare::parse_vertex(const std::string& v) {
     // e.g. "D4"
 	if(v == "pass"){
-		return passMove;
+		return PASSMOVE;
 	}
 	if(v == "resign"){
-		return resignMove;
+		return RESIGNMOVE;
 	}
     char col = v[0];
     int row = std::stoi(v.substr(1));

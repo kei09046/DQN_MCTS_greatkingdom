@@ -12,7 +12,7 @@
 // #define measureTime
 
 // use transposition table(used in self-play)
-// #define transTable
+//#define transTable
 
 // add dirichlet noise to the prior probabilities(used in self-play)
 #define dirichletNoise
@@ -21,14 +21,14 @@
 // #define googleDrive
 
 // decide whether to use APV-MCTS or not.
-#define apvMCTS
+// #define apvMCTS
 
 using u_int = unsigned int;
 
 
 //for model management
 const std::string model_path = "./models/";
-const std::string default_model_type = "A";
+const std::string default_model_type = "B";
 #ifdef googleDrive
 const std::string drive_path = "../drive/MyDrive/";
 #endif
@@ -66,14 +66,14 @@ constexpr u_int inputCol = colSize;
 constexpr u_int outputRow = rowSize;
 constexpr u_int outputCol = colSize;
 constexpr u_int inputSize = inputRow * inputCol;
-constexpr u_int inputChannel = 7;
+constexpr u_int inputChannel = 9;
 constexpr u_int outputSize = boardSize + 1; // board place + pass
 
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
 using MoveData = std::tuple<Move, std::array<float, outputSize> >; // move + move possibility
-constexpr Move passMove = {rowSize, 0};
-constexpr Move resignMove = {255, 255};
+constexpr Move PASSMOVE = {rowSize, 0};
+constexpr Move RESIGNMOVE = {255, 255};
 
 #ifdef dirichletNoise
 constexpr float alpha = 0.03f * 361 / inputRow / inputCol; // dirichlet noise parameter

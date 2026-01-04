@@ -29,6 +29,7 @@ private:
     color currentTurn;
     color board[rowSize][colSize];
     color scoreBoard[rowSize][colSize];
+    Move lastTwoMoves[2];
     int visitId;
     int moveCount;
     float score[2];
@@ -104,6 +105,8 @@ public:
 
     color makeMove(Move move);
 
+    void displayBoardGUI(bool showScore = true) const;
+
     inline float scoreDiff(color turn) const {
         return (score[BLACK] - score[WHITE] - komi) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
@@ -120,14 +123,16 @@ public:
         return moveCount;
     };
 
-    void displayBoardGUI(bool showScore = true) const;
-
     inline color getBoard(u_int r, u_int c) const{
         return board[r][c];
     }
 
     inline color getScoreBoard(u_int r, u_int c) const{
         return scoreBoard[r][c];
+    }
+
+    inline Move getLastMove(int idx) const{
+        return lastTwoMoves[idx];
     }
 
     static inline color reverseColor(color c){

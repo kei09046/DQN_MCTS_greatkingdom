@@ -1,5 +1,22 @@
 #include "gamerules.h"
 
+Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
+    for(size_t i=0; i<rowSize; ++i)
+        for(size_t j=0; j<colSize; ++j){
+            board[i][j] = EMPTY;
+            scoreBoard[i][j] = EMPTY;
+            mark[i][j] = 0;
+        }
+    
+    currentTurn = BLACK;
+    score[BLACK] = 0.0f;
+    score[WHITE] = 0.0f;
+    lastTwoMoves[0] = PASSMOVE;
+    lastTwoMoves[1] = PASSMOVE;
+    board[neutral.first][neutral.second] = NEUTRAL;
+    scoreBoard[neutral.first][neutral.second] = NEUTRAL;
+}
+
 void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     uint8_t h1 = findHead(r1, c1), h2 = findHead(r2, c2);
     if (h1 == h2) return;
@@ -189,12 +206,14 @@ uint8_t Game::getLegalMoveCount() const{
 }
 
 color Game::makeMove(Move move){
-    if(move == resignMove){ // resign
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+    if(move == RESIGNMOVE){ // resign
         switchTurn();
         return currentTurn;
     }
 
-    if(move == passMove){ // pass
+    if(move == PASSMOVE){ // pass
         switchTurn();
         moveCount++;
         return EMPTY;
@@ -229,12 +248,15 @@ color Game::makeMove(Move move){
 }
 
 color Game::makeMoveNoScoreUpdate(Move move){
-    if(move == resignMove){ // resign
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+
+    if(move == RESIGNMOVE){ // resign
         switchTurn();
         return currentTurn;
     }
 
-    if(move == passMove){ // pass
+    if(move == PASSMOVE){ // pass
         switchTurn();
         moveCount++;
         return EMPTY;
@@ -275,24 +297,6 @@ color Game::updateScoreAfter(Move move){
 
 void Game::onGameEnd(color winner){
     std::cout << "game over! winner is : " << winner << std::endl;
-}
-
-Game::Game(){
-    for(size_t i=0; i<rowSize; ++i)
-        for(size_t j=0; j<colSize; ++j){
-            board[i][j] = EMPTY;
-            scoreBoard[i][j] = EMPTY;
-            mark[i][j] = 0;
-        }
-    
-    currentTurn = BLACK;
-    score[BLACK] = 0.0f;
-    score[WHITE] = 0.0f;
-    finalScore = 0.0f;
-    moveCount = 0;
-    visitId = 0;
-    board[neutral.first][neutral.second] = NEUTRAL;
-    scoreBoard[neutral.first][neutral.second] = NEUTRAL;
 }
 
 void Game::displayBoardGUI(bool showScore) const{
@@ -336,11 +340,4 @@ void Game::displayBoardGUI(bool showScore) const{
         }
         std::cout << "\n";
     }
-
-    // for(size_t i=0; i<rowSize; ++i){
-    //     for(size_t j=0; j<colSize; ++j){
-    //         std::cout << static_cast<int>(scoreBoard[i][j]) << " ";
-    //     }
-    //     std::cout << "\n";
-    // }
 }

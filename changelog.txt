@@ -29,3 +29,6 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
  2. Solve terminal state overexploration issue
  3. Implement threadpool. // done. Doesn't seem to affect performance too much.
 
+ modelA : first 9*9 model
+ modelA -> modelB : provided last two moves information to NN.(channels : 7 -> 9).
+

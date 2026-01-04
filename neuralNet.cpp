@@ -198,48 +198,27 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
 		ret[6*inputSize + i] = diff;
 	}
+
+	// channel 7, 8 : last move and second last move
+	Move lastMove = game.getLastMove(0);
+	if(lastMove != PASSMOVE){
+		ret[7*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
+	}
+	Move secondLastMove = game.getLastMove(1);
+	if(secondLastMove != PASSMOVE){
+		ret[8*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
+	}
     return ret;
 }
 
 std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 	std::vector<float> ret(gameBatch.size() * inputChannel * inputSize, 0.0f);
+	ret.reserve(gameBatch.size() * inputChannel * inputSize);
 
-	const int temp = inputChannel * inputSize;
-	for(int num = 0; num < gameBatch.size(); ++num){
-		color turn = gameBatch[num]->getTurn();
-		color state;
-
-		for(int i=0; i<inputSize; ++i){
-			state = gameBatch[num]->getBoard(i / colSize, i % colSize);
-			if(state == turn)
-				ret[temp * num + i] = 1.0f;
-			else if(state == Game::reverseColor(turn))
-				ret[temp * num + inputSize + i] = 1.0f;
-			else if(state == NEUTRAL)
-				ret[temp * num + 2 * inputSize + i] = 1.0f;
-		}
-
-		for(int i = 3*inputSize; i < 4*inputSize; ++i){
-			ret[temp * num + i] = static_cast<float>(turn);
-		}
-
-		color terr;
-		for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
-			terr = gameBatch[num]->getScoreBoard(i/colSize, i%colSize);
-			if(terr == turn){
-				ret[temp * num + 4*inputSize + i] = 1.0f;
-			}
-			else if(terr == Game::reverseColor(turn)){
-				ret[temp * num + 5*inputSize + i] = 1.0f;
-			}
-		}
-
-		float diff = gameBatch[num]->scoreDiff(turn) / boardSize;
-		for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
-			ret[temp * num + 6*inputSize + i] = diff;
-		}
+	for(size_t b=0; b<gameBatch.size(); ++b){
+		auto data = getData(*gameBatch[b]);
+		ret.insert(ret.end(), data.begin(), data.end());
 	}
-
     return ret;
 }
 
@@ -356,7 +335,7 @@ void PolicyValueNet::save_model(const string& model_file) const
 		}
 		torch::save(net, model_file);
 	}
-	else if(model_type == "A"){
+	else if(model_type == "A" || model_type == "B"){
 		auto net = std::dynamic_pointer_cast<ANet>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -378,7 +357,7 @@ void PolicyValueNet::load_model(const string& model_file){
 		else if(model_type == "i"){
 			net = std::make_shared<INet>();
 		}
-		else if(model_type == "A"){
+		else if(model_type == "A" || model_type == "B"){
 			net = std::make_shared<ANet>();
 		}
 		else{
@@ -387,7 +366,7 @@ void PolicyValueNet::load_model(const string& model_file){
 		torch::load(net, model_file);   
 		policy_value_net = std::move(net);
 	}   
-	else{
+	else{ // load default model to begin with.
 		policy_value_net = std::make_shared<ANet>();
 	}
 
