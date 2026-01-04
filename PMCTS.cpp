@@ -567,7 +567,7 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), winmove(resignMove), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::addChild(int r, int c, Game ng){
@@ -618,7 +618,7 @@ void Node::expand(){
     }
 
     if(game.scoreWinner() == game.getTurn()){ // can pass only if it's beneficial
-        nextGames[boardSize].makeMoveNoScoreUpdate(passMove);
+        nextGames[boardSize].makeMoveNoScoreUpdate(PASSMOVE);
         candidateLegal[boardSize] = true;
     }
 
@@ -666,7 +666,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
     }
 
     // if terminal case
-    if(winmove != resignMove){ // position is won
+    if(winmove != RESIGNMOVE){ // position is won
         W--;
         #ifdef measureTime
         terminalHit++;
@@ -735,10 +735,10 @@ float Node::searchandPropagate(Evaluator* evaluator){
 }
 
 Move Node::selectMove(float temp){
-    if(winmove != resignMove)
+    if(winmove != RESIGNMOVE)
         return winmove;
     if(available_moves.size() == 0){ // if lost, resign
-        return resignMove;
+        return RESIGNMOVE;
     }
 
     std::vector<float> weights(available_moves.size());
@@ -776,10 +776,10 @@ MoveData Node::selectMoveProb(float temp){
     std::array<float, outputSize> visitPortion;
     visitPortion.fill(0.0f);
 
-    if(winmove != resignMove)
+    if(winmove != RESIGNMOVE)
         return {winmove, visitPortion};
     if(available_moves.size() == 0){ // if lost, resign
-        return {resignMove, visitPortion};
+        return {RESIGNMOVE, visitPortion};
     }
 
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
