@@ -201,11 +201,11 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 
 	// channel 7, 8 : last move and second last move
 	Move lastMove = game.getLastMove(0);
-	if(lastMove != PASSMOVE){
+	if(lastMove != PASSMOVE && lastMove != RESIGNMOVE){
 		ret[7*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
 	}
 	Move secondLastMove = game.getLastMove(1);
-	if(secondLastMove != PASSMOVE){
+	if(secondLastMove != PASSMOVE && secondLastMove != RESIGNMOVE){
 		ret[8*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
 	}
     return ret;

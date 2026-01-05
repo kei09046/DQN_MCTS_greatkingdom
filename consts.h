@@ -21,7 +21,7 @@
 // #define googleDrive
 
 // decide whether to use APV-MCTS or not.
-// #define apvMCTS
+#define apvMCTS
 
 using u_int = unsigned int;
 
