@@ -212,7 +212,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 }
 
 std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
-	std::vector<float> ret(gameBatch.size() * inputChannel * inputSize, 0.0f);
+	std::vector<float> ret;
 	ret.reserve(gameBatch.size() * inputChannel * inputSize);
 
 	for(size_t b=0; b<gameBatch.size(); ++b){
