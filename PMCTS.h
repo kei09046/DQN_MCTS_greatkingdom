@@ -133,30 +133,12 @@ public:
 #include <memory>
 
 
+std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves);
+
+
 class alignas(64) Node{
-private:
-    const Game game; // includes position, territory, valid moves etc. for heuristic
-    float N, W, initQ; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
-    std::vector<float> edgeP;
-    std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
-    const color turn;
-    const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
-
-    std::vector<Node*> child;
-    std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
-    Move winmove;
-    std::unordered_map<HashValue, Node*>* const trans_table;
-
-    void addChild(int r, int c, Game ng);
-
-    void expand();
-
-    static std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves);
-
 public:
     Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);
-
-    float searchandPropagate(Evaluator* evaluator);
 
     Move selectMove(float temperature);
 
@@ -173,17 +155,33 @@ public:
 
     void deleteTree(Node* exception);
     #endif
+
+private:
+    friend class MCTS;
+
+    const Game game; // includes position, territory, valid moves etc. for heuristic
+    float N, W, initQ; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    std::vector<float> edgeP;
+    std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
+    const color turn;
+    const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
+
+    std::vector<Node*> child;
+    std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
+    Move winmove;
+    std::unordered_map<HashValue, Node*>* const trans_table;
+
+    void addChild(int r, int c, Game ng);
+
+    void expand();
+
+    int selectChildInSearch();
 };
 
-class alignas(64) MCTS{
-private:
-    Node* root;
-    int playout;
-    Evaluator* evaluator; // shared along multiple MCTS instances
-    std::unordered_map<HashValue, Node*>* trans_table;
 
+class alignas(64) MCTS{
 public:
-    MCTS(int playout, Evaluator* evaluator);
+    MCTS(int nPlayout, Evaluator* evaluator);
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
@@ -202,6 +200,17 @@ public:
     
     void resetTimeStats();
     #endif
+
+private:
+    Node* root;
+    int nPlayout;
+    Evaluator* evaluator; // shared along multiple MCTS instances
+    std::unordered_map<HashValue, Node*>* trans_table;
+
+    void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
+        std::vector<std::vector<Node*>>& updateQueue, std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck);
+
+    void initRoot();
 };
 #endif
 

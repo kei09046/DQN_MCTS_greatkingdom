@@ -7,6 +7,7 @@ void Evaluator::createHandlerThreads() {
 void Evaluator::HandlerWork() {
     std::vector<const Game*> batchGames;
     std::vector<NNResultBuf*> batchBufs;
+    std::vector<HashValue> hashBufs;
 
     while (!stop) {
         // wait until at least 1 request exists
@@ -17,6 +18,7 @@ void Evaluator::HandlerWork() {
         while (!q.empty()) {
             auto r = q.front(); q.pop();
             batchBufs.push_back(r.buf);
+            hashBufs.push_back(r.hash);
             batchGames.push_back(r.game);
         }
         lk.unlock();
@@ -30,6 +32,7 @@ void Evaluator::HandlerWork() {
             {
                 std::lock_guard<std::mutex> lk2(buf->resultmutex);
                 buf->result = new PolicyValueOutput(outputs[i]);
+                cache.insert(hashBufs[i], buf->result);
                 //buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
             }
             buf->resultcv.notify_one();
@@ -64,16 +67,30 @@ bool Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { /
     // enqueue request
     {
         std::lock_guard<std::mutex> lk(qmutex);
-        q.push({&buf, game});
+        q.push({&buf, game, hash});
     }
     qcv.notify_one();
 
     // wait for result
     std::unique_lock<std::mutex> lk2(buf.resultmutex);
     buf.resultcv.wait(lk2, [&]{ return buf.result != nullptr; });
+    return false;
+}
 
-    // store in cache
-    cache.insert(hash, buf.result);
+bool Evaluator::asyncEvaluate(NNResultBuf& buf, const Game* game, HashValue hash){
+    // cache lookup
+    bool cacheHit = cache.get(hash, buf.result);
+    if(cacheHit) {
+        //std::cerr << "cache hit\n";
+        return true;
+    }
+
+    // enqueue request
+    {
+        std::lock_guard<std::mutex> lk(qmutex);
+        q.push({&buf, game, hash});
+    }
+    qcv.notify_one();
     return false;
 }
 

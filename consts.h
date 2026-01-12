@@ -21,7 +21,7 @@
 // #define googleDrive
 
 // decide whether to use APV-MCTS or not.
-#define apvMCTS
+//#define apvMCTS
 
 using u_int = unsigned int;
 
@@ -97,9 +97,7 @@ constexpr u_int epochs = 5;
 constexpr u_int check_freq = 480;
 constexpr u_int compare_game_cnt = 128; // number of games played to compare models
 constexpr u_int compare_thread_num = 16; // should divide compare_game_cnt / 2
-#ifdef apvMCTS
-constexpr u_int search_thread_num = 1; // PMCTS threads
-#endif
+constexpr u_int search_thread_num = 4; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
 constexpr u_int train_wait_time = 64000; // decide train/inference thread balance.
 constexpr u_int save_freq = 96; // 96
 constexpr size_t capacity = 10000;

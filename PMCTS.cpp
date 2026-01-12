@@ -243,13 +243,11 @@ float Node::searchandPropagate(){
     }
 
     //apply virtual loss
-    child[maxi]->N.fetch_add(1.0f);
     child[maxi]->W.fetch_add(-1.0f);
 
     float r = child[maxi]->searchandPropagate();
 
     //revert virtual loss
-    child[maxi]->N.fetch_add(-1.0f);
     child[maxi]->W.fetch_add(1.0f);
 
     // backprop phase
@@ -538,9 +536,10 @@ void MCTS::resetTimeStats(){
 }
 #endif
 
+
 const Hash hash;
 
-std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
+std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
     std::vector<float> n_logit;
     n_logit.reserve(available_moves.size());
     for(const auto& move : available_moves){
@@ -563,6 +562,8 @@ std::vector<float> Node::softmax(const std::vector<float>& logit, const std::vec
     }
     return exp_logit;
 }
+
+
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
@@ -660,60 +661,10 @@ void Node::expand(){
     #endif
 }
 
-float Node::searchandPropagate(Evaluator* evaluator){
-    if(N++ == 0){
-        expand(); // expansion phase, assign children for each possible move
-    }
-
-    // if terminal case
-    if(winmove != RESIGNMOVE){ // position is won
-        W--;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return 1.0f;
-    }
-    if(available_moves.size() == 0){ // position is lost
-        W++;
-        #ifdef measureTime
-        terminalHit++;
-        #endif
-        return -1.0f;
-    }
-
-    if(N == 1){
-        #ifdef measureTime
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        #endif
-
-        NNResultBuf buf;
-        bool cacheHit = evaluator->evaluate(buf, &game, hashValue); // evaluation phase, set p q
-        auto entry = buf.result;
-        auto& logp = entry->first;
-        auto q = entry->second;
-
-        #ifdef measureTime
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        evaluateTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-        evalCacheHit += cacheHit ? 1 : 0;
-        #endif
-
-        edgeP = softmax(logp, available_moves);
-        edgeN = std::vector<float>(edgeP.size(), 0.0f);
-
-        initQ = q;
-        W += q;
-        return -q;
-    }
-
-    // selection phase
-    // in non terminal case, pick move based on cPUCT formula.
+int Node::selectChildInSearch(){
     int maxi = 0;
     float pref, maxval = -1.0f;
 
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-    #endif
     for(int i=0; i<available_moves.size(); ++i){
         pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
@@ -722,16 +673,7 @@ float Node::searchandPropagate(Evaluator* evaluator){
             maxi = i;
         }
     }
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    searchTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-    #endif
-
-    edgeN[maxi]++;
-    float r = child[maxi]->searchandPropagate(evaluator);
-    // backprop phase
-    W += r;
-    return -r;
+    return maxi;
 }
 
 Move Node::selectMove(float temp){
@@ -806,15 +748,8 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         size_t index = std::distance(cumulative.begin(), it);
-
-        // std::cout << "make move : " << available_moves[index].first << " " << available_moves[index].second << " win count : " << child[index]->W << " visit count : " << child[index]->N <<
-        // " prob : " << child[index]->P << " eval : " << child[index]->initQ << "\n";
-
         return {available_moves[index], visitPortion};
     }
-
-    // std::cout << "make move : " << available_moves[maxi].first << " " << available_moves[maxi].second << " win count : " << child[maxi]->W << " visit count : " << child[maxi]->N << 
-    // " prob : " << child[maxi]->P << " eval : " << child[maxi]->initQ << "\n";
 
     return {available_moves[maxi], visitPortion};
 }
@@ -862,7 +797,7 @@ void Node::deleteTree(Node* exception){
 #endif
 
 #ifdef dirichletNoise 
-void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not added to same node twice. In greatKingdom, there's no repetition. 
+void Node::addDirichletNoise(){
     std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
     for(int i=0; i<edgeP.size(); ++i)
         edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
@@ -871,7 +806,7 @@ void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not
 
 
 MCTS::MCTS(int playout, Evaluator* evaluator) : 
-playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
+nPlayout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
     root = new Node(Game(), hash.baseHash(), trans_table);
     #ifdef transTable
     (*trans_table)[hash.baseHash()] = root;
@@ -879,7 +814,7 @@ playout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashV
 }
 
 MCTS::MCTS(MCTS&& other) noexcept
-    : root(other.root), playout(other.playout),
+    : root(other.root), nPlayout(other.nPlayout),
       evaluator(other.evaluator), trans_table(other.trans_table)
 {
     other.root = nullptr;
@@ -892,14 +827,21 @@ MCTS::~MCTS(){
 }
 
 void MCTS::runSimulation(){
-    root->searchandPropagate(evaluator);
-    
+    //std::cout << "run simulation " << nPlayout << std::endl;
     #ifdef dirichletNoise
+    initRoot();
     root->addDirichletNoise();
     #endif
 
-    for(int i=0; i<playout-1; ++i){
-        root->searchandPropagate(evaluator);
+    int search_counter = 0;
+    int evaluate_counter = 0;
+    std::vector<Node*> current_evaluating_nodes;
+    std::vector<std::vector<Node*>> need_update_chain;
+    std::vector<NNResultBuf*> result_buffer;
+    bool stuck_during_search = false; // happens if meet evaluating node while searching
+
+    while(evaluate_counter < nPlayout){
+        playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
     }
 }
 
@@ -937,4 +879,128 @@ void MCTS::reset(){
     (*trans_table)[hash.baseHash()] = root;
     #endif
 }
+
+void MCTS::playout(int& searchCounter, int& evaluateCounter, 
+    std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
+    std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck) {
+
+    // std::cout << searchCounter << " " << evaluateCounter << " " << inEvaluation.size() << " " << searchStuck << std::endl;
+    // SELECTION
+    if((searchCounter < nPlayout) && (inEvaluation.size() < search_thread_num) && !searchStuck){
+        std::vector<int> childIdx;
+        std::vector<Node*> path;
+        Node* cur = root;
+        float evalQ = 0.0f;
+
+        while (true) {
+            path.push_back(cur);
+
+            if (cur->N == 0.0f) { // first time visit
+                cur->expand();
+                if (cur->winmove != RESIGNMOVE){ // won
+                    evalQ = -1.0f;
+                }
+                else if(cur->available_moves.size() == 0){ // lost
+                    evalQ = 1.0f;
+                }
+                break;
+            }
+
+            if (cur->winmove != RESIGNMOVE){ // won
+                evalQ = -1.0f;
+                break;
+            }
+            if(cur->available_moves.size() == 0){ // lost
+                evalQ = 1.0f;
+                break;
+            }
+
+            if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is already evaluating, return
+                searchStuck = true;
+                return;
+            }
+            int a = cur->selectChildInSearch();
+            childIdx.push_back(a);
+            cur = cur->child[a];
+        }
+
+        for (auto node : path) {
+            node->N += 1.0f;
+            node->W -= 1.0f; // apply VL
+        }
+
+        for(int i=0; i<childIdx.size(); ++i){
+            path[i]->edgeN[childIdx[i]] += 1.0f;
+        }
+
+        searchCounter++;
+        if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
+            // enqueue evaluation
+            inEvaluation.push_back(cur);
+            updateQueue.push_back(path);
+            NNResultBuf* buf = new NNResultBuf();
+            resultBuffer.push_back(buf);
+
+            evaluator->asyncEvaluate(*buf, &(cur->game), cur->hashValue);
+        }
+        else{
+            evaluateCounter++;
+            for (int i = path.size() - 1; i >= 0; --i) {
+                Node* n = path[i];
+                n->W += 1.0f;   // revert VL
+                n->W += evalQ;
+                evalQ = -evalQ;
+            }
+        }
+    }
+
+    //EVALUATION & UPDATE
+    if(inEvaluation.size() >= search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
+        // wait for result
+        NNResultBuf* rb = resultBuffer[inEvaluation.size() - 1];
+        std::unique_lock<std::mutex> lk2(rb->resultmutex);
+        rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; }); // wait until all evaluation queued are finished.
+        evaluateCounter += inEvaluation.size();
+
+        for(int i=0; i<inEvaluation.size(); ++i){
+            NNResultBuf* buf = resultBuffer[i];
+            std::vector<Node*> path = updateQueue[i];
+            Node* cur = inEvaluation[i]; 
+
+            std::vector<float> evalP = buf->result->first;
+            float evalQ = -buf->result->second; // sign should be fliped
+
+            cur->edgeP = softmax(evalP, cur->available_moves);
+            cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+
+            // BACKUP (revert VL + add value)
+            for (int j = path.size() - 1; j >= 0; --j) {
+                Node* n = path[j];
+                n->W += 1.0f;   // revert VL
+                n->W += evalQ;
+                evalQ = -evalQ;
+            }
+        }
+
+        for(int i=0; i<resultBuffer.size(); ++i)
+            delete resultBuffer[i];
+
+        resultBuffer.clear();
+        updateQueue.clear();
+        inEvaluation.clear();
+        searchStuck = false;
+    }
+}
+
+void MCTS::initRoot() { // blocking root evaluation. 
+    if (root->N == 0) {
+        root->expand();
+        NNResultBuf buf;
+        evaluator->evaluate(buf, &root->game, root->hashValue);
+
+        root->edgeP = softmax(buf.result->first, root->available_moves);
+        root->edgeN.assign(root->edgeP.size(), 0.0f);
+    }
+}
+
 #endif

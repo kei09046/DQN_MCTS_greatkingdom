@@ -6,6 +6,7 @@
 #include <mutex>
 #include <memory>
 #include <thread>
+#include <coroutine>
 #include "consts.h"
 #include "evalcache.h"
 #include "neuralNet.h"
@@ -21,6 +22,7 @@ struct NNResultBuf{
 struct evalRequest {
     NNResultBuf* buf;
     const Game* game;
+    HashValue hash;
 };
 
 class Evaluator{
@@ -42,6 +44,7 @@ public:
     Evaluator(const std::string& model_file, bool use_gpu);
     ~Evaluator();
     bool evaluate(NNResultBuf& buf, const Game* game, HashValue hash); // return true if cache hit
+    bool asyncEvaluate(NNResultBuf& buf, const Game* game, HashValue hash);
     void updateModel(PolicyValueNet* updatedNet);
 };
 #endif
