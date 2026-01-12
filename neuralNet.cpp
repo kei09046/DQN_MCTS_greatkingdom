@@ -335,7 +335,7 @@ void PolicyValueNet::save_model(const string& model_file) const
 		}
 		torch::save(net, model_file);
 	}
-	else if(model_type == "A" || model_type == "B"){
+	else if(model_type == "A" || model_type == "B" || model_type == "C"){
 		auto net = std::dynamic_pointer_cast<ANet>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -357,7 +357,7 @@ void PolicyValueNet::load_model(const string& model_file){
 		else if(model_type == "i"){
 			net = std::make_shared<INet>();
 		}
-		else if(model_type == "A" || model_type == "B"){
+		else if(model_type == "A" || model_type == "B" || model_type == "C"){
 			net = std::make_shared<ANet>();
 		}
 		else{

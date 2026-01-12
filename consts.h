@@ -28,7 +28,7 @@ using u_int = unsigned int;
 
 //for model management
 const std::string model_path = "./models/";
-const std::string default_model_type = "B";
+const std::string default_model_type = "C";
 #ifdef googleDrive
 const std::string drive_path = "../drive/MyDrive/";
 #endif
