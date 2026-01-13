@@ -147,7 +147,7 @@ public:
     Node* jump(Move move);
 
     #ifdef dirichletNoise
-    void addDirichletNoise();
+    void addDirichletNoise(Evaluator* evaluator);
     #endif
 
     #ifndef transTable
@@ -209,8 +209,6 @@ private:
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
         std::vector<std::vector<Node*>>& updateQueue, std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck);
-
-    void initRoot();
 };
 #endif
 

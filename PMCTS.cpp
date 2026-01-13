@@ -797,10 +797,23 @@ void Node::deleteTree(Node* exception){
 #endif
 
 #ifdef dirichletNoise 
-void Node::addDirichletNoise(){
-    std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
-    for(int i=0; i<edgeP.size(); ++i)
-        edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
+void Node::addDirichletNoise(Evaluator* evaluator){
+    if (N == 0) {
+        expand();
+        if(winmove == RESIGNMOVE && available_moves.size() > 0){
+            NNResultBuf buf;
+            evaluator->evaluate(buf, &game, hashValue);
+
+            edgeP = softmax(buf.result->first, available_moves);
+            edgeN.assign(edgeP.size(), 0.0f);
+        }
+    }
+
+    if(winmove == RESIGNMOVE && available_moves.size() > 0){
+        std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
+        for(int i=0; i<edgeP.size(); ++i)
+            edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
+    }
 }
 #endif
 
@@ -829,8 +842,7 @@ MCTS::~MCTS(){
 void MCTS::runSimulation(){
     //std::cout << "run simulation " << nPlayout << std::endl;
     #ifdef dirichletNoise
-    initRoot();
-    root->addDirichletNoise();
+    root->addDirichletNoise(evaluator);
     #endif
 
     int search_counter = 0;
@@ -1007,16 +1019,4 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         searchStuck = false;
     }
 }
-
-void MCTS::initRoot() { // blocking root evaluation. 
-    if (root->N == 0) {
-        root->expand();
-        NNResultBuf buf;
-        evaluator->evaluate(buf, &root->game, root->hashValue);
-
-        root->edgeP = softmax(buf.result->first, root->available_moves);
-        root->edgeN.assign(root->edgeP.size(), 0.0f);
-    }
-}
-
 #endif

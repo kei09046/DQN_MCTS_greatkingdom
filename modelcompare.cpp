@@ -1,6 +1,7 @@
 #include "modelcompare.h"
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
+	//std::cerr << "start play" << std::endl;
 	Game game_manager = Game();
 	int diff, idx = 0;
 	Move move;
@@ -9,6 +10,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 
 	while (true) {
 		move = player_list[idx]->getMove(temp);
+		//std::cerr << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
 		seq.push_back(move);
         res = game_manager.makeMove(move);
 
@@ -133,7 +135,7 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	auto et = new Evaluator(model_path + mod_two, gpu);
 	std::vector<MCTS*> base_players, oppo_players;
 
-	for(int i=0; i<n_thread; ++i){ // doesn't work. cannot convert ‘Evaluator*’ to ‘MCTS*’ in initialization
+	for(int i=0; i<n_thread; ++i){
 		base_players.push_back(new MCTS(n_playout, eo));
 		oppo_players.push_back(new MCTS(n_playout, et));
 	}
