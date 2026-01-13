@@ -61,15 +61,14 @@ public:
             std::lock_guard<std::mutex> lock(m);
             Entry& e = table[idx];
 
-            if(e.ptr != nullptr){
+            if(e.ptr == nullptr){ // if slot is empty
+                e.hash = h;
+                e.ptr = buf;
                 return;
             }
-            e.hash = h;
-            e.ptr = buf;
         }
         // Old value in buf is freed outside the lock
-        // if(buf != nullptr)
-        //     delete buf;
+        delete buf;
     }
 
     void clear() {

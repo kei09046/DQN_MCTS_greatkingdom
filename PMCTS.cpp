@@ -984,7 +984,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 }
             }
             std::vector<float> evalP = buf->result->first;
-            float evalQ = buf->result->second; // sign should be fliped
+            float evalQ = buf->result->second;
 
             cur->edgeP = softmax(evalP, cur->available_moves);
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
