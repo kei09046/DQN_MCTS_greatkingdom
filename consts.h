@@ -28,7 +28,7 @@ using u_int = unsigned int;
 
 //for model management
 const std::string model_path = "./models/";
-const std::string default_model_type = "C";
+const std::string default_model_type = "B";
 #ifdef googleDrive
 const std::string drive_path = "../drive/MyDrive/";
 #endif
@@ -99,7 +99,7 @@ constexpr u_int compare_game_cnt = 128; // number of games played to compare mod
 constexpr u_int compare_thread_num = 16; // should divide compare_game_cnt / 2
 constexpr u_int search_thread_num = 4; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
 constexpr u_int train_wait_time = 64000; // decide train/inference thread balance.
-constexpr u_int save_freq = 96; // 96
+constexpr u_int save_freq = 8; // 96
 constexpr size_t capacity = 10000;
 constexpr float thres = 0.1f;
 #endif

@@ -32,5 +32,5 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
  modelA : first 9*9 model
  modelA -> modelB : provided last two moves information to NN.(channels : 7 -> 9).
 
- modelB -> modelC : implemented non-blocking evaluation in MCTS search.
+1/13/2026: implemented non-blocking evaluation in MCTS search.(improved performance ~40% on colab)
 

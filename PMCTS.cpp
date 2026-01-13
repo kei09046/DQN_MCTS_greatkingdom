@@ -924,26 +924,36 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             cur = cur->child[a];
         }
 
+        searchCounter++;
+        // set node visit stats
         for (auto node : path) {
             node->N += 1.0f;
             node->W -= 1.0f; // apply VL
         }
-
         for(int i=0; i<childIdx.size(); ++i){
             path[i]->edgeN[childIdx[i]] += 1.0f;
         }
 
-        searchCounter++;
         if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
             // enqueue evaluation
-            inEvaluation.push_back(cur);
-            updateQueue.push_back(path);
             NNResultBuf* buf = new NNResultBuf();
-            resultBuffer.push_back(buf);
 
-            evaluator->asyncEvaluate(*buf, &(cur->game), cur->hashValue);
+            bool cacheHit = evaluator->asyncEvaluate(*buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
+            if(!cacheHit){
+                resultBuffer.push_back(buf);
+                inEvaluation.push_back(cur);
+                updateQueue.push_back(path);
+            }
+            else{
+                evalQ = buf->result->second;
+                std::vector<float> evalP = buf->result->first;
+                cur->edgeP = softmax(evalP, cur->available_moves);
+                cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+                delete buf;
+            }
         }
-        else{
+
+        if(evalQ != 0.0f){ // if eval is available right now, do param update right away.
             evaluateCounter++;
             for (int i = path.size() - 1; i >= 0; --i) {
                 Node* n = path[i];
@@ -967,8 +977,14 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             std::vector<Node*> path = updateQueue[i];
             Node* cur = inEvaluation[i]; 
 
+            if(buf->result == nullptr){
+                std::cerr << "nullptr exception! " << i << " " << inEvaluation.size() << std::endl;
+                for(int j=0; j<inEvaluation.size(); ++j){
+                    std::cerr << resultBuffer[j]->result << std::endl; 
+                }
+            }
             std::vector<float> evalP = buf->result->first;
-            float evalQ = -buf->result->second; // sign should be fliped
+            float evalQ = buf->result->second; // sign should be fliped
 
             cur->edgeP = softmax(evalP, cur->available_moves);
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
