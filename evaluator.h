@@ -16,7 +16,7 @@ using EvalCache = Cache<PolicyValueOutput>;
 struct NNResultBuf{
     std::condition_variable resultcv;
     std::mutex resultmutex;
-    PolicyValueOutput* result = nullptr;
+    std::shared_ptr<PolicyValueOutput> result = nullptr;
 };
 
 struct evalRequest {

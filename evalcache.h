@@ -11,7 +11,7 @@ class Cache {
 private:
     struct Entry {
         HashValue hash = 0;
-        T* ptr = nullptr;
+        std::shared_ptr<T> ptr = nullptr;
     };
 
     size_t tableMask;
@@ -37,7 +37,7 @@ public:
         delete[] table;
     }
 
-    bool get(HashValue h, T*& out) {
+    bool get(HashValue h, std::shared_ptr<T>& out) {
         size_t idx = indexOf(h);
         std::mutex& m = mutexOf(idx);
         std::lock_guard<std::mutex> lock(m);
@@ -50,25 +50,22 @@ public:
         return true;
     }
 
-    void insert(HashValue h, T*& val) {
+    void insert(HashValue h, std::shared_ptr<T>& val) {
         size_t idx = indexOf(h);
         std::mutex& m = mutexOf(idx);
 
         // Local copy before locking
-        T* buf = val;
+        auto buf = val;
 
         {
             std::lock_guard<std::mutex> lock(m);
             Entry& e = table[idx];
 
-            if(e.ptr == nullptr){ // if slot is empty
-                e.hash = h;
-                e.ptr = buf;
-                return;
-            }
+            e.hash = h;
+            // swap to avoid freeing old value under lock
+            e.ptr.swap(buf);
         }
         // Old value in buf is freed outside the lock
-        delete buf;
     }
 
     void clear() {
@@ -76,7 +73,6 @@ public:
             std::mutex& m = mutexOf(i);
             std::lock_guard<std::mutex> lock(m);
             if(table[i].ptr != nullptr){
-                delete table[i].ptr;
                 table[i].ptr = nullptr;
             }
             table[i].hash = 0;
