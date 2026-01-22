@@ -6,18 +6,18 @@
 #include <array>
 #include "neuralNet.h"
 
-InputMatrix rotate90(const InputMatrix mat);
+InputMatrix inputRotate90(const InputMatrix mat);
 
-InputMatrix reflectHorizontal(const InputMatrix mat);
+InputMatrix inputReflectHorizontal(const InputMatrix mat);
 
-std::vector<InputMatrix> generateDihedralTransformations(const InputMatrix mat);
+std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat);
 
 
-OutputMatrix rotate90(const OutputMatrix mat);
+OutputMatrix outputRotate90(const OutputMatrix mat);
 
-OutputMatrix reflectHorizontal(const OutputMatrix mat);
+OutputMatrix outputReflectHorizontal(const OutputMatrix mat);
 
-std::vector<OutputMatrix> generateDihedralTransformations(const OutputMatrix mat);
+std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat);
 
 std::vector<TrainData*> generateDihedralTransformations(const TrainData& data);
 

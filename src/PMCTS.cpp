@@ -301,8 +301,7 @@ Move Node::selectMove(float temp){
 }
 
 MoveData Node::selectMoveProb(float temp){
-    std::array<float, outputSize> visitPortion;
-    visitPortion.fill(0.0f);
+    std::vector<float, outputSize> visitPortion(outputSize, 0.0f);
 
     if(winmove != RESIGNMOVE)
         return {winmove, visitPortion};
@@ -363,8 +362,6 @@ Node* Node::jump(Move move){
 
     std::cerr << "warning! jump to illegal location!" << std::endl;
     std::cerr << "requested move : " << move.first << "," << move.second << std::endl;
-    game.displayBoardGUI();
-    std::cout << std::endl;
     std::cerr << "available options : " << std::endl;
     for(auto p : available_moves)
         std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
@@ -598,7 +595,7 @@ void Node::expand(){
 
     color clr;
     std::vector<Game> nextGames(boardSize + 1, game); // +1 for pass
-    std::bitset<boardSize + 1> candidateLegal; // mark candidate legal moves
+    std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
     // improve performance by first checking capture for all moves -> calculate territory for all moves -> reduce options
     for(uint8_t i=0; i<rowSize; ++i){
@@ -624,7 +621,7 @@ void Node::expand(){
     }
 
     if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
-        for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+        for(size_t idx = 0; idx < boardSize + 1; ++idx){
             if(candidateLegal[idx]){
                 uint8_t r = idx / colSize;
                 uint8_t c = idx % colSize;
@@ -644,7 +641,7 @@ void Node::expand(){
     }
 
     // finally add child
-    for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+    for(size_t idx = 0; idx < boardSize + 1; ++idx){
         if(candidateLegal[idx]){
             uint8_t r = idx / colSize;
             uint8_t c = idx % colSize;
@@ -666,7 +663,7 @@ int Node::selectChildInSearch(){
     float pref, maxval = -1.0f;
 
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
@@ -715,8 +712,7 @@ Move Node::selectMove(float temp){
 }
 
 MoveData Node::selectMoveProb(float temp){
-    std::array<float, outputSize> visitPortion;
-    visitPortion.fill(0.0f);
+    std::vector<float> visitPortion(outputSize, 0.0f);
 
     if(winmove != RESIGNMOVE)
         return {winmove, visitPortion};
@@ -770,8 +766,6 @@ Node* Node::jump(Move move){
 
     std::cerr << "warning! jump to illegal location!" << std::endl;
     std::cerr << "requested move : " << move.first << "," << move.second << std::endl;
-    game.displayBoardGUI();
-    std::cout << std::endl;
     std::cerr << "available options : " << std::endl;
     for(auto p : available_moves)
         std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
@@ -898,7 +892,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
     // std::cout << searchCounter << " " << evaluateCounter << " " << inEvaluation.size() << " " << searchStuck << std::endl;
     // SELECTION
-    if((searchCounter < nPlayout) && (inEvaluation.size() < search_thread_num) && !searchStuck){
+    if((searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
         std::vector<int> childIdx;
         std::vector<Node*> path;
         Node* cur = root;
@@ -977,7 +971,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     }
 
     //EVALUATION & UPDATE
-    if(inEvaluation.size() >= search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
+    if(inEvaluation.size() >= globalConfig.search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
         // wait for result
         NNResultBuf* rb = resultBuffer[inEvaluation.size() - 1];
         std::unique_lock<std::mutex> lk2(rb->resultmutex);

@@ -1,11 +1,11 @@
 #include "train.h"
 
 TrainPipeline::TrainPipeline(std::string init_model,
-	std::string test_model, bool gpu) : train_model(model_path + init_model, gpu), inference_model(model_path + init_model, gpu),
-	prev_policy(model_path + test_model, gpu), current_best_model_file(test_model), gpu(gpu){
-	state_batch = new std::array<float, inputChannel * batchSize * inputSize>();
-	nextmove_batch = new std::array<float, batchSize* (outputSize)>();
-	winner_batch = new std::array<float, batchSize>();
+	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
+	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu){
+	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
+	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
+	winner_batch = new std::vector<float>(globalConfig.batchSize);
 	game_buffer = new std::deque<TrainData*>();
 
 	save_cnt = 0;
@@ -46,7 +46,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			buffer.emplace_back(state, std::get<1>(moveProb), 0.0f, 0);
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl;
-				game_manager.displayBoardGUI();
+				ModelCompare::displayBoardGUI(false, game_manager);
 				std::cout << std::endl;
 				for(auto& i : sequence){
 					std::cerr << i.first << "," << i.second << " ";
@@ -66,7 +66,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			std::chrono::steady_clock::time_point middle = std::chrono::steady_clock::now();
 			#endif
 
-			float value = (result == BLACK) ? -1.0f : 1.0f;
+			float value = (result == BLACK) ? -1.0f : 1.0f; // if position is black's turn to move, judge from white's perspective.
 			for(TrainData& data : buffer){
 				std::get<2>(data) = value;
 				insert_data(data);
@@ -116,7 +116,7 @@ void TrainPipeline::insert_data(TrainData data) {
 		game_buffer->push_back(data);
 	}
 
-	while(game_buffer->size() > capacity){ // if full, remove data from front
+	while(game_buffer->size() > globalConfig.capacity){ // if full, remove data from front
 		TrainData* data = game_buffer->front();
 		if(std::get<3>(*data) == 0){
 			delete data;
@@ -130,11 +130,11 @@ void TrainPipeline::insert_data(TrainData data) {
 }
 
 void TrainPipeline::train(){
-	std::vector<int> indices = select_indices(std::min(game_buffer->size(), capacity), batchSize); // randomly select samples from buffer
-	std::vector<TrainData*> batch_data(batchSize);
+	std::vector<int> indices = select_indices(std::min((int)game_buffer->size(), globalConfig.capacity), globalConfig.batchSize); // randomly select samples from buffer
+	std::vector<TrainData*> batch_data(globalConfig.batchSize);
 
 	buffer_mutex.lock(); 
-	for(int i=0; i<batchSize; ++i){
+	for(int i=0; i<globalConfig.batchSize; ++i){
 		TrainData* data = (*game_buffer)[indices[i]];
 		std::get<3>(*data) |= 2; // mark as being used during training
 		batch_data[i] = data;
@@ -142,10 +142,10 @@ void TrainPipeline::train(){
 	buffer_mutex.unlock();
 
 	// copy data from game_buffer to batch
-	for(int i=0; i < batchSize; ++i){ // copies data to batch
+	for(int i=0; i < globalConfig.batchSize; ++i){ // copies data to batch
 		TrainData* data = batch_data[i];
-		for(int j=0; j < inputChannel * inputSize; ++j){ 
-			(*state_batch)[i * inputChannel * inputSize + j] = std::get<0>(*data)[j];
+		for(int j=0; j < globalConfig.inputChannel * inputSize; ++j){ 
+			(*state_batch)[i * globalConfig.inputChannel * inputSize + j] = std::get<0>(*data)[j];
 		}
 
 		for(int j=0; j < outputSize; ++j){
@@ -176,7 +176,7 @@ void TrainPipeline::train(){
 	}
 	buffer_mutex.unlock();
 
-	for(int i=0; i<epochs; ++i)
+	for(int i=0; i<globalConfig.epochs; ++i)
 		train_model.train_step(*state_batch, *nextmove_batch, *winner_batch, learning_rate);
 }
 
@@ -198,7 +198,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	auto evaluator = new Evaluator(&inference_model);
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(n_playout, evaluator);
+		mcts_players.emplace_back(globalConfig.nPlayout, evaluator);
 		self_play_paused[i] = false;
 	}
 
@@ -212,13 +212,13 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				self_play_paused[j].store(true);
 				pause_cv.notify_one();
 
-				if(!start_flag && game_buffer->size() > batchSize){
+				if(!start_flag && game_buffer->size() > globalConfig.batchSize){
 					start_flag = true; // signal that self-play has started
 					train_cv.notify_one(); // notify train thread
 				}
 
 				save_mutex.lock(); // critical part
-				if (((++games_played + save_cnt) % save_freq) == 0) {
+				if (((++games_played + save_cnt) % globalConfig.save_freq) == 0) {
 					std::cout << "save model" << std::endl;
 					pause_flag = true; // asks other threads to pause
 					train_cv.notify_one(); // notify train thread
@@ -229,7 +229,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							return s; }); // wait until all train and self_play threads are paused
 
 					model_file = model_prefix + std::to_string(games_played + save_cnt) + ".pt";
-					const std::string save_path = model_path + model_file;
+					const std::string save_path = globalConfig.modelPath + model_file;
 					train_model.save_model(save_path); // save model to file
 					#ifdef googleDrive
 					train_model.save_model(drive_path + model_file); // save model to file
@@ -237,9 +237,9 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "model properly saved " << games_played << std::endl;
 					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
 					
-					if((games_played + save_cnt) % check_freq == 0){
+					if((games_played + save_cnt) % globalConfig.check_freq == 0){
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
-							std::cout, std::cout, false, true, 0.5f, compare_game_cnt / 2, compare_thread_num);
+							std::cout, std::cout, false, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
 						std::cout << "model " << model_file << " vs " << current_best_model_file << 
 						" winrate " << win_rate << std::endl;
 						if(win_rate > 0.55f){
@@ -248,7 +248,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						}
 						else if(win_rate < 0.45f){
 							std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
-							train_model.load_model(model_path + current_best_model_file);
+							train_model.load_model(globalConfig.modelPath + current_best_model_file);
 						}
 					}
 
@@ -270,7 +270,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
     std::thread train_thread([&] {
         while (true) {
             std::unique_lock<std::mutex> lock(train_mutex);
-            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || game_buffer->size() > batchSize; });
+            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || game_buffer->size() > globalConfig.batchSize; });
 
 			if(stop_flag){
 				break;
@@ -279,8 +279,8 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				train_paused.store(pause_flag.load());
 				pause_cv.notify_one();
 			}
-            else if (game_buffer->size() > batchSize && !pause_flag) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(train_wait_time / inference_thread_num));
+            else if (game_buffer->size() > globalConfig.batchSize && !pause_flag) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(globalConfig.train_wait_time / inference_thread_num));
 				train_iter++;
                 train(); 
             }

@@ -1,10 +1,10 @@
 #include "rotation.h"
 
-InputMatrix rotate90(const InputMatrix mat) {
-    InputMatrix res;
+InputMatrix inputRotate90(const InputMatrix mat) {
+    InputMatrix res(inputSize * globalConfig.inputChannel);
     int cnt = 0, dnt = 0;
 
-    for(int k = 0; k < inputChannel; ++k){
+    for(int k = 0; k < globalConfig.inputChannel; ++k){
         for (int i = 0; i < inputRow; ++i)
             for (int j = 0; j < inputCol; ++j)
                 res[cnt++] = mat[dnt + (inputRow - 1 - j) * inputCol + i];
@@ -14,11 +14,11 @@ InputMatrix rotate90(const InputMatrix mat) {
     return res;
 }
 
-InputMatrix reflectHorizontal(const InputMatrix mat) {
-    InputMatrix res;
+InputMatrix inputReflectHorizontal(const InputMatrix mat) {
+    InputMatrix res(inputSize * globalConfig.inputChannel);
     int cnt = 0, dnt = 0;
 
-    for(int k=0; k<inputChannel; ++k){
+    for(int k=0; k<globalConfig.inputChannel; ++k){
         for (int i = 0; i < inputRow; ++i)
             for (int j = 0; j < inputCol; ++j)
                 res[cnt++] = mat[dnt + (inputRow - 1 - i) * inputCol + j];
@@ -28,34 +28,34 @@ InputMatrix reflectHorizontal(const InputMatrix mat) {
     return res;
 }
 
-std::vector<InputMatrix> generateDihedralTransformations(const InputMatrix mat) {
+std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat) {
     std::vector<InputMatrix> transforms;
     
     // Original InputMatrix
     transforms.push_back(mat);
 
     // Rotations
-    InputMatrix rot90 = rotate90(mat);
-    InputMatrix rot180 = rotate90(rot90);
-    InputMatrix rot270 = rotate90(rot180);
+    InputMatrix rot90 = inputRotate90(mat);
+    InputMatrix rot180 = inputRotate90(rot90);
+    InputMatrix rot270 = inputRotate90(rot180);
 
     transforms.push_back(rot90);
     transforms.push_back(rot180);
     transforms.push_back(rot270);
 
     // Reflections
-    InputMatrix reflH = reflectHorizontal(mat);
+    InputMatrix reflH = inputReflectHorizontal(mat);
     transforms.push_back(reflH);
-    transforms.push_back(rotate90(reflH));
-    transforms.push_back(rotate90(rotate90(reflH)));
-    transforms.push_back(rotate90(rotate90(rotate90(reflH))));
+    transforms.push_back(inputRotate90(reflH));
+    transforms.push_back(inputRotate90(inputRotate90(reflH)));
+    transforms.push_back(inputRotate90(inputRotate90(inputRotate90(reflH))));
 
     return transforms;
 }
 
 
-OutputMatrix rotate90(const OutputMatrix mat) {
-    OutputMatrix res;
+OutputMatrix outputRotate90(const OutputMatrix mat) {
+    OutputMatrix res(outputSize);
     int cnt = 0;
 
     for (int i = 0; i < outputRow; ++i)
@@ -66,8 +66,8 @@ OutputMatrix rotate90(const OutputMatrix mat) {
     return res;
 }
 
-OutputMatrix reflectHorizontal(const OutputMatrix mat) {
-    OutputMatrix res;
+OutputMatrix outputReflectHorizontal(const OutputMatrix mat) {
+    OutputMatrix res(outputSize);
     int cnt = 0;
 
     for (int i = 0; i < outputRow; ++i)
@@ -78,27 +78,27 @@ OutputMatrix reflectHorizontal(const OutputMatrix mat) {
     return res;
 }
 
-std::vector<OutputMatrix> generateDihedralTransformations(const OutputMatrix mat) {
+std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat) {
     std::vector<OutputMatrix> transforms;
     
     // Original OutputMatrix
     transforms.push_back(mat);
 
     // Rotations
-    OutputMatrix rot90 = rotate90(mat);
-    OutputMatrix rot180 = rotate90(rot90);
-    OutputMatrix rot270 = rotate90(rot180);
+    OutputMatrix rot90 = outputRotate90(mat);
+    OutputMatrix rot180 = outputRotate90(rot90);
+    OutputMatrix rot270 = outputRotate90(rot180);
 
     transforms.push_back(rot90);
     transforms.push_back(rot180);
     transforms.push_back(rot270);
 
     // Reflections
-    OutputMatrix reflH = reflectHorizontal(mat);
+    OutputMatrix reflH = outputReflectHorizontal(mat);
     transforms.push_back(reflH);
-    transforms.push_back(rotate90(reflH));
-    transforms.push_back(rotate90(rotate90(reflH)));
-    transforms.push_back(rotate90(rotate90(rotate90(reflH))));
+    transforms.push_back(outputRotate90(reflH));
+    transforms.push_back(outputRotate90(outputRotate90(reflH)));
+    transforms.push_back(outputRotate90(outputRotate90(outputRotate90(reflH))));
 
     return transforms;
 }
@@ -106,8 +106,8 @@ std::vector<OutputMatrix> generateDihedralTransformations(const OutputMatrix mat
 std::vector<TrainData*> generateDihedralTransformations(const TrainData& data) {
     std::vector<TrainData*> transformed_data;
     
-    auto rotatedStates = generateDihedralTransformations(std::get<0>(data));
-    auto rotatedMoves = generateDihedralTransformations(std::get<1>(data));
+    auto rotatedStates = generateTransformedInput(std::get<0>(data));
+    auto rotatedMoves = generateTransformedOutput(std::get<1>(data));
     auto value = std::get<2>(data);
     auto del_flag = std::get<3>(data);
 

@@ -1,5 +1,9 @@
 #include "gamerules.h"
 
+constexpr char dr[4] = {-1, 0, 1, 0};
+constexpr char dc[4] = {0, 1, 0, -1};
+
+
 Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
     for(size_t i=0; i<rowSize; ++i)
         for(size_t j=0; j<colSize; ++j){
@@ -13,8 +17,11 @@ Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
     score[WHITE] = 0.0f;
     lastTwoMoves[0] = PASSMOVE;
     lastTwoMoves[1] = PASSMOVE;
-    board[neutral.first][neutral.second] = NEUTRAL;
-    scoreBoard[neutral.first][neutral.second] = NEUTRAL;
+
+    for(const auto& neutral : globalConfig.neutrals){
+        board[neutral.first][neutral.second] = NEUTRAL;
+        scoreBoard[neutral.first][neutral.second] = NEUTRAL;
+    }
 }
 
 void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
@@ -23,7 +30,7 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     
     if (chains[h1].size < chains[h2].size) std::swap(h1, h2);
     chains[h1].size += chains[h2].size;
-    chains[h1].pseudoLibs += chains[h2].pseudoLibs;
+    chains[h1].liberties.merge(chains[h2].liberties);
     
     uint8_t cur = h2, start = h2;
     do {
@@ -38,28 +45,33 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
 color Game::captureResultbyMove(uint8_t r, uint8_t c){
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
-    chains[r * colSize + c] = {cord, 1U, 0};
-    
+    chains[r * colSize + c] = {cord, 1U, {}};
+
     for (size_t i = 0; i < 4; ++i) {
         uint8_t nr = r + dr[i], nc = c + dc[i];
         if (!inbound(nr, nc)) continue;
 
-        if(board[nr][nc] == EMPTY) 
-            ++(chains[findHead(r, c)].pseudoLibs);
-        if (board[nr][nc] == board[r][c]){
-            --(chains[findHead(nr, nc)].pseudoLibs);
-            mergeChains(r, c, nr, nc);
+        if(board[nr][nc] == EMPTY){ 
+            chains[findHead(r, c)].liberties.emplace(nr * colSize + nc);
         }
-        else if (board[nr][nc] == reverseColor(board[r][c]) && --(chains[findHead(nr, nc)].pseudoLibs) == 0) 
-            return board[r][c];
+        else if (board[nr][nc] == board[r][c]){
+            mergeChains(r, c, nr, nc);
+            chains[findHead(r, c)].liberties.erase(r * colSize + c);
+        }
+        else if (board[nr][nc] == reverseColor(board[r][c])){ 
+            auto& adj_chain = chains[findHead(nr, nc)];
+            adj_chain.liberties.erase(r * colSize + c);
+            if(adj_chain.liberties.empty())
+                return board[r][c];
+        }
+        // else adjacent to neutral; nothing should happen
     }
 
-    if(chains[findHead(r, c)].pseudoLibs == 0)
+    if(chains[findHead(r, c)].liberties.empty())
         return reverseColor(board[r][c]);
     
     return EMPTY;
 }
-
 
 uint8_t Game::checkScore(uint8_t r, uint8_t c, color clr) {
     if (!(inbound(r, c) && (scoreBoard[r][c] & EMPTY)))
@@ -132,7 +144,7 @@ void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
         uint8_t tr = r + dr[i], tc = c + dc[i];
         score[toCheck] += static_cast<float>(checkScore(tr, tc, toCheck));
     }
-    finalScore = score[BLACK] - score[WHITE] - komi;
+    finalScore = score[BLACK] - score[WHITE] - globalConfig.komi;
 }
 
 void Game::getScore(){
@@ -189,7 +201,7 @@ void Game::getScore(){
                 score[clr] += areaCount;
             }
             
-    finalScore = score[BLACK] - score[WHITE] - komi;
+    finalScore = score[BLACK] - score[WHITE] - globalConfig.komi;
 }
 
 color Game::gameEnd(){
@@ -296,48 +308,5 @@ color Game::updateScoreAfter(Move move){
 }
 
 void Game::onGameEnd(color winner){
-    std::cout << "game over! winner is : " << winner << std::endl;
-}
-
-void Game::displayBoardGUI(bool showScore) const{
-    char display[rowSize][colSize];
-
-    for(size_t i=0; i<rowSize; ++i){
-        for(size_t j=0; j<colSize; ++j){
-            switch(board[i][j]){
-                case BLACK:
-                    display[i][j] = 'o';
-                    break;
-                case WHITE:
-                    display[i][j] = 'x';
-                    break;
-                case NEUTRAL:
-                    display[i][j] = '+';
-                    break;
-                default:
-                    display[i][j] = '-';
-                    break;
-            }
-
-            if(showScore){
-                switch(scoreBoard[i][j]){
-                    case BLACK:
-                        display[i][j] = 'b';
-                        break;
-                    case WHITE:
-                        display[i][j] = 'w';
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-    }
-
-    for(size_t i=0; i<rowSize; ++i){
-        for(size_t j=0; j<colSize; ++j){
-            std::cout << display[i][j] << " ";
-        }
-        std::cout << "\n";
-    }
+    std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
 }

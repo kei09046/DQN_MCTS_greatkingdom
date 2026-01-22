@@ -20,22 +20,8 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # Create the executable
-add_executable(play 
-    main.cpp
-    gamerules.cpp 
-    hash.cpp
-    evalcache.cpp
-    evaluator.cpp
-    dirichlet.cpp 
-    PMCTS.cpp 
-    neuralNet.cpp 
-    random.cpp 
-    rotation.cpp
-    elo.cpp 
-    consts.cpp
-    train.cpp
-    modelcompare.cpp
-)
+file(GLOB_RECURSE SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
+add_executable(play ${SRC})
 
 # Link against LibTorch
 target_link_libraries(play "${TORCH_LIBRARIES}")

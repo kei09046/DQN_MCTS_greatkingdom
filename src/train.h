@@ -40,9 +40,10 @@ private:
 
 public:
     std::deque<TrainData*>* game_buffer;
-	std::array<float, inputChannel * batchSize * inputSize>* state_batch;
-	std::array<float, batchSize * outputSize>* nextmove_batch;
-	std::array<float, batchSize>* winner_batch;
+	// std::array<float, inputChannel * batchSize * inputSize>* state_batch;
+	// std::array<float, batchSize * outputSize>* nextmove_batch;
+	// std::array<float, batchSize>* winner_batch;
+	std::vector<float>* state_batch, *nextmove_batch, *winner_batch;
 
 	TrainPipeline(std::string init_model, std::string test_model, bool gpu = false);
 

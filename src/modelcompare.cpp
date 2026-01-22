@@ -38,7 +38,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 
 void ModelCompare::play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
-	auto evaluator = new Evaluator(model_path + model, gpu);
+	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
@@ -58,7 +58,7 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 		}
 
 		res = game_manager.makeMove(cord);
-		game_manager.displayBoardGUI();
+		displayBoardGUI(false, game_manager);
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
 			break;
@@ -72,7 +72,7 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 
 void ModelCompare::playGTP(const std::string& model, int playout, float temp, bool gpu) {
     Game game_manager = Game();
-	auto evaluator = new Evaluator(model_path + model, gpu);
+	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
@@ -85,7 +85,7 @@ void ModelCompare::playGTP(const std::string& model, int playout, float temp, bo
         iss >> cmd;
 
         if (cmd == "protocol_version") ok("2");
-        else if (cmd == "name") ok(model_path + model);
+        else if (cmd == "name") ok(globalConfig.modelPath + model);
         else if (cmd == "version") ok("0.1");
         else if (cmd == "list_commands")
         ok("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
@@ -131,13 +131,13 @@ std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
 
 float ModelCompare::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
 	bool gpu, float temp, int n_games, int n_thread) {
-	auto eo = new Evaluator(model_path + mod_one, gpu);
-	auto et = new Evaluator(model_path + mod_two, gpu);
+	auto eo = new Evaluator(globalConfig.modelPath + mod_one, gpu);
+	auto et = new Evaluator(globalConfig.modelPath + mod_two, gpu);
 	std::vector<MCTS*> base_players, oppo_players;
 
 	for(int i=0; i<n_thread; ++i){
-		base_players.push_back(new MCTS(n_playout, eo));
-		oppo_players.push_back(new MCTS(n_playout, et));
+		base_players.push_back(new MCTS(globalConfig.nPlayout, eo));
+		oppo_players.push_back(new MCTS(globalConfig.nPlayout, et));
 	}
 
 	std::vector<std::thread> evaluate_threads;
@@ -170,12 +170,12 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 	std::vector<Evaluator*> evaluators(N);
 
 	for (int i = 0; i < N; ++i) {
-		evaluators[i] = new Evaluator(model_path + model_list[i], gpu);
-		players[i] = new MCTS(n_playout, evaluators[i]);
+		evaluators[i] = new Evaluator(globalConfig.modelPath + model_list[i], gpu);
+		players[i] = new MCTS(globalConfig.nPlayout, evaluators[i]);
 	}
 
 	bool load_from_file = false;
-	EloCalculator elo_calculator(model_path + "ratings.txt", model_list, load_from_file);
+	EloCalculator elo_calculator(globalConfig.modelPath + "ratings.txt", model_list, load_from_file);
 
 	for(int i=1; i<N; ++i){
 		for(int j=0; j<N-i; ++j){
@@ -189,7 +189,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 	}
 
 	if(load_from_file){
-		elo_calculator.saveRating(model_path + "ratings.txt", model_list);
+		elo_calculator.saveRating(globalConfig.modelPath + "ratings.txt", model_list);
 	}
 	std::vector<float> ratings = elo_calculator.GetRatings(/*adjust=*/false);
 	for(int i=0; i<N; ++i){
@@ -202,6 +202,63 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 	}
 	return ratings;
 }
+
+
+void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
+    char display[rowSize][colSize];
+
+    for(size_t i=0; i<rowSize; ++i){
+        for(size_t j=0; j<colSize; ++j){
+            switch(game.getBoard(i, j)){
+                case BLACK:
+                    display[i][j] = 'o';
+                    break;
+                case WHITE:
+                    display[i][j] = 'x';
+                    break;
+                case NEUTRAL:
+                    display[i][j] = '+';
+                    break;
+                default:
+                    display[i][j] = '-';
+                    break;
+            }
+
+            if(showScore){
+                switch(game.getScoreBoard(i, j)){
+                    case BLACK:
+                        display[i][j] = 'b';
+                        break;
+                    case WHITE:
+                        display[i][j] = 'w';
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    for(size_t i=0; i<rowSize; ++i){
+        for(size_t j=0; j<colSize; ++j){
+            std::cout << display[i][j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+	const auto nnInput = PolicyValueNet::getData(game);
+	int cnt = 0;
+	for(size_t i=0; i<globalConfig.inputChannel; ++i){
+		std::cout << "\n channel " << i << "\n";
+		
+		for(size_t j=0; j<rowSize; ++j){
+			for(size_t k=0; k<colSize; ++k)
+				std::cout << nnInput[cnt++] << " ";
+			std::cout << "\n";
+		}
+	}
+}
+
 
 color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
     char c;
@@ -259,6 +316,7 @@ Move ModelCompare::parse_vertex(const std::string& v) {
 		return RESIGNMOVE;
 	}
     char col = v[0];
+	if(col >= 'J') col--; // there is no 'I' in sabaki cord.
     int row = std::stoi(v.substr(1));
 
     return {static_cast<uint8_t>(row - 1), static_cast<uint8_t>(col - 'A')};

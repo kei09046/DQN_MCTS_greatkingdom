@@ -29,8 +29,8 @@ private:
     }
 
 public:
-    Cache() : mutexPool(mutexPoolSize), tableMask(tableSize - 1), mutexPoolMask(mutexPoolSize - 1){
-        table = new Entry[tableSize];
+    Cache() : mutexPool(globalConfig.mutexPoolSize), tableMask(globalConfig.tableSize - 1), mutexPoolMask(globalConfig.mutexPoolSize - 1){
+        table = new Entry[globalConfig.tableSize];
     }
 
     ~Cache() {
@@ -69,7 +69,7 @@ public:
     }
 
     void clear() {
-        for(size_t i = 0; i < tableSize; i++) {
+        for(size_t i = 0; i < globalConfig.tableSize; i++) {
             std::mutex& m = mutexOf(i);
             std::lock_guard<std::mutex> lock(m);
             if(table[i].ptr != nullptr){

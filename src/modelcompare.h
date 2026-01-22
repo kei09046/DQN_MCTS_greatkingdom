@@ -29,6 +29,8 @@ public:
 	static std::vector<float> policy_evaluate(std::vector<std::string> model_list, // return list of elo
 		std::ostream& total_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100);
 
+	static void displayBoardGUI(bool showScore, const Game& game);
+	
 private:
 	inline static void ok(const std::string& s=""){
 		std::cout << "= " << s << "\n\n";

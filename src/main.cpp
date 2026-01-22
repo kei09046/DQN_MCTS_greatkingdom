@@ -1,14 +1,18 @@
 #include "train.h"
 #include "modelcompare.h"
+#include "config.h"
 #include <iostream>
 #include <tuple>
 #include <string>
 #include <algorithm>
 
+const Config globalConfig = loadConfig("../configs/train_local_config.json");
+
+
 int main(int argc, char** argv) {
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-
     std::string mod = argv[1];
+    
     if(mod == "train"){
         std::string model_file = argv[2];
         int game_num = std::stoi(argv[3]);
@@ -16,7 +20,7 @@ int main(int argc, char** argv) {
         bool is_shown = static_cast<bool>(std::stoi(argv[5]));
 
         TrainPipeline line(model_file, model_file, true); // use gpu
-        line.run(game_num, num_thread, is_shown, 0.5f, default_model_type); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
+        line.run(game_num, num_thread, is_shown, 0.5f, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
     }
     else if(mod == "play"){
         std::string model_file = argv[2];

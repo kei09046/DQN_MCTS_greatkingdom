@@ -24,7 +24,12 @@ Hash::Hash() {
     }
 
 HashValue Hash::baseHash() const{
-    return zobristTable[neutral.first][neutral.second][2];
+    static HashValue h = 0;
+    if(h == 0){
+        for(const auto& neutral : globalConfig.neutrals)
+            h ^= zobristTable[neutral.first][neutral.second][2];
+    }
+    return h;
 }
 
 HashValue Hash::computeHashAfterMove(const Game& old_game, const std::pair<int, int>& move, const HashValue prevHash) const{

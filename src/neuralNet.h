@@ -33,45 +33,11 @@ public:
 };
 
 
-class GNet : public NetBase{
+class Net : public NetBase{
 public:
-	GNet();
-	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
-	torch::nn::Conv2d cv1;
-	torch::nn::BatchNorm2d bn1;
+	Net(int channelSize);
+	int channelSize;
 
-	std::vector<ResidualBlock> blocks;
-	
-	torch::nn::Conv2d at_cv3;
-	torch::nn::BatchNorm2d at_bn3;
-	torch::nn::Linear at_fc1;
-	torch::nn::Conv2d v_cv3;
-	torch::nn::BatchNorm2d v_bn3;
-	torch::nn::Linear v_fc1;
-	torch::nn::Linear v_fc2;
-};
-
-class INet : public NetBase{
-public:
-	INet();
-	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
-	torch::nn::Conv2d cv1;
-	torch::nn::BatchNorm2d bn1;
-
-	std::vector<ResidualBlock> blocks;
-	
-	torch::nn::Conv2d at_cv3;
-	torch::nn::BatchNorm2d at_bn3;
-	torch::nn::Linear at_fc1;
-	torch::nn::Conv2d v_cv3;
-	torch::nn::BatchNorm2d v_bn3;
-	torch::nn::Linear v_fc1;
-	torch::nn::Linear v_fc2;
-};
-
-class ANet : public NetBase{
-public:
-	ANet();
 	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
@@ -110,8 +76,11 @@ public:
 
 	PolicyValueOutput evaluate(const Game& game);
 
-	void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
-		std::array<float, batchSize>& winner_batch, float lr);
+	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
+	// 	std::array<float, batchSize>& winner_batch, float lr);
+
+	void train_step(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+		std::vector<float>& winner_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
 
