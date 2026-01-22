@@ -18,6 +18,8 @@ public:
 
 	static void play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // play against human
 
+	static void playHuman();
+
 	static void playGTP(const std::string& model, int playout, float temp, bool gpu); // play against human via GTP
 
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two

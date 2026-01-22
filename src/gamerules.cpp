@@ -10,6 +10,7 @@ Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
             board[i][j] = EMPTY;
             scoreBoard[i][j] = EMPTY;
             mark[i][j] = 0;
+            chains[i * colSize + j] = {0, 0, {}};
         }
     
     currentTurn = BLACK;
@@ -30,7 +31,7 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     
     if (chains[h1].size < chains[h2].size) std::swap(h1, h2);
     chains[h1].size += chains[h2].size;
-    chains[h1].liberties.merge(chains[h2].liberties);
+    chains[h1].liberties &= chains[h2].liberties;
     
     uint8_t cur = h2, start = h2;
     do {
@@ -52,22 +53,22 @@ color Game::captureResultbyMove(uint8_t r, uint8_t c){
         if (!inbound(nr, nc)) continue;
 
         if(board[nr][nc] == EMPTY){ 
-            chains[findHead(r, c)].liberties.emplace(nr * colSize + nc);
+            chains[findHead(r, c)].liberties.set(nr * colSize + nc, true);
         }
         else if (board[nr][nc] == board[r][c]){
             mergeChains(r, c, nr, nc);
-            chains[findHead(r, c)].liberties.erase(r * colSize + c);
+            chains[findHead(r, c)].liberties.set(r * colSize + c, false);
         }
         else if (board[nr][nc] == reverseColor(board[r][c])){ 
             auto& adj_chain = chains[findHead(nr, nc)];
-            adj_chain.liberties.erase(r * colSize + c);
-            if(adj_chain.liberties.empty())
+            adj_chain.liberties.set(r * colSize + c, false);
+            if(adj_chain.liberties.none())
                 return board[r][c];
         }
         // else adjacent to neutral; nothing should happen
     }
 
-    if(chains[findHead(r, c)].liberties.empty())
+    if(chains[findHead(r, c)].liberties.none())
         return reverseColor(board[r][c]);
     
     return EMPTY;

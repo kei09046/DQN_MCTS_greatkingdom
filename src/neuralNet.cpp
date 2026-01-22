@@ -109,17 +109,17 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 			auto state = game.getBoard(i / colSize, i % colSize);
 			int liberty_count = 0;
 
-			for(const auto& liberty : c.liberties){
-				// if one of the liberties is my territory(= completely alive group)
+			for(size_t j=0; j<boardSize; ++j){
+				// if one of the liberty is my territory(= completely alive group)
 				// set the liberty count to 5. Note that my stone can't be adjacent to enemy territory.
-				if(ret[4*inputSize + liberty] == 1.0f || ret[5*inputSize + i] == 1.0f) 
-				{
+				if(c.liberties.test(j) && ((ret[4*inputSize + j] == 1.0f) || (ret[5*inputSize + j] == 1.0f))){
 					liberty_count = 5;
 					break;
 				}
 			}
+
 			if(liberty_count == 0)
-				liberty_count = std::min((int)c.liberties.size(), 4);
+				liberty_count = std::min((int)c.liberties.count(), 4);
 
 			if(state == BLACK){ // black stone's liberties
 				do {

@@ -22,6 +22,9 @@ int main(int argc, char** argv) {
         TrainPipeline line(model_file, model_file, true); // use gpu
         line.run(game_num, num_thread, is_shown, 0.5f, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
     }
+    else if(mod == "human_play"){
+        ModelCompare::playHuman();
+    }
     else if(mod == "play"){
         std::string model_file = argv[2];
         int co = std::stoi(argv[3]); // human color

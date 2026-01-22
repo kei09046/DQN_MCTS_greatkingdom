@@ -5,18 +5,17 @@
 #include <queue>
 #include <vector>
 #include <iostream>
-#include <unordered_set>
 #include <algorithm>
 #include <cstdint>
 #include <bitset>
-#include <unordered_set>
 #include "consts.h"
 
 
 struct Chain {
     uint8_t head;        // Index of the head stone
     uint8_t size;        // Number of stones in the chain
-    std::unordered_set<int> liberties;
+    //std::unordered_set<int> liberties;
+    std::bitset<boardSize> liberties;
 };
 
 struct Stone {

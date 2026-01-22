@@ -14,7 +14,7 @@
 // use transposition table(used in self-play) 
 //#define transTable 
 // add dirichlet noise to the prior probabilities(used in self-play) 
-//#define dirichletNoise 
+#define dirichletNoise 
 // save to google drive. Only in colab. 
 // #define googleDrive 
 // decide whether to use APV-MCTS or not. 

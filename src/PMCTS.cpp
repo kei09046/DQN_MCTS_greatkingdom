@@ -401,9 +401,9 @@ void Node::addDirichletNoise(){ // have to make sure that dirichlet noise is not
         evaluate();
     }
     state = NodeState_::FINAL;
-    std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
+    std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
     for(int i=0; i<edgeP.size(); ++i)
-        edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
+        edgeP[i] = (1.0f-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
 }
 #endif
 
@@ -804,9 +804,9 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     }
 
     if(winmove == RESIGNMOVE && available_moves.size() > 0){
-        std::vector<float> eta = sample_dirichlet(edgeP.size(), alpha); 
+        std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
         for(int i=0; i<edgeP.size(); ++i)
-            edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
+            edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
     }
 }
 #endif

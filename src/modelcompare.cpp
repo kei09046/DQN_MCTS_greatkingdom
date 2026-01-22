@@ -58,7 +58,7 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 		}
 
 		res = game_manager.makeMove(cord);
-		displayBoardGUI(false, game_manager);
+		displayBoardGUI(true, game_manager);
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
 			break;
@@ -67,6 +67,27 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 	}
 
 	delete evaluator;
+	return;
+}
+
+void ModelCompare::playHuman() {
+	Game game_manager = Game();
+
+	Move cord;
+	color res;
+	while (true) {
+		u_int r, c;
+		std::cin >> r >> c;
+		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+
+		res = game_manager.makeMove(cord);
+		displayBoardGUI(true, game_manager);
+		if (res != EMPTY) {
+			game_manager.onGameEnd(res);
+			break;
+		}
+	}
+
 	return;
 }
 
