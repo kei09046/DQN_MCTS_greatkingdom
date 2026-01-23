@@ -31,7 +31,7 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     
     if (chains[h1].size < chains[h2].size) std::swap(h1, h2);
     chains[h1].size += chains[h2].size;
-    chains[h1].liberties &= chains[h2].liberties;
+    chains[h1].liberties |= chains[h2].liberties;
     
     uint8_t cur = h2, start = h2;
     do {
