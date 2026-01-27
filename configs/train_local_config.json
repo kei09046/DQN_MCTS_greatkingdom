@@ -35,7 +35,7 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 11
+    "inputChannel": 10
   },
 
   "cache": {

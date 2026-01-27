@@ -58,46 +58,47 @@ std::tuple<torch::Tensor, torch::Tensor> Net::forward(const torch::Tensor& state
 InputMatrix PolicyValueNet::getData(const Game& game){
     InputMatrix ret(inputSize * globalConfig.inputChannel, 0.0f);
 	color turn = game.getTurn();
+	color opp_turn = Game::reverseColor(turn);
 	color state;
 
 	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard(i / colSize, i % colSize);
-		if(state == BLACK)
+		if(state == turn)
 			ret[i] = 1.0f;
-		else if(state == WHITE)
+		else if(state == opp_turn)
 			ret[inputSize + i] = 1.0f;
 		else if(state == NEUTRAL)
 			ret[2 * inputSize + i] = 1.0f;
 	}
 
-	for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
-		ret[i] = (turn == BLACK) ? 0.0f : 1.0f;
-	}
+	// for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
+	// 	ret[i] = (turn == turn) ? 0.0f : 1.0f;
+	// }
 
 	color terr;
 	for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
 		terr = game.getScoreBoard(i/colSize, i%colSize);
-		if(terr == BLACK){
-			ret[4*inputSize + i] = 1.0f;
+		if(terr == turn){
+			ret[3*inputSize + i] = 1.0f;
 		}
-		else if(terr == WHITE){
-			ret[5*inputSize + i] = 1.0f;
+		else if(terr == opp_turn){
+			ret[4*inputSize + i] = 1.0f;
 		}
 	}
 
-	float diff = game.scoreDiff(BLACK) / boardSize;
+	float diff = game.scoreDiff(turn) / boardSize;
 	for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
-		ret[6*inputSize + i] = diff;
+		ret[5*inputSize + i] = diff;
 	}
 
 	// channel 7, 8 : last move and second last move
 	Move lastMove = game.getLastMove(0);
 	if(lastMove != PASSMOVE && lastMove != RESIGNMOVE){
-		ret[7*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
+		ret[6*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
 	}
 	Move secondLastMove = game.getLastMove(1);
 	if(secondLastMove != PASSMOVE && secondLastMove != RESIGNMOVE){
-		ret[8*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
+		ret[7*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
 	}
 
 	// channel 9, 10 : liberty count(inf if adjacent to territory)
@@ -121,15 +122,15 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 			if(liberty_count == 0)
 				liberty_count = std::min((int)c.liberties.count(), 4);
 
-			if(state == BLACK){ // black stone's liberties
+			if(state == turn){ // black stone's liberties
 				do {
-					ret[9*inputSize + cur] = liberty_count;
+					ret[8*inputSize + cur] = liberty_count;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != c.head);
 			}
-			else if(state == WHITE){ // white stone's liberties
+			else if(state == opp_turn){ // white stone's liberties
 				do {
-					ret[10*inputSize + cur] = liberty_count;
+					ret[9*inputSize + cur] = liberty_count;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != c.head);
 			}
@@ -273,7 +274,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 			net = std::make_shared<Net>(9);
 		}
 		else if(model_type == "C"){
-			net = std::make_shared<Net>(11);
+			net = std::make_shared<Net>(10);
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -282,7 +283,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(11);
+		policy_value_net = std::make_shared<Net>(10);
 	}
 
 	policy_value_net->to(device);

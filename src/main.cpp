@@ -10,6 +10,8 @@ const Config globalConfig = loadConfig("../configs/train_local_config.json");
 
 
 int main(int argc, char** argv) {
+    std::cout << "starting ..." << std::endl;
+    
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     std::string mod = argv[1];
     
