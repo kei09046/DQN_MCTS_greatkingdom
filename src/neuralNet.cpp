@@ -105,7 +105,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	for(size_t i=0; i<inputSize; ++i){
 		const Chain c = game.getChain(i);
 
-		if(c.size != 0 && ret[9*inputSize + i] == 0 && ret[10*inputSize + i] == 0){
+		if(c.size != 0 && ret[8*inputSize + i] == 0 && ret[9*inputSize + i] == 0){
 			auto cur = c.head;
 			auto state = game.getBoard(i / colSize, i % colSize);
 			int liberty_count = 0;
@@ -113,7 +113,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 			for(size_t j=0; j<boardSize; ++j){
 				// if one of the liberty is my territory(= completely alive group)
 				// set the liberty count to 5. Note that my stone can't be adjacent to enemy territory.
-				if(c.liberties.test(j) && ((ret[4*inputSize + j] == 1.0f) || (ret[5*inputSize + j] == 1.0f))){
+				if(c.liberties.test(j) && ((ret[3*inputSize + j] == 1.0f) || (ret[4*inputSize + j] == 1.0f))){
 					liberty_count = 5;
 					break;
 				}

@@ -704,7 +704,7 @@ Move Node::selectMove(float temp){
     }
 
     for(int i=0; i<available_moves.size(); ++i){
-        std::cout << "move : " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
+        std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
         " sc: " << edgeN[i] << " Q: " << 
         child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " P " << edgeP[i] << std::endl;
     }

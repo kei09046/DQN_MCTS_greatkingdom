@@ -70,24 +70,38 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 	return;
 }
 
-void ModelCompare::playHuman() {
+void ModelCompare::playWeb(const std::string& model, const color humanColor, int playout, float temp, bool gpu){
 	Game game_manager = Game();
+	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
+	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
 	color res;
+
+	std::cout << "model loaded" << std::endl;
 	while (true) {
-		u_int r, c;
-		std::cin >> r >> c;
-		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+		if (game_manager.getTurn() == humanColor) { // human turn
+			u_int r, c;
+			std::cin >> r >> c;
+			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+		}
+		else { // engine turn
+			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+			cord = player.getMove(temp);
+			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+			std::cout << "move: " << (int)cord.first << " " << (int)cord.second << std::endl;
+			std::cout << "move time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
+		}
 
 		res = game_manager.makeMove(cord);
-		displayBoardGUI(true, game_manager);
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
 			break;
 		}
+        player.jump(cord);
 	}
 
+	delete evaluator;
 	return;
 }
 
@@ -133,6 +147,27 @@ void ModelCompare::playGTP(const std::string& model, int playout, float temp, bo
 
     delete evaluator;
     return;
+}
+
+void ModelCompare::playHuman() {
+	Game game_manager = Game();
+
+	Move cord;
+	color res;
+	while (true) {
+		u_int r, c;
+		std::cin >> r >> c;
+		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+
+		res = game_manager.makeMove(cord);
+		displayBoardGUI(true, game_manager);
+		if (res != EMPTY) {
+			game_manager.onGameEnd(res);
+			break;
+		}
+	}
+
+	return;
 }
 
 std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,

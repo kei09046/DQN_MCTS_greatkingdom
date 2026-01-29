@@ -33,6 +33,15 @@ int main(int argc, char** argv) {
         int playout = std::stoi(argv[4]);
         ModelCompare::play(model_file, (color)co, playout, 10.0f, true, true);
     }
+    else if(mod == "web"){
+        std::string model_file = argv[2];
+        std::string human_color = argv[3];
+        unsigned int co = (human_color == "black") ? BLACK : ((human_color == "white") ? WHITE : NEUTRAL); // human color
+        int playout = std::stoi(argv[4]);
+        float temp = std::stof(argv[5]);
+        std::cout << argv[3] << " human color : " << co << std::endl;
+        ModelCompare::playWeb(model_file, (color)co, playout, temp, true);
+    }
     else if(mod == "gtp"){
         std::string model_file = argv[2];
         int playout = std::stoi(argv[3]);

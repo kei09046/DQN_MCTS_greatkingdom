@@ -22,6 +22,8 @@ public:
 
 	static void playGTP(const std::string& model, int playout, float temp, bool gpu); // play against human via GTP
 
+	static void playWeb(const std::string& model, const color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
+
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
 
