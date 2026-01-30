@@ -13,7 +13,6 @@
 
 struct Chain {
     uint8_t size;        // Number of stones in the chain
-    //std::unordered_set<int> liberties;
     std::bitset<boardSize> liberties;
 };
 

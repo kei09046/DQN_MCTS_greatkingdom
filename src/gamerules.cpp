@@ -5,7 +5,7 @@ constexpr char dc[4] = {0, 1, 0, -1};
 
 
 Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
-    uint8_t temp;
+    uint8_t temp = 0;
     for(size_t i=0; i<rowSize; ++i)
         for(size_t j=0; j<colSize; ++j){
             board[i][j] = EMPTY;
