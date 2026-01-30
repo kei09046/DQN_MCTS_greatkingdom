@@ -5,12 +5,15 @@ constexpr char dc[4] = {0, 1, 0, -1};
 
 
 Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
+    uint8_t temp;
     for(size_t i=0; i<rowSize; ++i)
         for(size_t j=0; j<colSize; ++j){
             board[i][j] = EMPTY;
             scoreBoard[i][j] = EMPTY;
             mark[i][j] = 0;
-            chains[i * colSize + j] = {0, 0, {}};
+            chains[temp] = {0, {}};
+            stones[i][j] = {temp, temp};
+            temp++;
         }
     
     currentTurn = BLACK;
@@ -26,9 +29,15 @@ Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
 }
 
 void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
+    //std::cout << "merging chain :" << (int)r1 << (int)c1 << " " << (int)r2 << (int)c2 << std::endl;
     uint8_t h1 = findHead(r1, c1), h2 = findHead(r2, c2);
+    //std::cout << "head :" << (int)h1 << " " << (int)h2 << std::endl;
+    //std::cout << "liberties :\n " << chains[h1].liberties << "\n" << chains[h2].liberties << std::endl;
     if (h1 == h2) return;
     
+    chains[h1].liberties.set(r2 * colSize + c2, false);
+    chains[h2].liberties.set(r1 * colSize + c1, false);
+
     if (chains[h1].size < chains[h2].size) std::swap(h1, h2);
     chains[h1].size += chains[h2].size;
     chains[h1].liberties |= chains[h2].liberties;
@@ -40,13 +49,14 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     } while (cur != start);
     
     std::swap(stones[h2 / colSize][h2 % colSize].next, stones[h1 / colSize][h1 % colSize].next);
+    std::cout << "after liberties :\n " << chains[h1].liberties << std::endl;
 }
 
 
 color Game::captureResultbyMove(uint8_t r, uint8_t c){
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
-    chains[r * colSize + c] = {cord, 1U, {}};
+    chains[r * colSize + c] = {1U, {}};
 
     for (size_t i = 0; i < 4; ++i) {
         uint8_t nr = r + dr[i], nc = c + dc[i];
@@ -57,7 +67,6 @@ color Game::captureResultbyMove(uint8_t r, uint8_t c){
         }
         else if (board[nr][nc] == board[r][c]){
             mergeChains(r, c, nr, nc);
-            chains[findHead(r, c)].liberties.set(r * colSize + c, false);
         }
         else if (board[nr][nc] == reverseColor(board[r][c])){ 
             auto& adj_chain = chains[findHead(nr, nc)];

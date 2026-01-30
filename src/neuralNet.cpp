@@ -76,7 +76,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	// }
 
 	color terr;
-	for(size_t i=0; i<inputSize; ++i){ // channel 4, 5 : indicates territory
+	for(size_t i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
 		terr = game.getScoreBoard(i/colSize, i%colSize);
 		if(terr == turn){
 			ret[3*inputSize + i] = 1.0f;
@@ -87,11 +87,11 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	}
 
 	float diff = game.scoreDiff(turn) / boardSize;
-	for(size_t i=0; i<inputSize; ++i){ // channel 6 : difference of score
+	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score
 		ret[5*inputSize + i] = diff;
 	}
 
-	// channel 7, 8 : last move and second last move
+	// channel 6, 7 : last move and second last move
 	Move lastMove = game.getLastMove(0);
 	if(lastMove != PASSMOVE && lastMove != RESIGNMOVE){
 		ret[6*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
@@ -101,12 +101,13 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 		ret[7*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
 	}
 
-	// channel 9, 10 : liberty count(inf if adjacent to territory)
+	// channel 8, 9 : liberty count(inf if adjacent to territory)
 	for(size_t i=0; i<inputSize; ++i){
 		const Chain c = game.getChain(i);
 
 		if(c.size != 0 && ret[8*inputSize + i] == 0 && ret[9*inputSize + i] == 0){
-			auto cur = c.head;
+			auto head = game.getStone( i / colSize, i % colSize).head;
+			auto cur = head;
 			auto state = game.getBoard(i / colSize, i % colSize);
 			int liberty_count = 0;
 
@@ -119,20 +120,24 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 				}
 			}
 
-			if(liberty_count == 0)
-				liberty_count = std::min((int)c.liberties.count(), 4);
+			// if(liberty_count == 0){
+			// 	liberty_count = std::min((int)c.liberties.count(), 4);
+			// 	if(liberty_count != 0){
+			// 		std::cout << i << " " << c.liberties << std::endl;
+			// 	}
+			// }
 
 			if(state == turn){ // black stone's liberties
 				do {
 					ret[8*inputSize + cur] = liberty_count;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
-				} while (cur != c.head);
+				} while (cur != head);
 			}
 			else if(state == opp_turn){ // white stone's liberties
 				do {
 					ret[9*inputSize + cur] = liberty_count;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
-				} while (cur != c.head);
+				} while (cur != head);
 			}
 		}
 	}

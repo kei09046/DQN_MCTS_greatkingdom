@@ -12,7 +12,6 @@
 
 
 struct Chain {
-    uint8_t head;        // Index of the head stone
     uint8_t size;        // Number of stones in the chain
     //std::unordered_set<int> liberties;
     std::bitset<boardSize> liberties;
@@ -76,7 +75,7 @@ public:
     }
 
     inline const Chain& getChain(u_int idx) const{
-        return chains[idx];
+        return chains[stones[idx/colSize][idx%colSize].head];
     }
 
     inline const Stone& getStone(u_int r, u_int c) const{
