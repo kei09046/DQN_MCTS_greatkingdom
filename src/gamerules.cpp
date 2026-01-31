@@ -49,7 +49,7 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     } while (cur != start);
     
     std::swap(stones[h2 / colSize][h2 % colSize].next, stones[h1 / colSize][h1 % colSize].next);
-    std::cout << "after liberties :\n " << chains[h1].liberties << std::endl;
+    //std::cout << "after liberties :\n " << chains[h1].liberties << std::endl;
 }
 
 

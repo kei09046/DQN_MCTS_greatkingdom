@@ -120,12 +120,9 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 				}
 			}
 
-			// if(liberty_count == 0){
-			// 	liberty_count = std::min((int)c.liberties.count(), 4);
-			// 	if(liberty_count != 0){
-			// 		std::cout << i << " " << c.liberties << std::endl;
-			// 	}
-			// }
+			if(liberty_count == 0){
+				liberty_count = std::min((int)c.liberties.count(), 4);
+			}
 
 			if(state == turn){ // black stone's liberties
 				do {
