@@ -304,7 +304,7 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
 
 	const auto nnInput = PolicyValueNet::getData(game);
 	int cnt = rowSize * colSize * 8;
-	for(size_t i=8; i<=9; ++i){
+	for(size_t i=8; i<=17; ++i){
 		std::cout << "\n channel " << i << "\n";
 		
 		for(size_t j=0; j<rowSize; ++j){

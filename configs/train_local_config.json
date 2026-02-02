@@ -35,7 +35,7 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 10
+    "inputChannel": 18
   },
 
   "cache": {
@@ -45,9 +45,9 @@
 
   "train": {
     "epochs": 5,
-    "check_freq": 480,
-    "compare_game_cnt": 128,
-    "compare_thread_num": 16,
+    "check_freq": 960,
+    "compare_game_cnt": 120,
+    "compare_thread_num": 12,
     "search_thread_num": 4,
     "train_wait_time": 64000,
     "save_freq": 96,

@@ -242,11 +242,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							std::cout, std::cout, false, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
 						std::cout << "model " << model_file << " vs " << current_best_model_file << 
 						" winrate " << win_rate << std::endl;
-						if(win_rate > 0.55f){
+						if(win_rate > 0.5f){
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
 						}
-						else if(win_rate < 0.45f){
+						else if(win_rate < 0.4f){
 							std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
 							train_model.load_model(globalConfig.modelPath + current_best_model_file);
 						}

@@ -16,14 +16,11 @@ v_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
 v_bn3(torch::nn::BatchNorm2d(1)),
 v_fc1(inputSize, 256),
 v_fc2(256, 1){
-	for (int i = 1; i < 13; i++) {
-        auto rb = ResidualBlock(128);
-		register_module("rb" + std::to_string(i) + "_conv1", rb->conv1);
-		register_module("rb" + std::to_string(i) + "_bn1",   rb->bn1);
-		register_module("rb" + std::to_string(i) + "_conv2", rb->conv2);
-		register_module("rb" + std::to_string(i) + "_bn2",   rb->bn2);
-		blocks.push_back(rb);
-    }
+	blocks = register_module("blocks", torch::nn::ModuleList());
+
+	for (int i = 0; i < 12; i++) {
+		blocks->push_back(ResidualBlock(128));
+	}
 	
 	register_module("cv1", cv1);
 	register_module("bn1", bn1);
@@ -40,8 +37,8 @@ v_fc2(256, 1){
 std::tuple<torch::Tensor, torch::Tensor> Net::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
-	for (auto& rb : blocks) {
-		x = rb->forward(x);
+	for (auto& block : *blocks) {
+		x = block->as<ResidualBlock>()->forward(x);
 	}
 	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
 	log_act = log_act.view({ -1, 2 * inputSize });
@@ -101,7 +98,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 		ret[7*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
 	}
 
-	// channel 8, 9 : liberty count(inf if adjacent to territory)
+	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
 	for(size_t i=0; i<inputSize; ++i){
 		const Chain c = game.getChain(i);
 
@@ -124,15 +121,15 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 				liberty_count = std::min((int)c.liberties.count(), 4);
 			}
 
-			if(state == turn){ // black stone's liberties
+			if(state == turn){ // my stone's liberties
 				do {
-					ret[8*inputSize + cur] = liberty_count;
+					ret[(7 + liberty_count)*inputSize + cur] = 1.0f;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != head);
 			}
-			else if(state == opp_turn){ // white stone's liberties
+			else if(state == opp_turn){ // opponent stone's liberties
 				do {
-					ret[9*inputSize + cur] = liberty_count;
+					ret[(12 + liberty_count)*inputSize + cur] = 1.0f;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != head);
 			}
@@ -276,7 +273,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 			net = std::make_shared<Net>(9);
 		}
 		else if(model_type == "C"){
-			net = std::make_shared<Net>(10);
+			net = std::make_shared<Net>(18);
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -285,7 +282,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(10);
+		policy_value_net = std::make_shared<Net>(globalConfig.inputChannel);
 	}
 
 	policy_value_net->to(device);
