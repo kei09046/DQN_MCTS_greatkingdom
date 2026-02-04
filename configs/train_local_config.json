@@ -45,7 +45,7 @@
 
   "train": {
     "epochs": 5,
-    "check_freq": 960,
+    "check_freq": 480,
     "compare_game_cnt": 120,
     "compare_thread_num": 12,
     "search_thread_num": 4,

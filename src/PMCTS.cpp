@@ -703,6 +703,7 @@ Move Node::selectMove(float temp){
         return available_moves[index];
     }
 
+    std::cout << "available move size : " << available_moves.size() << std::endl;
     for(int i=0; i<available_moves.size(); ++i){
         std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
         " sc: " << edgeN[i] << " Q: " << 
@@ -901,16 +902,16 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         while (true) {
             path.push_back(cur);
 
+            #ifndef dirichletNoise
             if (cur->N == 0.0f) { // first time visit
                 cur->expand();
-                if (cur->winmove != RESIGNMOVE){ // won
-                    evalQ = -1.0f;
-                }
-                else if(cur->available_moves.size() == 0){ // lost
-                    evalQ = 1.0f;
-                }
-                break;
             }
+            #endif
+            #ifdef dirichletNoise // when dirichlet noise is activated, root is already expanded & evaluated. No need to expand root again.
+            if (cur->N == 0.0f && cur != root) { // first time visit
+                cur->expand();
+            }
+            #endif
 
             if (cur->winmove != RESIGNMOVE){ // won
                 evalQ = -1.0f;
@@ -921,18 +922,18 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 break;
             }
 
-            if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is already evaluating, return
+            if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is evaluating, return
                 searchStuck = true;
                 return;
             }
-            int a = cur->selectChildInSearch();
+            int a = cur->selectChildInSearch(); // assume node is evaluated
             childIdx.push_back(a);
             cur = cur->child[a];
         }
 
         searchCounter++;
         // set node visit stats
-        for (auto node : path) {
+        for (Node* node : path) {
             node->N += 1.0f;
             node->W -= 1.0f; // apply VL
         }
