@@ -905,11 +905,25 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             #ifndef dirichletNoise
             if (cur->N == 0.0f) { // first time visit
                 cur->expand();
+                if (cur->winmove != RESIGNMOVE){ // won
+                    evalQ = -1.0f;
+                }
+                else if(cur->available_moves.size() == 0){ // lost
+                    evalQ = 1.0f;
+                }
+                break;
             }
             #endif
             #ifdef dirichletNoise // when dirichlet noise is activated, root is already expanded & evaluated. No need to expand root again.
             if (cur->N == 0.0f && cur != root) { // first time visit
                 cur->expand();
+                if (cur->winmove != RESIGNMOVE){ // won
+                    evalQ = -1.0f;
+                }
+                else if(cur->available_moves.size() == 0){ // lost
+                    evalQ = 1.0f;
+                }
+                break;
             }
             #endif
 
