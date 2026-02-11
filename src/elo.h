@@ -20,6 +20,8 @@ public:
 
     void saveRating(const std::string& model_path, const std::vector<std::string>& model_names);
 
+    std::vector<float> calculateRating(const std::vector<std::vector<float>> winrate);
+
 private:
     std::vector<float> ratings;
     std::vector<int> game_counts;

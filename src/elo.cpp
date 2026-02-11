@@ -38,8 +38,13 @@ model_names(model_names), adjust_K(adjust_K)
 void EloCalculator::UpdateRatings(int player_a, int player_b, const std::vector<bool>& result) { // result : true -> player_a win, false -> player_b win
     float rating_a = ratings[player_a];
     float rating_b = ratings[player_b];
-    float a_K = globalConfig.initK / (1.0f + game_counts[player_a] / 30.0f);
-    float b_K = globalConfig.initK / (1.0f + game_counts[player_b] / 30.0f);
+
+    // tried to decrease rating variance as model plays more games, but this seems to be inappropriate.
+    // float a_K = globalConfig.initK / (1.0f + game_counts[player_a] / 30.0f);
+    // float b_K = globalConfig.initK / (1.0f + game_counts[player_b] / 30.0f);
+
+    float a_K = globalConfig.initK;
+    float b_K = globalConfig.initK;
 
     for (bool win : result) {
         float ea = 1.0f / (1.0f + pow(10.0f, (rating_b - rating_a) / 400.0f));
@@ -108,4 +113,29 @@ void EloCalculator::saveRating(const std::string& model_path, const std::vector<
     for(const auto& line : lines){
         fout << line << "\n";
     }
+}
+
+std::vector<float> EloCalculator::calculateRating(const std::vector<std::vector<float>> winrate){
+    int n = winrate.size();
+    std::vector<float> R(n, 0.0f); // initial ratings
+
+    const double K = 0.01;    // learning rate
+    const int ITER = 50000;   // gradient iterations
+
+    for (int it = 0; it < ITER; ++it) {
+        for (int i = 0; i < n; ++i) {
+            for (int j = i + 1; j < n; ++j) {
+                double p = winrate[i][j];
+                if (p <= 0.0 || p >= 1.0) continue; // avoid log singularity
+
+                double expected = 1.0 / (1.0 + pow(10.0, (R[j] - R[i]) / 400.0));
+                double error = p - expected;
+
+                R[i] += K * error * 400.0;
+                R[j] -= K * error * 400.0;
+            }
+        }
+    }
+
+    return R;
 }
