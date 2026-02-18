@@ -1,9 +1,7 @@
 {
   "features": {
-    "measureTime": false,
     "transTable": false,
-    "dirichletNoise": true,
-    "apvMCTS": false,
+    "dirichletNoise": false,
     "googleDrive": false
   },
 

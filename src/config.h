@@ -53,7 +53,7 @@ struct Config {
     int save_freq; // 96
     int capacity;
 };
-extern const Config globalConfig;
+extern Config globalConfig;
 
 Config loadConfig(const std::string& path);
 

@@ -146,9 +146,7 @@ public:
 
     Node* jump(Move move);
 
-    #ifdef dirichletNoise
     void addDirichletNoise(Evaluator* evaluator);
-    #endif
 
     #ifndef transTable
     void deleteTree();

@@ -3,8 +3,8 @@ project(example-app)
 cmake_policy(SET CMP0144 NEW)
 
 # Set paths
-set(CMAKE_PREFIX_PATH "/home/myungkyo/libtorch")
-set(CMAKE_PREFIX_PATH "home/myungkyo/boost_1_89_0" ${CMAKE_PREFIX_PATH})
+set(CMAKE_PREFIX_PATH "/home/me/libtorch")
+set(CMAKE_PREFIX_PATH "home/me/boost_1_89_0" ${CMAKE_PREFIX_PATH})
 set(CAFFE2_USE_CUDNN ON)
 set(USE_CUSPARSELT OFF)
 find_package(Torch REQUIRED)
@@ -29,8 +29,8 @@ target_link_libraries(play Boost::headers)
 
 # Include directories
 target_include_directories(play PRIVATE 
-    "/home/myungkyo/libtorch/include" 
-    "/home/myungkyo/libtorch/include/torch/csrc/api/include"
+    "/home/me/libtorch/include" 
+    "/home/me/libtorch/include/torch/csrc/api/include"
 )
 
 # Set C++ standard

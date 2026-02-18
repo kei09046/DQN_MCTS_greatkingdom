@@ -16,10 +16,8 @@ Config loadConfig(const std::string& path) {
 
     // features
     auto& F = j.at("features");
-    c.measureTime   = F.value("measureTime", false);
     c.transTable    = F.value("transTable", false);
     c.dirichletNoise= F.value("dirichletNoise", false);
-    c.apvMCTS       = F.value("apvMCTS", false);
     c.googleDrive   = F.value("googleDrive", false);
 
     // paths

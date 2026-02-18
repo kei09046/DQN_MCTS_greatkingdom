@@ -8,17 +8,6 @@
 #include <array>
 #include "config.h"
 
-// Uncomment to enable features
-// measure time taken by various MCTS components(used for debugging) 
-// #define measureTime 
-// use transposition table(used in self-play) 
-//#define transTable 
-// add dirichlet noise to the prior probabilities(used in self-play) 
-#define dirichletNoise 
-// save to google drive. Only in colab. 
-// #define googleDrive 
-// decide whether to use APV-MCTS or not. 
-//#define apvMCTS
 
 // for hash
 using HashValue = uint64_t;

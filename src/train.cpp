@@ -231,9 +231,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					model_file = model_prefix + std::to_string(games_played + save_cnt) + ".pt";
 					const std::string save_path = globalConfig.modelPath + model_file;
 					train_model.save_model(save_path); // save model to file
-					#ifdef googleDrive
-					train_model.save_model(drive_path + model_file); // save model to file
-					#endif
+
+					if(globalConfig.googleDrive)
+						train_model.save_model(globalConfig.drivePath + model_file); // save model to file
+
 					std::cout << "model properly saved " << games_played << std::endl;
 					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
 					

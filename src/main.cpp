@@ -6,7 +6,7 @@
 #include <string>
 #include <algorithm>
 
-const Config globalConfig = loadConfig("../configs/train_local_config.json");
+Config globalConfig;
 
 
 int main(int argc, char** argv) {
@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
     std::string mod = argv[1];
     
     if(mod == "train"){
+        globalConfig = loadConfig("../configs/train_config.json");
         std::string model_file = argv[2];
         int game_num = std::stoi(argv[3]);
         int num_thread = std::stoi(argv[4]);
@@ -25,15 +26,18 @@ int main(int argc, char** argv) {
         line.run(game_num, num_thread, is_shown, 0.5f, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
     }
     else if(mod == "human_play"){
+        globalConfig = loadConfig("../configs/play_config.json");
         ModelCompare::playHuman();
     }
     else if(mod == "play"){
+        globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
         int co = std::stoi(argv[3]); // human color
         int playout = std::stoi(argv[4]);
         ModelCompare::play(model_file, (color)co, playout, 10.0f, true, true);
     }
     else if(mod == "web"){
+        globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
         std::string human_color = argv[3];
         unsigned int co = (human_color == "black") ? BLACK : ((human_color == "white") ? WHITE : NEUTRAL); // human color
@@ -43,11 +47,13 @@ int main(int argc, char** argv) {
         ModelCompare::playWeb(model_file, (color)co, playout, temp, true);
     }
     else if(mod == "gtp"){
+        globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
         int playout = std::stoi(argv[3]);
         ModelCompare::playGTP(model_file, playout, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
+        globalConfig = loadConfig("../configs/play_config.json");
         std::string target = argv[2];
         std::string compare = argv[3];
         float temp = std::stof(argv[4]); // < 1.0f
@@ -57,6 +63,7 @@ int main(int argc, char** argv) {
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){
+        globalConfig = loadConfig("../configs/play_config.json");
         int n_models = argc - 4;
         std::vector<std::string> model_list(n_models);
         for(int i=0; i<n_models; ++i)

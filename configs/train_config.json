@@ -1,0 +1,54 @@
+{
+  "features": {
+    "transTable": false,
+    "dirichletNoise": true,
+    "googleDrive": false
+  },
+
+  "path": {
+     "model_path": "../models/",
+     "model_prefix": "C",
+     "drive_path": "../drive/MyDrive"
+  },
+
+  "rating": {
+      "init_K": 32.0,
+      "init_rating": 0.0
+  },
+
+  "board": {
+    "komi": 2.5,
+    "neutrals": [[4, 4]]
+  },
+
+  "dirichlet_noise": {
+    "epsilon": 0.25,
+    "alpha": 0.15
+  },
+
+  "mcts": {
+    "n_playout": 400,
+    "cPuct": 2.0
+  },
+
+  "nn": {
+    "batchSize": 512,
+    "inputChannel": 18
+  },
+
+  "cache": {
+    "log_tableSize": 20,
+    "log_mutexPoolSize": 10 
+  },
+
+  "train": {
+    "epochs": 5,
+    "check_freq": 960,
+    "compare_game_cnt": 120,
+    "compare_thread_num": 12,
+    "search_thread_num": 4,
+    "train_wait_time": 64000,
+    "save_freq": 96,
+    "capacity": 10000
+  }
+}
