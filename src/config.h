@@ -6,11 +6,10 @@
 
 struct Config {
     // features
-    bool measureTime;
     bool transTable;
     bool dirichletNoise;
     bool googleDrive;
-    bool apvMCTS;
+    float fpu;
 
     //path
     std::string modelPath;

@@ -93,12 +93,14 @@ void ModelCompare::playWeb(const std::string& model, const color humanColor, int
 			std::cout << "move time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		res = game_manager.makeMove(cord);
-		if (res != EMPTY) {
-			game_manager.onGameEnd(res);
-			break;
+		if(game_manager.isLegal(cord.first, cord.second)){
+			res = game_manager.makeMove(cord);
+			if (res != EMPTY) {
+				game_manager.onGameEnd(res);
+				break;
+			}
+			player.jump(cord);
 		}
-        player.jump(cord);
 	}
 
 	delete evaluator;

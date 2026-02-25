@@ -19,6 +19,7 @@ Config loadConfig(const std::string& path) {
     c.transTable    = F.value("transTable", false);
     c.dirichletNoise= F.value("dirichletNoise", false);
     c.googleDrive   = F.value("googleDrive", false);
+    c.fpu = F.value("FPU", -1.0f);
 
     // paths
     auto& P = j.at("path");

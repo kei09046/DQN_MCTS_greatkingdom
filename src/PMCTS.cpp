@@ -126,7 +126,8 @@ int Node::selectChildInSearch(){
     float pref, maxval = -1.0f;
 
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
+        + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
@@ -423,6 +424,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
         if(evalQ != 0.0f){ // if eval is available right now, do param update right away.
             evaluateCounter++;
+            path[path.size() - 1]->initQ = evalQ;
             for (int i = path.size() - 1; i >= 0; --i) {
                 Node* n = path[i];
                 n->W += 1.0f;   // revert VL
@@ -458,6 +460,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
             // BACKUP (revert VL + add value)
+            path[path.size() - 1]->initQ = evalQ;
             for (int j = path.size() - 1; j >= 0; --j) {
                 Node* n = path[j];
                 n->W += 1.0f;   // revert VL
