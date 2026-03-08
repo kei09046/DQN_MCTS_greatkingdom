@@ -109,10 +109,11 @@ std::vector<TrainData*> generateDihedralTransformations(const TrainData& data) {
     auto rotatedStates = generateTransformedInput(std::get<0>(data));
     auto rotatedMoves = generateTransformedOutput(std::get<1>(data));
     auto value = std::get<2>(data);
-    auto del_flag = std::get<3>(data);
+    auto score_diff = std::get<3>(data);
+    auto del_flag = std::get<4>(data);
 
     for(int i=0; i<rotatedStates.size(); ++i){
-        transformed_data.push_back(new TrainData(rotatedStates[i], rotatedMoves[i], value, del_flag));
+        transformed_data.push_back(new TrainData(rotatedStates[i], rotatedMoves[i], value, score_diff, del_flag));
     }
 
     return transformed_data;
@@ -122,8 +123,9 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
                                  const std::vector<std::pair<int,int>>& legal,
                                  int s, int N) 
 {
-    const auto& policy = original.first;
-    float value = original.second;
+    const auto& policy = std::get<0>(original);
+    const auto& value = std::get<1>(original);
+    const auto& score = std::get<2>(original);
     size_t L = legal.size();
 
     // Compute rotated legal positions
@@ -144,15 +146,16 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
     for (size_t i = 0; i < L; ++i)
         new_policy[i] = policy[idx[i]];
 
-    return {new_policy, value};
+    return {new_policy, value, score};
 }
 
 // Returns rotated PolicyValueOutput AND rotated legal moves
 std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandLegal(const PolicyValueOutput& original,
                const std::vector<std::pair<int,int>>& legal, int N, int s) 
 {
-    const auto& policy = original.first;
-    float value = original.second;
+    const auto& policy = std::get<0>(original);
+    const auto& value = std::get<1>(original);
+    const auto& score = std::get<2>(original);
     size_t L = legal.size();
 
     // Compute rotated legal positions
@@ -178,7 +181,7 @@ std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandL
     for (size_t i = 0; i < L; ++i)
         new_legal[i] = rotated_legal[idx[i]];
 
-    return {{new_policy, value}, new_legal};
+    return {{new_policy, value, score}, new_legal};
 }
 
 

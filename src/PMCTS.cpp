@@ -26,12 +26,33 @@ std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Mo
     return exp_logit;
 }
 
+std::pair<float, float> calculateQ(const std::vector<float>& winLogit, float expScore)
+{
+    // softmax
+    float maxLogit = *std::max_element(winLogit.begin(), winLogit.end());
+    float sum = 0.0f;
+    float p[4];
+    for (int i = 0; i < 4; ++i) {
+        p[i] = std::exp(winLogit[i] - maxLogit);
+        sum += p[i];
+    }
+    for (int i = 0; i < 4; ++i) p[i] /= sum; // apply softmax to get actual probability
+
+    float p_win  = p[0] + p[1];
+    float p_loss = p[2] + p[3];
+
+    const float S = 30.0f;              // tuning constant
+    float score_norm = std::tanh(expScore / S);
+
+    return {(p_win - p_loss) * 0.8f + score_norm * 0.2f, p_win};
+}
+
 
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), initS(0.0f), initW(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::addChild(int r, int c, Game ng){
@@ -56,7 +77,7 @@ void Node::addChild(int r, int c, Game ng){
 }
 
 void Node::expand(){
-    color clr;
+    Color clr;
     std::vector<Game> nextGames(boardSize + 1, game); // +1 for pass
     std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
@@ -169,9 +190,11 @@ Move Node::selectMove(float temp){
 
     std::cout << "available move size : " << available_moves.size() << std::endl;
     for(int i=0; i<available_moves.size(); ++i){
-        std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
-        " sc: " << edgeN[i] << " Q: " << 
-        child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " P " << edgeP[i] << std::endl;
+        if(child[i]->N != 0.0f){
+            std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
+            " sc: " << edgeN[i] << " Q: " << 
+            child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " W : " << child[i]->initW << " S : " << child[i]->initS << " P " << edgeP[i] << std::endl;
+        }
     }
     return available_moves[maxi];
 }
@@ -262,7 +285,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
             NNResultBuf buf;
             evaluator->evaluate(buf, &game, hashValue);
 
-            edgeP = softmax(buf.result->first, available_moves);
+            edgeP = softmax(std::get<0>(*buf.result), available_moves);
             edgeN.assign(edgeP.size(), 0.0f);
         }
     }
@@ -414,10 +437,13 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 updateQueue.push_back(path);
             }
             else{
-                evalQ = buf->result->second;
-                std::vector<float> evalP = buf->result->first;
+                std::tie(cur->initQ, cur->initW) = calculateQ(std::get<1>(*(buf->result)), std::get<2>(*(buf->result)));
+                cur->initS = std::get<2>(*(buf->result));
+                std::vector<float> evalP = std::get<0>(*(buf->result));
                 cur->edgeP = softmax(evalP, cur->available_moves);
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+                evalQ = cur->initQ;
+
                 delete buf;
             }
         }
@@ -453,14 +479,16 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                     std::cerr << resultBuffer[j]->result << std::endl; 
                 }
             }
-            std::vector<float> evalP = buf->result->first;
-            float evalQ = buf->result->second;
+            std::vector<float> evalP = std::get<0>(*(buf->result));
 
             cur->edgeP = softmax(evalP, cur->available_moves);
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+            std::tie(cur->initQ, cur->initW) = calculateQ(std::get<1>(*(buf->result)), std::get<2>(*(buf->result)));
+            cur->initS = std::get<2>(*(buf->result));
+
+            float evalQ = cur->initQ;
 
             // BACKUP (revert VL + add value)
-            path[path.size() - 1]->initQ = evalQ;
             for (int j = path.size() - 1; j >= 0; --j) {
                 Node* n = path[j];
                 n->W += 1.0f;   // revert VL

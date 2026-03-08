@@ -124,7 +124,7 @@
 // void Node::expand(){
 //     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-//     color clr;
+//     Color clr;
 //     Game* pass;
 
 //     for(int i=0; i<rowSize; ++i){

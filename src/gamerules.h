@@ -41,23 +41,23 @@ public:
         return legal;
     }
 
-    void onGameEnd(color winner);
+    void onGameEnd(Color winner);
 
-    color makeMoveNoScoreUpdate(Move move);
+    Color makeMoveNoScoreUpdate(Move move);
 
-    color updateScoreAfter(Move move);
+    Color updateScoreAfter(Move move);
 
-    color makeMove(Move move);
+    std::pair<Color, Wintype> makeMove(Move move);
 
-    inline float scoreDiff(color turn) const {
+    inline float scoreDiff(Color turn) const {
         return (score[BLACK] - score[WHITE] - globalConfig.komi) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
 
-    inline color scoreWinner() const {
+    inline Color scoreWinner() const {
         return score[BLACK] - score[WHITE] - globalConfig.komi > 0 ? BLACK : WHITE;
     };
 
-    inline color getTurn() const{
+    inline Color getTurn() const{
         return currentTurn;
     };
 
@@ -65,11 +65,11 @@ public:
         return moveCount;
     };
 
-    inline color getBoard(u_int r, u_int c) const{
+    inline Color getBoard(u_int r, u_int c) const{
         return board[r][c];
     }
 
-    inline color getScoreBoard(u_int r, u_int c) const{
+    inline Color getScoreBoard(u_int r, u_int c) const{
         return scoreBoard[r][c];
     }
 
@@ -85,14 +85,14 @@ public:
         return lastTwoMoves[idx];
     }
 
-    static inline color reverseColor(color c){
+    static inline Color reverseColor(Color c){
         return (c == BLACK) ? WHITE : BLACK;
     }
 
 private:    
-    color currentTurn;
-    color board[rowSize][colSize];
-    color scoreBoard[rowSize][colSize];
+    Color currentTurn;
+    Color board[rowSize][colSize];
+    Color scoreBoard[rowSize][colSize];
     Move lastTwoMoves[2];
     int visitId;
     int moveCount;
@@ -109,15 +109,15 @@ private:
         return (r >= 0) && (r < rowSize) && (c >= 0) && (c < colSize);
     }
 
-    inline static bool oppstate(color x, color y){
+    inline static bool oppstate(Color x, Color y){
         return (x == BLACK && y == WHITE) || (x == WHITE && y == BLACK);
     }
 
-    inline static uint8_t adjToOpposite(color clr){
+    inline static uint8_t adjToOpposite(Color clr){
         return (clr == BLACK) ? ADJTOWHITE : ADJTOBLACK;
     }
 
-    inline static uint8_t adjTo(color clr){
+    inline static uint8_t adjTo(Color clr){
         return (clr == BLACK) ? ADJTOBLACK : ADJTOWHITE;
     }
 
@@ -129,17 +129,17 @@ private:
 
     void mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2);
 
-    color captureResultbyMove(uint8_t r, uint8_t c);
+    Color captureResultbyMove(uint8_t r, uint8_t c);
 
-    bool canbeScore(uint8_t r, uint8_t c, color clr);
+    bool canbeScore(uint8_t r, uint8_t c, Color clr);
 
-    uint8_t checkScore(uint8_t r, uint8_t c, color clr);
+    uint8_t checkScore(uint8_t r, uint8_t c, Color clr);
 
     void getScore();
 
     void updateScore(uint8_t r, uint8_t c);
 
-    color gameEnd();
+    Color gameEnd();
 
     uint8_t getLegalMoveCount() const;
 };

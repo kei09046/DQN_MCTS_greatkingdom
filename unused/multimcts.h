@@ -61,7 +61,7 @@ private:
     std::atomic<int> N{0};
     std::atomic<float> W{0};
     float P, initQ;
-    color turn;
+    Color turn;
 
     std::vector<Node*> child;
     std::vector<std::pair<int, int> > legal;

@@ -1,5 +1,5 @@
-#ifndef POLICYVALUE_H
-#define POLICYVALUE_H
+#ifndef NEURALNET_H
+#define NEURALNET_H
 
 #include <torch/torch.h>
 #include "gamerules.h"
@@ -35,7 +35,7 @@ TORCH_MODULE(ResidualBlock);
 
 class NetBase : public torch::nn::Module {
 public:
-    virtual std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
+    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
     virtual ~NetBase() = default;
 };
 
@@ -45,7 +45,7 @@ public:
 	Net(int channelSize);
 	int channelSize;
 
-	std::tuple<torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
+	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
@@ -58,6 +58,10 @@ public:
 	torch::nn::BatchNorm2d v_bn3;
 	torch::nn::Linear v_fc1;
 	torch::nn::Linear v_fc2;
+	torch::nn::Conv2d sc_cv3;
+	torch::nn::BatchNorm2d sc_bn3;
+	torch::nn::Linear sc_fc1;
+	torch::nn::Linear sc_fc2;
 };
 
 class PolicyValueNet {
@@ -84,10 +88,10 @@ public:
 	PolicyValueOutput evaluate(const Game& game);
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
-	// 	std::array<float, batchSize>& winner_batch, float lr);
+	// 	std::array<float, batchSize>& result_batch, float lr);
 
 	void train_step(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
-		std::vector<float>& winner_batch, float lr);
+		std::vector<float>& result_batch, std::vector<float>& score_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
 

@@ -5,7 +5,8 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
-	winner_batch = new std::vector<float>(globalConfig.batchSize);
+	score_batch = new std::vector<float>(globalConfig.batchSize);
+	result_batch = new std::vector<float>(globalConfig.batchSize);
 	game_buffer = new std::deque<TrainData*>();
 
 	save_cnt = 0;
@@ -21,7 +22,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	int moveCnt = 0;
 	MoveData moveProb;
 	InputMatrix state;
-	color result;
 
 	std::vector<std::pair<float, float>> sequence;
 	std::vector<TrainData> buffer;
@@ -40,10 +40,10 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		
 		auto m = std::get<0>(moveProb);
 		sequence.push_back(m);
-		result = game_manager.makeMove(m);
+		auto [winner, wintype] = game_manager.makeMove(m);
 
-		if (result == EMPTY) {
-			buffer.emplace_back(state, std::get<1>(moveProb), 0.0f, 0);
+		if (winner == EMPTY) {
+			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, 0);
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl;
 				ModelCompare::displayBoardGUI(false, game_manager);
@@ -66,11 +66,16 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			std::chrono::steady_clock::time_point middle = std::chrono::steady_clock::now();
 			#endif
 
-			float value = (result == BLACK) ? -1.0f : 1.0f; // if position is black's turn to move, judge from white's perspective.
+			int result = (winner == BLACK) ? ((wintype == SCORE) ? 2 : 3) 
+			: ((wintype == SCORE) ? 0 : 1); // if position is black's turn to move, judge from white's perspective.
+			float score_diff = game_manager.scoreDiff(BLACK);
+
 			for(TrainData& data : buffer){
-				std::get<2>(data) = value;
+				std::get<2>(data) = result;
+				std::get<3>(data) = score_diff;
 				insert_data(data);
-				value = -value;
+				result = (result + 2) % 4; // switch color
+				score_diff *= -1.0f;
 			}
 			player->reset();
 
@@ -118,11 +123,11 @@ void TrainPipeline::insert_data(TrainData data) {
 
 	while(game_buffer->size() > globalConfig.capacity){ // if full, remove data from front
 		TrainData* data = game_buffer->front();
-		if(std::get<3>(*data) == 0){
+		if(std::get<4>(*data) == 0){
 			delete data;
 		}
 		else{ // being used during training, mark for deletion later
-			std::get<3>(*data) |= 1; 
+			std::get<4>(*data) |= 1; 
 		}
 		game_buffer->pop_front();
 	}
@@ -136,7 +141,7 @@ void TrainPipeline::train(){
 	buffer_mutex.lock(); 
 	for(int i=0; i<globalConfig.batchSize; ++i){
 		TrainData* data = (*game_buffer)[indices[i]];
-		std::get<3>(*data) |= 2; // mark as being used during training
+		std::get<4>(*data) |= 2; // mark as being used during training
 		batch_data[i] = data;
 	}
 	buffer_mutex.unlock();
@@ -152,7 +157,9 @@ void TrainPipeline::train(){
 			(*nextmove_batch)[i * outputSize + j] = std::get<1>(*data)[j];
 		}
 
-		(*winner_batch)[i] = std::get<2>(*data);
+		(*result_batch)[i] = std::get<2>(*data);
+
+		(*score_batch)[i] = std::get<3>(*data);
 	}
 	// std::cout << "state batch : " << std::endl;
 	// for(int i=0; i<inputChannel * inputSize; ++i)
@@ -163,21 +170,21 @@ void TrainPipeline::train(){
 	// 	std::cout << (*nextmove_batch)[i] << " ";
 	// std::cout << "\n evaluation batch : " << std::endl;
 	
-	// std::cout << (*winner_batch)[0] << std::endl;
+	// std::cout << (*result_batch)[0] << std::endl;
 
 	buffer_mutex.lock(); // remove data that were marked for deletion
 	for(TrainData* data : batch_data){
-		if(std::get<3>(*data) & 1){ // if marked for deletion, delete
+		if(std::get<4>(*data) & 1){ // if marked for deletion, delete
 			delete data;
 		}
 		else{
-			std::get<3>(*data) = 0; // unmark
+			std::get<4>(*data) = 0; // unmark
 		}
 	}
 	buffer_mutex.unlock();
 
 	for(int i=0; i<globalConfig.epochs; ++i)
-		train_model.train_step(*state_batch, *nextmove_batch, *winner_batch, learning_rate);
+		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate);
 }
 
 void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp, const std::string& model_prefix)

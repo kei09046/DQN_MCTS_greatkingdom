@@ -53,7 +53,7 @@ void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
 }
 
 
-color Game::captureResultbyMove(uint8_t r, uint8_t c){
+Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
     chains[r * colSize + c] = {1U, {}};
@@ -83,7 +83,7 @@ color Game::captureResultbyMove(uint8_t r, uint8_t c){
     return EMPTY;
 }
 
-uint8_t Game::checkScore(uint8_t r, uint8_t c, color clr) {
+uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
     if (!(inbound(r, c) && (scoreBoard[r][c] & EMPTY)))
         return 0;
 
@@ -134,7 +134,7 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, color clr) {
     return areaCount;
 }
 
-bool Game::canbeScore(uint8_t r, uint8_t c, color clr){
+bool Game::canbeScore(uint8_t r, uint8_t c, Color clr){
     if (r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) return true;
 
     int cnt = 0;
@@ -146,7 +146,7 @@ bool Game::canbeScore(uint8_t r, uint8_t c, color clr){
 }
 
 void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
-    color toCheck = board[r][c];
+    Color toCheck = board[r][c];
     if(!canbeScore(r, c, toCheck))
         return;
 
@@ -206,7 +206,7 @@ void Game::getScore(){
             
                 // Mark valid territory
                 for (auto [tr, tc] : emptyCells) {
-                    scoreBoard[tr][tc] = static_cast<color>(clr);
+                    scoreBoard[tr][tc] = static_cast<Color>(clr);
                 }
                 score[clr] += areaCount;
             }
@@ -214,7 +214,7 @@ void Game::getScore(){
     finalScore = score[BLACK] - score[WHITE] - globalConfig.komi;
 }
 
-color Game::gameEnd(){
+Color Game::gameEnd(){
     return finalScore > 0 ? BLACK : WHITE;
 }
 
@@ -227,18 +227,18 @@ uint8_t Game::getLegalMoveCount() const{
     return ret;
 }
 
-color Game::makeMove(Move move){
+std::pair<Color, Wintype> Game::makeMove(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
     if(move == RESIGNMOVE){ // resign
         switchTurn();
-        return currentTurn;
+        return {currentTurn, RESIGN};
     }
 
     if(move == PASSMOVE){ // pass
         switchTurn();
         moveCount++;
-        return EMPTY;
+        return {EMPTY, NONE};
     }
 
     uint8_t r = move.first;
@@ -254,9 +254,9 @@ color Game::makeMove(Move move){
         }
     }
 
-    color clr = captureResultbyMove(r, c);
+    Color clr = captureResultbyMove(r, c);
     if(clr != EMPTY)
-        return clr;
+        return {clr, CAPTURE};
     if(moveCount >= 2)
         updateScore(r, c);
     
@@ -264,12 +264,12 @@ color Game::makeMove(Move move){
     moveCount++;
 
     if(getLegalMoveCount() == 0 || moveCount > boardSize){
-        return gameEnd();
+        return {gameEnd(), SCORE};
     }
-    return EMPTY;
+    return {EMPTY, NONE};
 }
 
-color Game::makeMoveNoScoreUpdate(Move move){
+Color Game::makeMoveNoScoreUpdate(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
 
@@ -298,7 +298,7 @@ color Game::makeMoveNoScoreUpdate(Move move){
         }
     }
 
-    color clr = captureResultbyMove(r, c);
+    Color clr = captureResultbyMove(r, c);
     if(clr != EMPTY)
         return clr;
     
@@ -307,7 +307,7 @@ color Game::makeMoveNoScoreUpdate(Move move){
     return EMPTY;
 }
 
-color Game::updateScoreAfter(Move move){
+Color Game::updateScoreAfter(Move move){
     if(moveCount >= 2)
         updateScore(move.first, move.second);
 
@@ -317,6 +317,6 @@ color Game::updateScoreAfter(Move move){
     return EMPTY;
 }
 
-void Game::onGameEnd(color winner){
+void Game::onGameEnd(Color winner){
     std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
 }

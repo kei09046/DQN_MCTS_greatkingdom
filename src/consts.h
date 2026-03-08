@@ -11,17 +11,18 @@
 
 // for hash
 using HashValue = uint64_t;
-using PolicyValueOutput = std::pair<std::vector<float>, float>;
+using PolicyValueOutput = std::tuple<std::vector<float>, std::vector<float>, float>; // policy, expected result, score diff
 
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
-using MoveData = std::tuple<Move, std::vector<float> >; // move + move possibility
+using MoveData = std::tuple<Move, std::vector<float> >; // move + move probability
 
 using InputMatrix = std::vector<float>;
 using OutputMatrix = std::vector<float>;
-using delete_flag = uint8_t; // decides whether data gets deleted during buffer replacement or training
-using TrainData = std::tuple<InputMatrix, OutputMatrix, float, delete_flag>;
-using color = uint8_t;
+using DeleteFlag = uint8_t; // decides whether data gets deleted during buffer replacement or training
+using Color = uint8_t;
+using Wintype = uint8_t;
+using TrainData = std::tuple<InputMatrix, std::vector<float>, Wintype, float, DeleteFlag>; // moveprob, outcome, score diff
 
 
 constexpr int rowSize = 9;
@@ -34,10 +35,16 @@ constexpr int outputRow = rowSize;
 constexpr int outputCol = colSize;
 constexpr int inputSize = inputRow * inputCol;
 
-constexpr color BLACK = 0U;
-constexpr color WHITE = 1U;
-constexpr color NEUTRAL = 2U;
-constexpr color EMPTY = 4U;
+constexpr Color BLACK = 0;
+constexpr Color WHITE = 1;
+constexpr Color NEUTRAL = 2;
+constexpr Color EMPTY = 4;
+
+constexpr Wintype CAPTURE = 0;
+constexpr Wintype SCORE = 1;
+constexpr Wintype RESIGN = 2;
+constexpr Wintype NONE = 3;
+
 constexpr uint8_t ADJTOBLACK = 8U;
 constexpr uint8_t ADJTOWHITE = 16U;
 

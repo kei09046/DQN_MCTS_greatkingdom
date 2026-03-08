@@ -10,7 +10,7 @@ class Node{
 private:
     const Game* game; // includes position, territory, valid moves etc. for heuristic
     float initEval;
-    color turn; 
+    Color turn; 
 
     int winCount, searchCount;
     std::vector<float> searchPref;

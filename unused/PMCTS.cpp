@@ -100,7 +100,7 @@ void Node::expand(){
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     #endif
 
-    color clr;
+    Color clr;
     std::vector<Game> nextGames(boardSize + 1, game); // +1 for pass
     std::bitset<boardSize + 1> candidateLegal; // mark candidate legal moves
 

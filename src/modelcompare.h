@@ -16,13 +16,13 @@ public:
     static float start_play(std::array<MCTS*, 2> player_list, // two models play against each other
 		std::ostream& part_res, bool is_shown = false, float temp = 0.1f);
 
-	static void play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown); // play against human
+	static void play(const std::string& model, Color side, int playout, float temp, bool gpu, bool shown); // play against human
 
 	static void playHuman();
 
 	static void playGTP(const std::string& model, int playout, float temp, bool gpu); // play against human via GTP
 
-	static void playWeb(const std::string& model, const color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
+	static void playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
@@ -48,7 +48,7 @@ private:
 
 	static Move parse_vertex(const std::string& v);
 
-	static color cmd_play(std::istringstream& iss, Game game_manager, MCTS& player);
+	static Color cmd_play(std::istringstream& iss, Game game_manager, MCTS& player);
 
 	static void cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp);
 };

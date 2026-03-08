@@ -5,14 +5,14 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 	Game game_manager = Game();
 	int diff, idx = 0;
 	Move move;
-    color res;
+    Color res;
 	std::vector<Move> seq;
 
 	while (true) {
 		move = player_list[idx]->getMove(temp);
 		//std::cerr << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
 		seq.push_back(move);
-        res = game_manager.makeMove(move);
+        res = game_manager.makeMove(move).first;
 
 		if (res == EMPTY) {
             player_list[0]->jump(move);
@@ -36,13 +36,13 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 	}
 }
 
-void ModelCompare::play(const std::string& model, color side, int playout, float temp, bool gpu, bool shown) {
+void ModelCompare::play(const std::string& model, Color side, int playout, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
-	color res;
+	Color res;
 
 	while (true) {
 		if (side == game_manager.getTurn()) {
@@ -57,7 +57,7 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		res = game_manager.makeMove(cord);
+		res = game_manager.makeMove(cord).first;
 		displayBoardGUI(true, game_manager);
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
@@ -70,13 +70,13 @@ void ModelCompare::play(const std::string& model, color side, int playout, float
 	return;
 }
 
-void ModelCompare::playWeb(const std::string& model, const color humanColor, int playout, float temp, bool gpu){
+void ModelCompare::playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
-	color res;
+	Color res;
 
 	std::cout << "model loaded" << std::endl;
 	while (true) {
@@ -94,7 +94,7 @@ void ModelCompare::playWeb(const std::string& model, const color humanColor, int
 		}
 
 		if(game_manager.isLegal(cord.first, cord.second)){
-			res = game_manager.makeMove(cord);
+			res = game_manager.makeMove(cord).first;
 			if (res != EMPTY) {
 				game_manager.onGameEnd(res);
 				break;
@@ -113,7 +113,7 @@ void ModelCompare::playGTP(const std::string& model, int playout, float temp, bo
 	MCTS player = MCTS(playout, evaluator);
 
 	Move cord;
-	color res = EMPTY;
+	Color res = EMPTY;
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -155,13 +155,13 @@ void ModelCompare::playHuman() {
 	Game game_manager = Game();
 
 	Move cord;
-	color res;
+	Color res;
 	while (true) {
 		u_int r, c;
 		std::cin >> r >> c;
 		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
-		res = game_manager.makeMove(cord);
+		res = game_manager.makeMove(cord).first;
 		displayBoardGUI(true, game_manager);
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);
@@ -318,13 +318,13 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
 }
 
 
-color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
+Color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
     char c;
     std::string v;
     iss >> c >> v;
 
     Move m = parse_vertex(v);
-    color res = game_manager.makeMove(m);
+    Color res = game_manager.makeMove(m).first;
 	if(res == EMPTY){
     	player.jump(m);
     	ok();
@@ -344,7 +344,7 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
                 << std::chrono::duration_cast<std::chrono::microseconds>(end-begin).count()
                 << " us\n";
 
-    color res = game_manager.makeMove(m);
+    Color res = game_manager.makeMove(m).first;
     player.jump(m);
 
 	if(m == PASSMOVE){

@@ -17,7 +17,7 @@ int main(){
             continue;
         }
         h = hash.computeHashAfterMove(g, {r, c}, h);
-        g.makeMove(r, c);
+        g.makeMove({r, c});
         std::cout << "New hash: " << h << std::endl;
     }
 }

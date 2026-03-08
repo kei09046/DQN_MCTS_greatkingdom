@@ -32,19 +32,19 @@ int main(int argc, char** argv) {
     else if(mod == "play"){
         globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
-        int co = std::stoi(argv[3]); // human color
+        int co = std::stoi(argv[3]); // human Color
         int playout = std::stoi(argv[4]);
-        ModelCompare::play(model_file, (color)co, playout, 10.0f, true, true);
+        ModelCompare::play(model_file, (Color)co, playout, 10.0f, true, true);
     }
     else if(mod == "web"){
         globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
         std::string human_color = argv[3];
-        unsigned int co = (human_color == "black") ? BLACK : ((human_color == "white") ? WHITE : NEUTRAL); // human color
+        unsigned int co = (human_color == "black") ? BLACK : ((human_color == "white") ? WHITE : NEUTRAL); // human Color
         int playout = std::stoi(argv[4]);
         float temp = std::stof(argv[5]);
-        std::cout << argv[3] << " human color : " << co << std::endl;
-        ModelCompare::playWeb(model_file, (color)co, playout, temp, true);
+        std::cout << argv[3] << " human Color : " << co << std::endl;
+        ModelCompare::playWeb(model_file, (Color)co, playout, temp, true);
     }
     else if(mod == "gtp"){
         std::cout << argv[2] << " " << argv[3] << " " << argv[4] << std::endl;

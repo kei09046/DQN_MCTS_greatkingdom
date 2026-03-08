@@ -16,7 +16,7 @@ Node::Node(Game* g): game(g){
 }
 
 void Node::expand(){
-    color clr;
+    Color clr;
     
     //game->getBoardStatus();
 
@@ -25,7 +25,7 @@ void Node::expand(){
             if(game->isLegal(i, j)){
                 //std::cout << "legal move : " << i << " " << j << std::endl;
                 Game* ng = new Game(*game);
-                clr = ng->makeMove(i, j);
+                clr = ng->makeMove({i, j});
 
                 if(clr == EMPTY){
                     child.push_back(new Node(ng));
