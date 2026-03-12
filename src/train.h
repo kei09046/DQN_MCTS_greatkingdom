@@ -33,6 +33,9 @@ private:
 	PolicyValueNet inference_model, train_model;
 	bool gpu;
 	std::mutex buffer_mutex;
+	std::atomic<int> wintype_counter[4];
+	std::atomic<int> total_score_diff;
+	std::atomic<int> total_game_length;
 	
 	std::string current_best_model_file;
 

@@ -49,8 +49,8 @@ public:
 
     std::pair<Color, Wintype> makeMove(Move move);
 
-    inline float scoreDiff(Color turn) const {
-        return (score[BLACK] - score[WHITE] - globalConfig.komi) * ((turn == BLACK) ? 1.0f : -1.0f);
+    inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
+        return (score[BLACK] - score[WHITE]) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
 
     inline Color scoreWinner() const {

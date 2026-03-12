@@ -68,7 +68,12 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			int result = (winner == BLACK) ? ((wintype == SCORE) ? 2 : 3) 
 			: ((wintype == SCORE) ? 0 : 1); // if position is black's turn to move, judge from white's perspective.
-			float score_diff = game_manager.scoreDiff(BLACK);
+			float score_diff = game_manager.scoreDiff(BLACK); // komi not applied.
+
+			// calculate train stats
+			total_score_diff.fetch_add((int)score_diff);
+			total_game_length.fetch_add(sequence.size());
+			wintype_counter[result].fetch_add(1);
 
 			for(TrainData& data : buffer){
 				std::get<2>(data) = result;
@@ -244,6 +249,9 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 					std::cout << "model properly saved " << games_played << std::endl;
 					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
+					std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
+					std::cout << "average score difference : " << (float)total_score_diff / globalConfig.save_freq << std::endl;
+					std::cout << "average game length : " << (float)total_game_length / globalConfig.save_freq << std::endl;
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 

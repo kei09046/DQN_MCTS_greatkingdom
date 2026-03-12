@@ -21,8 +21,8 @@ v_fc2(256, 4),
 sc_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
 sc_bn3(torch::nn::BatchNorm2d(1)),
 sc_fc1(inputSize, 256),
-sc_fc2(256, 1)
-
+sc_fc2(256, 1),
+sc_fc_belief(256, 31) // score difference from -15 ~ +15
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 
@@ -44,9 +44,10 @@ sc_fc2(256, 1)
 	register_module("sc_bn3", sc_bn3);
 	register_module("sc_fc1", sc_fc1);
 	register_module("sc_fc2", sc_fc2);
+	register_module("sc_fc_belief", sc_fc_belief);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> Net::forward(const torch::Tensor& state)
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> Net::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& block : *blocks) {
@@ -64,9 +65,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> Net::forward(const torch
 	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
 	score = score.view({-1, inputSize});
 	score = torch::nn::functional::relu(sc_fc1(score));
-	score = sc_fc2(score);
+	torch::Tensor score_raw = sc_fc2(score);
+	torch::Tensor score_dist = sc_fc_belief(score); 
 
-	return std::make_tuple(log_act, log_val, score);
+	return std::make_tuple(log_act, log_val, score_raw, score_dist);
 }
 
 InputMatrix PolicyValueNet::getData(const Game& game){
@@ -86,7 +88,7 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	}
 
 	// for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
-	// 	ret[i] = (turn == turn) ? 0.0f : 1.0f;
+	// 	ret[i] = (turn == bLACK) ? 0.0f : 1.0f;
 	// }
 
 	Color terr;
@@ -100,9 +102,8 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 		}
 	}
 
-	float diff = game.scoreDiff(turn) / boardSize;
-	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score
-		ret[5*inputSize + i] = diff;
+	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score -> turn. now nn predicts score difference.
+		ret[5*inputSize + i] = (turn == BLACK) ? 0.0f : 1.0f;
 	}
 
 	// channel 6, 7 : last move and second last move
@@ -188,24 +189,27 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
     torch::Tensor batch = torch::from_blob(batchData.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options).to(device);
 
     // ---- Forward pass ----
-    torch::Tensor policyBatch, valueBatch, scoreBatch;
+    torch::Tensor policyBatch, valueBatch, scoreBatch, distBatch;
 
     if(use_gpu){
         auto r = policy_value_net->forward(batch);
         policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
         valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 4]
 		scoreBatch = std::get<2>(r).to(torch::kCPU);
+		distBatch = std::get<3>(r).to(torch::kCPU); // [B, 31]
     } else {
         auto r = policy_value_net->forward(batch);
         policyBatch = std::get<0>(r);   // already CPU
         valueBatch  = std::get<1>(r);
 		scoreBatch = std::get<2>(r);
+		distBatch = std::get<3>(r);
     }
 
     // ---- Extract each result ----
     float* pP = policyBatch.data_ptr<float>();
     float* pV = valueBatch.data_ptr<float>();
 	float* pS = scoreBatch.data_ptr<float>();
+	float* pSd = distBatch.data_ptr<float>();
 
 	for(int b = 0; b < B; ++b) {
 		// policy head: copy whole row
@@ -216,7 +220,11 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		std::vector<float> value(src, src + 4);
 
 		float s = pS[b];
-		outputs.push_back({std::move(policy), std::move(value), s});
+
+		src = pSd + b * 31;
+		std::vector<float> value_dist(src, src + 31);
+
+		outputs.push_back({std::move(policy), std::move(value), s, value_dist});
 	}
     return outputs;
 }
@@ -225,12 +233,13 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto data = getData(game);
 	torch::Tensor current_state = torch::from_blob(data.data(), { 1, globalConfig.inputChannel, rowSize, colSize }, options).to(device);
-	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> res;
+	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> res;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
 		get<0>(res) = get<0>(r).to(torch::kCPU); // policy
 		get<1>(res) = get<1>(r).to(torch::kCPU); // 4 dim vector [my_score_win, my_capture_win, opp_score_win, opp_capture_win]
 		get<2>(res) = get<2>(r).to(torch::kCPU); // score differential 
+		get<3>(res) = get<3>(r).to(torch::kCPU); // score distribution
 	}
 	else {
 		res = policy_value_net->forward(current_state);
@@ -248,7 +257,14 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		policy.push_back(pt[i]);
 	}
 
-	return { policy, winprob, get<2>(res).index({0, 0}).item<float>() };
+	std::vector<float> scoredist;
+	scoredist.reserve(31);
+	pt = get<3>(res).data_ptr<float>();
+	for(size_t i=0; i<31; ++i){
+		scoredist.push_back(pt[i]);
+	}
+
+	return { policy, winprob, get<2>(res).index({0, 0}).item<float>(), scoredist };
 }
 
 void PolicyValueNet::train_step(std::vector<float>& state_batch, 
@@ -261,21 +277,25 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
     torch::Tensor wb =
     torch::from_blob(result_batch.data(), {globalConfig.batchSize}, options).to(device).to(torch::kLong);
 	torch::Tensor sd = torch::from_blob(score_batch.data(), { globalConfig.batchSize }, options).to(device);
+	torch::Tensor sdd = makeScoreDistributionBatch(sd, 15, 1.0f, 5);
 
     optimizer->zero_grad();
     static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 
-    torch::Tensor r1, r2, r3;
-    std::tie(r1, r2, r3) = policy_value_net->forward(sb);
+    torch::Tensor r1, r2, r3, r4;
+    std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb);
 
-    torch::Tensor log_probs = torch::log_softmax(r1, 1);
-	torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_probs, 1));
+    torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
+	torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
 
     torch::Tensor value_loss = torch::nn::functional::cross_entropy(r2, wb);
 
 	torch::Tensor score_loss = torch::nn::functional::mse_loss(r3.view(-1), sd);
 
-    torch::Tensor loss = value_loss + policy_loss + 0.5 * score_loss;
+	torch::Tensor log_score_predict = torch::log_softmax(r4, 1);
+	torch::Tensor score_dist_loss = -torch::mean(torch::sum(sdd * log_score_predict, 1));
+
+    torch::Tensor loss = value_loss + policy_loss + 0.5 * score_loss + 0.5 * score_dist_loss;
 
     loss.backward();
     optimizer->step();
@@ -322,4 +342,39 @@ void PolicyValueNet::load_model(const std::string& model_file){
 	torch::optim::AdamOptions opts(l2_const);
 	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), opts);
 	std::cout << "Model loaded: " << model_file << std::endl;
+}
+
+
+torch::Tensor PolicyValueNet::makeScoreDistributionBatch(
+    const torch::Tensor& scores,
+    int scoreRange,
+    float sigma,
+    int window) const
+{
+    int bins = 2 * scoreRange + 1;
+
+    auto device = scores.device();
+    auto dist = torch::zeros({scores.size(0), bins}, scores.options());
+
+    auto clamped = torch::clamp(scores, -scoreRange, scoreRange);
+
+    for (int i = 0; i < scores.size(0); i++)
+    {
+        float s = clamped[i].item<float>();
+
+        int start = std::max(-scoreRange, (int)std::floor(s - window));
+        int end   = std::min(scoreRange,  (int)std::ceil(s + window));
+
+        for (int b = start; b <= end; b++)
+        {
+            float diff = b - s;
+            float val = std::exp(-(diff * diff) / (2 * sigma * sigma));
+
+            dist[i][b + scoreRange] = val;
+        }
+    }
+
+    dist /= dist.sum(1, true);
+
+    return dist;
 }

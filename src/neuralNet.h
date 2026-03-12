@@ -35,7 +35,7 @@ TORCH_MODULE(ResidualBlock);
 
 class NetBase : public torch::nn::Module {
 public:
-    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
+    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
     virtual ~NetBase() = default;
 };
 
@@ -45,7 +45,7 @@ public:
 	Net(int channelSize);
 	int channelSize;
 
-	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
+	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
@@ -61,7 +61,8 @@ public:
 	torch::nn::Conv2d sc_cv3;
 	torch::nn::BatchNorm2d sc_bn3;
 	torch::nn::Linear sc_fc1;
-	torch::nn::Linear sc_fc2;
+	torch::nn::Linear sc_fc2; // predicts single score result 
+	torch::nn::Linear sc_fc_belief; // predicts score distribution
 };
 
 class PolicyValueNet {
@@ -71,6 +72,8 @@ private:
 	float l2_const = 0.0001f;
 	std::unique_ptr<torch::optim::Adam> optimizer;
 	const std::string model_type;
+
+	torch::Tensor makeScoreDistributionBatch(const torch::Tensor& scores, int scoreRange, float sigma, int window) const;
 
 public:
 	std::shared_ptr<NetBase> policy_value_net;
