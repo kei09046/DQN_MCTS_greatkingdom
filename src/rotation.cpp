@@ -125,9 +125,9 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
                                  int s, int N) 
 {
     const auto& policy = std::get<0>(original);
-    const auto& value = std::get<1>(original);
-    const auto& score = std::get<2>(original);
-    const auto& score_dist = std::get<3>(original);
+    const auto value = std::get<1>(original);
+    const auto score = std::get<2>(original);
+    const auto score_dist = std::get<3>(original);
     size_t L = legal.size();
 
     // Compute rotated legal positions
@@ -156,9 +156,9 @@ std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandL
                const std::vector<std::pair<int,int>>& legal, int N, int s) 
 {
     const auto& policy = std::get<0>(original);
-    const auto& value = std::get<1>(original);
-    const auto& score = std::get<2>(original);
-    const auto& score_diff = std::get<3>(original);
+    const auto value = std::get<1>(original);
+    const auto score = std::get<2>(original);
+    const auto score_diff = std::get<3>(original);
     size_t L = legal.size();
 
     // Compute rotated legal positions

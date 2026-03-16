@@ -194,20 +194,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	while(true){
 		try{
 			batch = torch::from_blob(batchData.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options).to(device);
-			break;
-		}catch(const c10::Error& e){
-			std::cerr << "batch creation failed! " << std::endl;
-		}
-	}
 
-	cudaDeviceSynchronize();
-	auto err = cudaGetLastError();
-	if (err != cudaSuccess) {
-    	std::cerr << "previous error check " << cudaGetErrorString(err) << std::endl;
-	}
-
-	while(true){
-		try{
 			// ---- Forward pass ----
 			if(use_gpu){
 				auto r = policy_value_net->forward(batch);
@@ -223,8 +210,8 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 				distBatch = std::get<3>(r);
 			}
 			break;
-		} catch(const c10::Error& e){
-			std::cerr << "Forwarding failed! " << std::endl; // Cannot access data pointer of Storage that is invalid.
+		}catch(const c10::Error& e){
+			std::cerr << "batch creation or forwarding failed! " << std::endl;
 		}
 	}
 

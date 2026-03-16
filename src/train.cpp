@@ -53,7 +53,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				std::cerr << "game manager's state : " << std::endl;
 				ModelCompare::displayBoardGUI(false, game_manager);
 				std::cout << std::endl;
-				for(auto& i : sequence){
+				for(const auto& i : sequence){
 					std::cerr << i.first << "," << i.second << " ";
 				}
 				std::cerr << "\n";
@@ -91,11 +91,11 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			if (is_shown) {
 				std::cout << "\n";
-				for(auto& i : sequence){
+				for(const auto& i : sequence){
 					std::cout << i.first << "," << i.second << " ";
 				}
 				std::cout << "\n";
-				std::cout << "episode length : " << sequence.size() << " winner : " << static_cast<int>(result) << "\n\n";
+				std::cout << "episode length : " << sequence.size() << " winner : " << winner << " wintype : " << wintype << "\n\n";
 				
 				#ifdef measureTime
 				std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
