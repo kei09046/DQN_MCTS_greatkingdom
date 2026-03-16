@@ -1,6 +1,9 @@
 #include "neuralNet.h"
+#include "consts.h"
+#include <cuda_runtime.h>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
 
 // For 9*9 board.
 Net::Net(int channelSize): channelSize(channelSize), cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
@@ -71,8 +74,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> Net::forw
 	return std::make_tuple(log_act, log_val, score_raw, score_dist);
 }
 
-InputMatrix PolicyValueNet::getData(const Game& game){
-    InputMatrix ret(inputSize * globalConfig.inputChannel, 0.0f);
+std::vector<float> PolicyValueNet::getData(const Game& game){
+    std::vector<float> ret(inputSize * globalConfig.inputChannel, 0.0f);
 	Color turn = game.getTurn();
 	Color opp_turn = Game::reverseColor(turn);
 	Color state;
@@ -80,40 +83,37 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard(i / colSize, i % colSize);
 		if(state == turn)
-			ret[i] = 1.0f;
+			ret.at(i) = 1.0f;
 		else if(state == opp_turn)
-			ret[inputSize + i] = 1.0f;
+			ret.at(inputSize + i) = 1.0f;
 		else if(state == NEUTRAL)
-			ret[2 * inputSize + i] = 1.0f;
+			ret.at(2 * inputSize + i) = 1.0f;
 	}
-
-	// for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
-	// 	ret[i] = (turn == bLACK) ? 0.0f : 1.0f;
-	// }
 
 	Color terr;
 	for(size_t i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
 		terr = game.getScoreBoard(i/colSize, i%colSize);
 		if(terr == turn){
-			ret[3*inputSize + i] = 1.0f;
+			ret.at(3*inputSize + i) = 1.0f;
 		}
 		else if(terr == opp_turn){
-			ret[4*inputSize + i] = 1.0f;
+			ret.at(4*inputSize + i) = 1.0f;
 		}
 	}
 
+	float diff = game.scoreDiff(turn);
 	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score -> turn. now nn predicts score difference.
-		ret[5*inputSize + i] = (turn == BLACK) ? 0.0f : 1.0f;
+		ret.at(5*inputSize + i) = diff;
 	}
 
 	// channel 6, 7 : last move and second last move
 	Move lastMove = game.getLastMove(0);
 	if(lastMove != PASSMOVE && lastMove != RESIGNMOVE){
-		ret[6*inputSize + lastMove.first * colSize + lastMove.second] = 1.0f;
+		ret.at(6*inputSize + lastMove.first * colSize + lastMove.second) = 1.0f;
 	}
 	Move secondLastMove = game.getLastMove(1);
 	if(secondLastMove != PASSMOVE && secondLastMove != RESIGNMOVE){
-		ret[7*inputSize + secondLastMove.first * colSize + secondLastMove.second] = 1.0f;
+		ret.at(7*inputSize + secondLastMove.first * colSize + secondLastMove.second) = 1.0f;
 	}
 
 	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
@@ -141,13 +141,13 @@ InputMatrix PolicyValueNet::getData(const Game& game){
 
 			if(state == turn){ // my stone's liberties
 				do {
-					ret[(7 + liberty_count)*inputSize + cur] = 1.0f;
+					ret.at((7 + liberty_count)*inputSize + cur) = 1.0f;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != head);
 			}
 			else if(state == opp_turn){ // opponent stone's liberties
 				do {
-					ret[(12 + liberty_count)*inputSize + cur] = 1.0f;
+					ret.at((12 + liberty_count)*inputSize + cur) = 1.0f;
 					cur = game.getStone(cur/colSize, cur%colSize).next;
 				} while (cur != head);
 			}
@@ -180,31 +180,55 @@ PolicyValueNet(model_file, globalConfig.modelPrefix, use_gpu)
 
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
+	//std::cerr << "batchEvaluate called by thread " << std::this_thread::get_id() << std::endl;
     const int B = gameBatch.size();
     std::vector<PolicyValueOutput> outputs;
     outputs.reserve(B);
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	auto batchData = getData(gameBatch);
-    torch::Tensor batch = torch::from_blob(batchData.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options).to(device);
+	std::vector<float> batchData = getData(gameBatch);
+	assert(batchData.size() == B * globalConfig.inputChannel * rowSize * colSize);
 
-    // ---- Forward pass ----
-    torch::Tensor policyBatch, valueBatch, scoreBatch, distBatch;
+	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, distBatch;
 
-    if(use_gpu){
-        auto r = policy_value_net->forward(batch);
-        policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
-        valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 4]
-		scoreBatch = std::get<2>(r).to(torch::kCPU);
-		distBatch = std::get<3>(r).to(torch::kCPU); // [B, 31]
-    } else {
-        auto r = policy_value_net->forward(batch);
-        policyBatch = std::get<0>(r);   // already CPU
-        valueBatch  = std::get<1>(r);
-		scoreBatch = std::get<2>(r);
-		distBatch = std::get<3>(r);
-    }
+	while(true){
+		try{
+			batch = torch::from_blob(batchData.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options).to(device);
+			break;
+		}catch(const c10::Error& e){
+			std::cerr << "batch creation failed! " << std::endl;
+		}
+	}
 
+	cudaDeviceSynchronize();
+	auto err = cudaGetLastError();
+	if (err != cudaSuccess) {
+    	std::cerr << "previous error check " << cudaGetErrorString(err) << std::endl;
+	}
+
+	while(true){
+		try{
+			// ---- Forward pass ----
+			if(use_gpu){
+				auto r = policy_value_net->forward(batch);
+				policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
+				valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 4]
+				scoreBatch = std::get<2>(r).to(torch::kCPU);
+				distBatch = std::get<3>(r).to(torch::kCPU); // [B, 31]
+			} else {
+				auto r = policy_value_net->forward(batch);
+				policyBatch = std::get<0>(r);   // already CPU
+				valueBatch  = std::get<1>(r);
+				scoreBatch = std::get<2>(r);
+				distBatch = std::get<3>(r);
+			}
+			break;
+		} catch(const c10::Error& e){
+			std::cerr << "Forwarding failed! " << std::endl; // Cannot access data pointer of Storage that is invalid.
+		}
+	}
+
+	//std::cerr << policyBatch.dtype() << " " << policyBatch.device() << " " << policyBatch.sizes() << std::endl;
     // ---- Extract each result ----
     float* pP = policyBatch.data_ptr<float>();
     float* pV = valueBatch.data_ptr<float>();
@@ -224,7 +248,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		src = pSd + b * 31;
 		std::vector<float> value_dist(src, src + 31);
 
-		outputs.push_back({std::move(policy), std::move(value), s, value_dist});
+		outputs.push_back({std::move(policy), std::move(value), s, std::move(value_dist)});
 	}
     return outputs;
 }
@@ -283,7 +307,8 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
     static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 
     torch::Tensor r1, r2, r3, r4;
-    std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb);
+	std::cerr << "train thread forward!" << std::endl; 
+    std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); // potential problem
 
     torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
 	torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));

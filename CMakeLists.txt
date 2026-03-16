@@ -14,11 +14,6 @@ find_package(Boost REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -pg")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
 
-# Debug mode definitions
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_definitions(_GLIBCXX_DEBUG)
-endif()
-
 # Create the executable
 file(GLOB_RECURSE SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 add_executable(play ${SRC})
@@ -35,6 +30,9 @@ target_include_directories(play PRIVATE
 
 # Set C++ standard
 set_property(TARGET play PROPERTY CXX_STANDARD 20)
+
+add_compile_options(-fsanitize=address -g)
+add_link_options(-fsanitize=address)
 
 # Ensure build type is not overridden unexpectedly
 if (NOT CMAKE_BUILD_TYPE)

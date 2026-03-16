@@ -3,7 +3,6 @@
 
 #include <torch/torch.h>
 #include "gamerules.h"
-#include "consts.h"
 
 
 struct ResidualBlockImpl : torch::nn::Module {
@@ -82,7 +81,7 @@ public:
 
 	PolicyValueNet(const std::string& model_file, bool use_gpu);
 
-	static InputMatrix getData(const Game& game);
+	static std::vector<float> getData(const Game& game);
 
 	static std::vector<float> getData(const std::vector<const Game*>& gameBatch);
 

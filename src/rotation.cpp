@@ -1,4 +1,5 @@
 #include "rotation.h"
+#include <iostream>
 
 InputMatrix inputRotate90(const InputMatrix mat) {
     InputMatrix res(inputSize * globalConfig.inputChannel);

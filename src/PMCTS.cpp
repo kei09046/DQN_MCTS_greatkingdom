@@ -40,42 +40,43 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 
     float p_win  = p[0] + p[1];
     float p_loss = p[2] + p[3];
+    return {2 * p_win - 1.0f, p_win};
 
-    // Step 1: compute mean
-    float score_mean = 0.0f;
-    for (int i = 0; i < 31; ++i)
-    {
-        int score = i - 15;   // map index 0..30 to score -15..15
-        score_mean += score * scoreDist[i];
-    }
+    // // Step 1: compute mean
+    // float score_mean = 0.0f;
+    // for (int i = 0; i < 31; ++i)
+    // {
+    //     int score = i - 15;   // map index 0..30 to score -15..15
+    //     score_mean += score * scoreDist[i];
+    // }
 
-    // Step 2: compute variance
-    float score_var = 0.0f;
-    for (int i = 0; i < 31; ++i)
-    {
-        int score = i - 15;
-        float diff = score - score_mean;
-        score_var += diff * diff * scoreDist[i];
-    }
-    float score_std = std::sqrt(score_var);
+    // // Step 2: compute variance
+    // float score_var = 0.0f;
+    // for (int i = 0; i < 31; ++i)
+    // {
+    //     int score = i - 15;
+    //     float diff = score - score_mean;
+    //     score_var += diff * diff * scoreDist[i];
+    // }
+    // float score_std = std::sqrt(score_var);
 
-    // Step 1: convert score to utility relative to komi
-    float score_util = score_mean - komi;
+    // // Step 1: convert score to utility relative to komi
+    // float score_util = score_mean - komi;
 
-    // Step 2: scale score utility to match value scale
-    score_util *= score_factor;
+    // // Step 2: scale score utility to match value scale
+    // score_util *= score_factor;
 
-    // Step 3: optional risk aversion penalty
-    float risk_penalty = risk_aversion * score_std;
+    // // Step 3: optional risk aversion penalty
+    // float risk_penalty = risk_aversion * score_std;
 
-    // Step 4: combine win probability and score utility
-    // A simple linear combination
-    float utility = p_win + (score_util - risk_penalty) * (p[0] + p[2]);
+    // // Step 4: combine win probability and score utility
+    // // A simple linear combination
+    // float utility = p_win + (score_util - risk_penalty) * (p[0] + p[2]);
 
-    // Step 5: clamp utility to [0,1] if desired
-    utility = std::clamp(utility, 0.0f, 1.0f);
+    // // Step 5: clamp utility to [0,1] if desired
+    // utility = std::clamp(utility, 0.0f, 1.0f);
 
-    return {2 * utility - 1.0f, p_win};
+    // return {2 * utility - 1.0f, p_win};
 }
 
 

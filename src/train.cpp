@@ -8,13 +8,18 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
 	game_buffer = new std::deque<TrainData*>();
-
+	
 	save_cnt = 0;
 	std::smatch match;
     std::regex re("(\\d+)");
     if (std::regex_search(init_model, match, re)) {
         save_cnt = std::stoi(match[1]);
     }
+
+	total_game_length = 0;
+	total_score_diff = 0;
+	for(int i=0; i<4; ++i)
+		wintype_counter[i] = 0;
 }
 
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
@@ -252,6 +257,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
 					std::cout << "average score difference : " << (float)total_score_diff / globalConfig.save_freq << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / globalConfig.save_freq << std::endl;
+
+					total_game_length = 0;
+					total_score_diff = 0;
+					for(int i=0; i<4; ++i)
+						wintype_counter[i] = 0;
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
@@ -292,6 +302,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				break;
 			}
 			else if(pause_flag ^ train_paused){
+				if(train_paused)
+					std::cerr << "train paused" << std::endl;
+				else
+					std::cerr << "train resumed" << std::endl;
 				train_paused.store(pause_flag.load());
 				pause_cv.notify_one();
 			}

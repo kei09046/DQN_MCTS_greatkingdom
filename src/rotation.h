@@ -1,10 +1,12 @@
 #ifndef ROTATION_H
 #define ROTATION_H
 
-#include <iostream>
 #include <vector>
 #include <array>
 #include "neuralNet.h"
+
+using InputMatrix = std::vector<float>;
+using OutputMatrix = std::vector<float>;
 
 InputMatrix inputRotate90(const InputMatrix mat);
 

@@ -34,3 +34,4 @@ modelg -> modelh : added 1 more input channel (difference of score), switch chan
 
 1/13/2026: implemented non-blocking evaluation in MCTS search.(improved performance ~40% on colab)
 
+3/13/2026: added multiple output. score mean + score distribution. Added Utility function instead of pure Q value. Problem : Multithread issue. Dont' know why.
