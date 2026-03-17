@@ -42,7 +42,7 @@ private:
 	void pin_threads_to_core(std::thread& th, int core_id);
 
 public:
-    std::deque<TrainData*>* game_buffer;
+    std::deque<std::shared_ptr<TrainData>>* game_buffer;
 	// std::array<float, inputChannel * batchSize * inputSize>* state_batch;
 	// std::array<float, batchSize * outputSize>* nextmove_batch;
 	// std::array<float, batchSize>* result_batch;
@@ -52,7 +52,7 @@ public:
 
 	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // used during training
 
-	void insert_data(TrainData data);
+	void insert_data(const TrainData& data);
 
 	void train();
 

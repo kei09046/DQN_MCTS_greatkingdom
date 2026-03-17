@@ -408,7 +408,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
     std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck) {
 
-    // std::cout << searchCounter << " " << evaluateCounter << " " << inEvaluation.size() << " " << searchStuck << std::endl;
     // SELECTION
     if((searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
         std::vector<int> childIdx;
@@ -494,7 +493,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
     //EVALUATION & UPDATE
     if(inEvaluation.size() >= globalConfig.search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
-        // wait for result
+        // wait for the result
         NNResultBuf* rb = resultBuffer[inEvaluation.size() - 1];
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
         rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; }); // wait until all evaluation queued are finished.

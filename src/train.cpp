@@ -7,7 +7,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
-	game_buffer = new std::deque<TrainData*>();
+	game_buffer = new std::deque<std::shared_ptr<TrainData>>();
 	
 	save_cnt = 0;
 	std::smatch match;
@@ -48,7 +48,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		auto [winner, wintype] = game_manager.makeMove(m);
 
 		if (winner == EMPTY) {
-			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, 0);
+			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f);
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl;
 				ModelCompare::displayBoardGUI(false, game_manager);
@@ -79,6 +79,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			total_score_diff.fetch_add((int)score_diff);
 			total_game_length.fetch_add(sequence.size());
 			wintype_counter[result].fetch_add(1);
+			//std::cerr << score_diff << " " << sequence.size() << " " << result << std::endl;
 
 			for(TrainData& data : buffer){
 				std::get<2>(data) = result;
@@ -95,7 +96,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cout << i.first << "," << i.second << " ";
 				}
 				std::cout << "\n";
-				std::cout << "episode length : " << sequence.size() << " winner : " << winner << " wintype : " << wintype << "\n\n";
+				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
 				
 				#ifdef measureTime
 				std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
@@ -123,22 +124,15 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	}
 }
 
-void TrainPipeline::insert_data(TrainData data) {
-	std::vector<TrainData*> rotatedData = generateDihedralTransformations(data);
+void TrainPipeline::insert_data(const TrainData& data) {
+	std::vector<std::shared_ptr<TrainData>> rotatedData = generateDihedralTransformations(data);
 
 	buffer_mutex.lock();
-	for(TrainData* data : rotatedData){ // add data to the buffer
+	for(std::shared_ptr<TrainData> data : rotatedData){ // add data to the buffer
 		game_buffer->push_back(data);
 	}
 
 	while(game_buffer->size() > globalConfig.capacity){ // if full, remove data from front
-		TrainData* data = game_buffer->front();
-		if(std::get<4>(*data) == 0){
-			delete data;
-		}
-		else{ // being used during training, mark for deletion later
-			std::get<4>(*data) |= 1; 
-		}
 		game_buffer->pop_front();
 	}
 	buffer_mutex.unlock();
@@ -146,30 +140,44 @@ void TrainPipeline::insert_data(TrainData data) {
 
 void TrainPipeline::train(){
 	std::vector<int> indices = select_indices(std::min((int)game_buffer->size(), globalConfig.capacity), globalConfig.batchSize); // randomly select samples from buffer
-	std::vector<TrainData*> batch_data(globalConfig.batchSize);
+	std::vector<std::shared_ptr<TrainData>> batch_data(globalConfig.batchSize);
 
 	buffer_mutex.lock(); 
 	for(int i=0; i<globalConfig.batchSize; ++i){
-		TrainData* data = (*game_buffer)[indices[i]];
-		std::get<4>(*data) |= 2; // mark as being used during training
+		std::shared_ptr<TrainData> data = (*game_buffer)[indices[i]];
 		batch_data[i] = data;
 	}
 	buffer_mutex.unlock();
 
 	// copy data from game_buffer to batch
-	for(int i=0; i < globalConfig.batchSize; ++i){ // copies data to batch
-		TrainData* data = batch_data[i];
-		for(int j=0; j < globalConfig.inputChannel * inputSize; ++j){ 
-			(*state_batch)[i * globalConfig.inputChannel * inputSize + j] = std::get<0>(*data)[j];
-		}
+	// for(int i=0; i < globalConfig.batchSize; ++i){ // copies data to batch
+	// 	std::shared_ptr<TrainData> data = batch_data[i];
+	// 	for(int j=0; j < globalConfig.inputChannel * inputSize; ++j){ 
+	// 		(*state_batch)[i * globalConfig.inputChannel * inputSize + j] = std::get<0>(*data)[j];
+	// 	}
 
-		for(int j=0; j < outputSize; ++j){
-			(*nextmove_batch)[i * outputSize + j] = std::get<1>(*data)[j];
-		}
+	// 	for(int j=0; j < outputSize; ++j){
+	// 		(*nextmove_batch)[i * outputSize + j] = std::get<1>(*data)[j];
+	// 	}
 
-		(*result_batch)[i] = std::get<2>(*data);
+	// 	(*result_batch)[i] = std::get<2>(*data);
 
-		(*score_batch)[i] = std::get<3>(*data);
+	// 	(*score_batch)[i] = std::get<3>(*data);
+	// }
+	for (int i = 0; i < globalConfig.batchSize; ++i) {
+		const auto& data = *batch_data[i];
+
+		const auto& state = std::get<0>(data);
+		const auto& nextmove = std::get<1>(data);
+
+		int state_offset = i * globalConfig.inputChannel * inputSize;
+		int move_offset  = i * outputSize;
+
+		std::copy(state.begin(), state.end(), state_batch->begin() + state_offset);
+		std::copy(nextmove.begin(), nextmove.end(), nextmove_batch->begin() + move_offset);
+
+		(*result_batch)[i] = std::get<2>(data);
+		(*score_batch)[i] = std::get<3>(data);
 	}
 	// std::cout << "state batch : " << std::endl;
 	// for(int i=0; i<inputChannel * inputSize; ++i)
@@ -181,17 +189,6 @@ void TrainPipeline::train(){
 	// std::cout << "\n evaluation batch : " << std::endl;
 	
 	// std::cout << (*result_batch)[0] << std::endl;
-
-	buffer_mutex.lock(); // remove data that were marked for deletion
-	for(TrainData* data : batch_data){
-		if(std::get<4>(*data) & 1){ // if marked for deletion, delete
-			delete data;
-		}
-		else{
-			std::get<4>(*data) = 0; // unmark
-		}
-	}
-	buffer_mutex.unlock();
 
 	for(int i=0; i<globalConfig.epochs; ++i)
 		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate);

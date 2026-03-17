@@ -2,6 +2,8 @@
 #include <iostream>
 
 InputMatrix inputRotate90(const InputMatrix mat) {
+    assert(mat.size() == inputSize * globalConfig.inputChannel);
+
     InputMatrix res(inputSize * globalConfig.inputChannel);
     int cnt = 0, dnt = 0;
 
@@ -16,6 +18,8 @@ InputMatrix inputRotate90(const InputMatrix mat) {
 }
 
 InputMatrix inputReflectHorizontal(const InputMatrix mat) {
+    assert(mat.size() == inputSize * globalConfig.inputChannel);
+
     InputMatrix res(inputSize * globalConfig.inputChannel);
     int cnt = 0, dnt = 0;
 
@@ -56,6 +60,8 @@ std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat) {
 
 
 OutputMatrix outputRotate90(const OutputMatrix mat) {
+    assert(mat.size() == outputSize);
+
     OutputMatrix res(outputSize);
     int cnt = 0;
 
@@ -68,6 +74,8 @@ OutputMatrix outputRotate90(const OutputMatrix mat) {
 }
 
 OutputMatrix outputReflectHorizontal(const OutputMatrix mat) {
+    assert(mat.size() == outputSize);
+
     OutputMatrix res(outputSize);
     int cnt = 0;
 
@@ -96,32 +104,36 @@ std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat) {
 
     // Reflections
     OutputMatrix reflH = outputReflectHorizontal(mat);
+    OutputMatrix ref_rot90 = outputRotate90(reflH);
+    OutputMatrix ref_rot180 = outputRotate90(ref_rot90);
+    OutputMatrix ref_rot270 = outputRotate90(ref_rot180);
+
     transforms.push_back(reflH);
-    transforms.push_back(outputRotate90(reflH));
-    transforms.push_back(outputRotate90(outputRotate90(reflH)));
-    transforms.push_back(outputRotate90(outputRotate90(outputRotate90(reflH))));
+    transforms.push_back(ref_rot90);
+    transforms.push_back(ref_rot180);
+    transforms.push_back(ref_rot270);
 
     return transforms;
 }
 
-std::vector<TrainData*> generateDihedralTransformations(const TrainData& data) {
-    std::vector<TrainData*> transformed_data;
+std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const TrainData& data) {
+    std::vector<std::shared_ptr<TrainData>> transformed_data;
+    transformed_data.reserve(8);
     
     auto rotatedStates = generateTransformedInput(std::get<0>(data));
     auto rotatedMoves = generateTransformedOutput(std::get<1>(data));
     auto value = std::get<2>(data);
     auto score_diff = std::get<3>(data);
-    auto del_flag = std::get<4>(data);
 
     for(int i=0; i<rotatedStates.size(); ++i){
-        transformed_data.push_back(new TrainData(rotatedStates[i], rotatedMoves[i], value, score_diff, del_flag));
+        transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i], rotatedMoves[i], value, score_diff));
     }
 
     return transformed_data;
 }
 
 PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
-                                 const std::vector<std::pair<int,int>>& legal,
+                                 const std::vector<Move>& legal,
                                  int s, int N) 
 {
     const auto& policy = std::get<0>(original);
@@ -131,7 +143,7 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
     size_t L = legal.size();
 
     // Compute rotated legal positions
-    std::vector<std::pair<int,int>> rotated(L);
+    std::vector<Move> rotated(L);
     for (size_t i = 0; i < L; ++i)
         rotated[i] = rot(s, legal[i].first, legal[i].second, N);
 
@@ -152,8 +164,8 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
 }
 
 // Returns rotated PolicyValueOutput AND rotated legal moves
-std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandLegal(const PolicyValueOutput& original,
-               const std::vector<std::pair<int,int>>& legal, int N, int s) 
+std::pair<PolicyValueOutput, std::vector<Move>> rotateNNOutputandLegal(const PolicyValueOutput& original,
+               const std::vector<Move>& legal, int N, int s) 
 {
     const auto& policy = std::get<0>(original);
     const auto value = std::get<1>(original);
@@ -162,7 +174,7 @@ std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandL
     size_t L = legal.size();
 
     // Compute rotated legal positions
-    std::vector<std::pair<int,int>> rotated_legal(L);
+    std::vector<Move> rotated_legal(L);
     for (size_t i = 0; i < L; ++i)
         rotated_legal[i] = rot(s, legal[i].first, legal[i].second, N);
 
@@ -180,7 +192,7 @@ std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandL
         new_policy[i] = policy[idx[i]];
 
     // Reorder legal in the same way
-    std::vector<std::pair<int,int>> new_legal(L);
+    std::vector<Move> new_legal(L);
     for (size_t i = 0; i < L; ++i)
         new_legal[i] = rotated_legal[idx[i]];
 
@@ -190,7 +202,7 @@ std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandL
 
 std::vector<PolicyValueOutput> rotateAllNNOutputs(
     const PolicyValueOutput& original,
-    const std::vector<std::pair<int,int>>& legal,
+    const std::vector<Move>& legal,
     int N)
 {
     std::vector<PolicyValueOutput> outputs;

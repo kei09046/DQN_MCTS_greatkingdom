@@ -21,9 +21,9 @@ OutputMatrix outputReflectHorizontal(const OutputMatrix mat);
 
 std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat);
 
-std::vector<TrainData*> generateDihedralTransformations(const TrainData& data);
+std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const TrainData& data);
 
-inline std::pair<int,int> rot(int s, int r, int c, int N) {
+inline Move rot(int s, int r, int c, int N) {
     switch(s){
         case 0: return {r, c};           // identity
         case 1: return {c, N-1-r};       // rot90
@@ -39,8 +39,8 @@ inline std::pair<int,int> rot(int s, int r, int c, int N) {
 
 PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original, const std::vector<std::pair<int, int>>& legal, int s, int N);
 
-std::vector<PolicyValueOutput> rotateAllNNOutputs(const PolicyValueOutput& original, const std::vector<std::pair<int,int>>& legal, int N);
+std::vector<PolicyValueOutput> rotateAllNNOutputs(const PolicyValueOutput& original, const std::vector<Move>& legal, int N);
 
-std::pair<PolicyValueOutput, std::vector<std::pair<int,int>>> rotateNNOutputandLegal(const PolicyValueOutput& original,
-               const std::vector<std::pair<int,int>>& legal, int N, int s); 
+std::pair<PolicyValueOutput, std::vector<Move>> rotateNNOutputandLegal(const PolicyValueOutput& original,
+               const std::vector<Move>& legal, int N, int s); 
 #endif

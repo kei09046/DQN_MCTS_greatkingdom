@@ -60,18 +60,18 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> Net::forw
 	log_act = log_act.view({ -1, 2 * inputSize });
 	log_act = at_fc1(log_act);
 
-	torch::Tensor log_val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
-	log_val = log_val.view({-1, inputSize});
-	log_val = torch::nn::functional::relu(v_fc1(log_val));
-	log_val = v_fc2(log_val);
+	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
+	val = val.view({-1, inputSize});
+	val = torch::nn::functional::relu(v_fc1(val));
+	val = v_fc2(val);
 
 	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
 	score = score.view({-1, inputSize});
 	score = torch::nn::functional::relu(sc_fc1(score));
 	torch::Tensor score_raw = sc_fc2(score);
-	torch::Tensor score_dist = sc_fc_belief(score); 
+	torch::Tensor log_score_dist = sc_fc_belief(score); 
 
-	return std::make_tuple(log_act, log_val, score_raw, score_dist);
+	return std::make_tuple(log_act, val, score_raw, log_score_dist);
 }
 
 std::vector<float> PolicyValueNet::getData(const Game& game){
@@ -193,7 +193,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 	while(true){
 		try{
-			batch = torch::from_blob(batchData.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options).to(device);
+			batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
 
 			// ---- Forward pass ----
 			if(use_gpu){
@@ -211,7 +211,10 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 			}
 			break;
 		}catch(const c10::Error& e){
-			std::cerr << "batch creation or forwarding failed! " << std::endl;
+			std::cerr << "batch creation or forwarding failed! " << e.what() << std::endl;
+			for(auto game_ptr : gameBatch)
+				std::cerr << game_ptr << " ";
+			std::cerr << std::endl;
 		}
 	}
 
@@ -235,7 +238,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		src = pSd + b * 31;
 		std::vector<float> value_dist(src, src + 31);
 
-		outputs.push_back({std::move(policy), std::move(value), s, std::move(value_dist)});
+		outputs.emplace_back(std::move(policy), std::move(value), s, std::move(value_dist));
 	}
     return outputs;
 }
@@ -243,7 +246,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto data = getData(game);
-	torch::Tensor current_state = torch::from_blob(data.data(), { 1, globalConfig.inputChannel, rowSize, colSize }, options).to(device);
+	torch::Tensor current_state = torch::tensor(data, options).view({ 1, globalConfig.inputChannel, rowSize, colSize }).to(device);
 	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> res;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
@@ -282,19 +285,20 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
     std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch, float lr) {
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-    torch::Tensor sb = torch::from_blob(state_batch.data(), { globalConfig.batchSize, globalConfig.inputChannel, inputRow,
-		 inputCol }, options).to(device);
-    torch::Tensor mp = torch::from_blob(nextmove_batch.data(), { globalConfig.batchSize, outputSize }, options).to(device);
+    torch::Tensor sb = torch::tensor(state_batch, options).view({ globalConfig.batchSize, globalConfig.inputChannel, inputRow,
+		 inputCol }).to(device);
+
+    torch::Tensor mp = torch::tensor(nextmove_batch, options).view({ globalConfig.batchSize, outputSize }).to(device);
     torch::Tensor wb =
-    torch::from_blob(result_batch.data(), {globalConfig.batchSize}, options).to(device).to(torch::kLong);
-	torch::Tensor sd = torch::from_blob(score_batch.data(), { globalConfig.batchSize }, options).to(device);
-	torch::Tensor sdd = makeScoreDistributionBatch(sd, 15, 1.0f, 5);
+    torch::tensor(result_batch, options).view({globalConfig.batchSize}).to(device).to(torch::kLong);
+	torch::Tensor sd = torch::tensor(score_batch, options).view({ globalConfig.batchSize }).to(device);
+	torch::Tensor sdd = makeScoreDistributionBatch(sd, 15, 1.0f, 5).view({globalConfig.batchSize, 31}).to(device);
 
     optimizer->zero_grad();
     static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 
     torch::Tensor r1, r2, r3, r4;
-	std::cerr << "train thread forward!" << std::endl; 
+	//std::cerr << "train thread forward!" << std::endl; 
     std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); // potential problem
 
     torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
