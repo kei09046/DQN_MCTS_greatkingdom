@@ -24,7 +24,21 @@ void Evaluator::HandlerWork() {
         lk.unlock();
 
         // run batch
-        auto outputs = net->batchEvaluate(batchGames);
+        std::vector<PolicyValueOutput> outputs;
+        std::cerr << "attempting batch evaluation" << std::endl;
+        while(true){
+            try{
+                outputs = net->batchEvaluate(batchGames);
+                break;
+            }catch(const c10::Error& e){
+                std::cerr << "batch evaluate failed" << std::endl;
+            }catch(const std::exception& e){
+                std::cerr << e.what() << std::endl;
+            }catch(...){
+                std::cerr << "other exception occured" << std::endl;
+            }
+        }
+        std::cerr << "Batch evaluated successfully" << std::endl;
 
         // write results back & notify
         for (size_t i = 0; i < batchBufs.size(); i++) {

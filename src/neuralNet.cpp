@@ -181,47 +181,38 @@ PolicyValueNet(model_file, globalConfig.modelPrefix, use_gpu)
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	//std::cerr << "batchEvaluate called by thread " << std::this_thread::get_id() << std::endl;
-    const int B = gameBatch.size();
-    std::vector<PolicyValueOutput> outputs;
-    outputs.reserve(B);
+	const int B = gameBatch.size();
+	std::vector<PolicyValueOutput> outputs;
+	outputs.reserve(B);
 
-    auto options = torch::TensorOptions().dtype(torch::kFloat32);
+	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	std::vector<float> batchData = getData(gameBatch);
 	assert(batchData.size() == B * globalConfig.inputChannel * rowSize * colSize);
 
 	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, distBatch;
 
-	while(true){
-		try{
-			batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
+	batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
 
-			// ---- Forward pass ----
-			if(use_gpu){
-				auto r = policy_value_net->forward(batch);
-				policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
-				valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 4]
-				scoreBatch = std::get<2>(r).to(torch::kCPU);
-				distBatch = std::get<3>(r).to(torch::kCPU); // [B, 31]
-			} else {
-				auto r = policy_value_net->forward(batch);
-				policyBatch = std::get<0>(r);   // already CPU
-				valueBatch  = std::get<1>(r);
-				scoreBatch = std::get<2>(r);
-				distBatch = std::get<3>(r);
-			}
-			break;
-		}catch(const c10::Error& e){
-			std::cerr << "batch creation or forwarding failed! " << e.what() << std::endl;
-			for(auto game_ptr : gameBatch)
-				std::cerr << game_ptr << " ";
-			std::cerr << std::endl;
-		}
+	// ---- Forward pass ----
+	torch::NoGradGuard no_grad;
+	if(use_gpu){
+		auto r = policy_value_net->forward(batch);
+		policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
+		valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 4]
+		scoreBatch = std::get<2>(r).to(torch::kCPU);
+		distBatch = std::get<3>(r).to(torch::kCPU); // [B, 31]
+	} else {
+		auto r = policy_value_net->forward(batch);
+		policyBatch = std::get<0>(r);   // already CPU
+		valueBatch  = std::get<1>(r);
+		scoreBatch = std::get<2>(r);
+		distBatch = std::get<3>(r);
 	}
 
 	//std::cerr << policyBatch.dtype() << " " << policyBatch.device() << " " << policyBatch.sizes() << std::endl;
-    // ---- Extract each result ----
-    float* pP = policyBatch.data_ptr<float>();
-    float* pV = valueBatch.data_ptr<float>();
+	// ---- Extract each result ----
+	float* pP = policyBatch.data_ptr<float>();
+	float* pV = valueBatch.data_ptr<float>();
 	float* pS = scoreBatch.data_ptr<float>();
 	float* pSd = distBatch.data_ptr<float>();
 
@@ -240,7 +231,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 		outputs.emplace_back(std::move(policy), std::move(value), s, std::move(value_dist));
 	}
-    return outputs;
+	return outputs;
 }
 
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
