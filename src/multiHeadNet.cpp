@@ -75,7 +75,7 @@
 // 	Color opp_turn = Game::reverseColor(turn);
 // 	Color state;
 
-// 	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
+// 	for(int i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 // 		state = game.getBoard(i / colSize, i % colSize);
 // 		if(state == turn)
 // 			ret[i] = 1.0f;
@@ -85,12 +85,12 @@
 // 			ret[2 * inputSize + i] = 1.0f;
 // 	}
 
-// 	// for(size_t i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
+// 	// for(int i = 3*inputSize; i < 4*inputSize; ++i){ // channel 3 : indicates turn
 // 	// 	ret[i] = (turn == turn) ? 0.0f : 1.0f;
 // 	// }
 
 // 	Color terr;
-// 	for(size_t i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
+// 	for(int i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
 // 		terr = game.getScoreBoard(i/colSize, i%colSize);
 // 		if(terr == turn){
 // 			ret[3*inputSize + i] = 1.0f;
@@ -101,7 +101,7 @@
 // 	}
 
 // 	float diff = game.scoreDiff(turn) / boardSize;
-// 	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score
+// 	for(int i=0; i<inputSize; ++i){ // channel 5 : difference of score
 // 		ret[5*inputSize + i] = diff;
 // 	}
 
@@ -116,7 +116,7 @@
 // 	}
 
 // 	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
-// 	for(size_t i=0; i<inputSize; ++i){
+// 	for(int i=0; i<inputSize; ++i){
 // 		const Chain c = game.getChain(i);
 
 // 		if(c.size != 0 && ret[8*inputSize + i] == 0 && ret[9*inputSize + i] == 0){
@@ -125,7 +125,7 @@
 // 			auto state = game.getBoard(i / colSize, i % colSize);
 // 			int liberty_count = 0;
 
-// 			for(size_t j=0; j<boardSize; ++j){
+// 			for(int j=0; j<boardSize; ++j){
 // 				// if one of the liberty is my territory(= completely alive group)
 // 				// set the liberty count to 5. Note that my stone can't be adjacent to enemy territory.
 // 				if(c.liberties.test(j) && ((ret[3*inputSize + j] == 1.0f) || (ret[4*inputSize + j] == 1.0f))){
@@ -160,7 +160,7 @@
 // 	std::vector<float> ret;
 // 	ret.reserve(gameBatch.size() * globalConfig.inputChannel * inputSize);
 
-// 	for(size_t b=0; b<gameBatch.size(); ++b){
+// 	for(int b=0; b<gameBatch.size(); ++b){
 // 		auto data = getData(*gameBatch[b]);
 // 		ret.insert(ret.end(), data.begin(), data.end());
 // 	}
@@ -231,7 +231,7 @@
 
 // 	std::vector<float> pvfn;
 // 	float* pt = get<0>(res).data_ptr<float>();
-// 	for (size_t i=0; i<outputSize; ++i) {
+// 	for (int i=0; i<outputSize; ++i) {
 // 		pvfn.push_back(pt[i]);
 // 	}
 

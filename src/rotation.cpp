@@ -140,24 +140,24 @@ PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original,
     const auto value = std::get<1>(original);
     const auto score = std::get<2>(original);
     const auto score_dist = std::get<3>(original);
-    size_t L = legal.size();
+    int L = legal.size();
 
     // Compute rotated legal positions
     std::vector<Move> rotated(L);
-    for (size_t i = 0; i < L; ++i)
+    for (int i = 0; i < L; ++i)
         rotated[i] = rot(s, legal[i].first, legal[i].second, N);
 
     // Create index array
-    std::vector<size_t> idx(L);
-    for (size_t i = 0; i < L; ++i) idx[i] = i;
+    std::vector<int> idx(L);
+    for (int i = 0; i < L; ++i) idx[i] = i;
 
     // Sort indices based on rotated legal positions
     std::sort(idx.begin(), idx.end(),
-              [&](size_t a, size_t b){ return rotated[a] < rotated[b]; });
+              [&](int a, int b){ return rotated[a] < rotated[b]; });
 
     // Build new policy vector in sorted order
     std::vector<float> new_policy(L);
-    for (size_t i = 0; i < L; ++i)
+    for (int i = 0; i < L; ++i)
         new_policy[i] = policy[idx[i]];
 
     return {new_policy, value, score, score_dist};
@@ -171,29 +171,29 @@ std::pair<PolicyValueOutput, std::vector<Move>> rotateNNOutputandLegal(const Pol
     const auto value = std::get<1>(original);
     const auto score = std::get<2>(original);
     const auto score_diff = std::get<3>(original);
-    size_t L = legal.size();
+    int L = legal.size();
 
     // Compute rotated legal positions
     std::vector<Move> rotated_legal(L);
-    for (size_t i = 0; i < L; ++i)
+    for (int i = 0; i < L; ++i)
         rotated_legal[i] = rot(s, legal[i].first, legal[i].second, N);
 
     // Create index array
-    std::vector<size_t> idx(L);
-    for (size_t i = 0; i < L; ++i) idx[i] = i;
+    std::vector<int> idx(L);
+    for (int i = 0; i < L; ++i) idx[i] = i;
 
     // Sort indices based on rotated legal positions
     std::sort(idx.begin(), idx.end(),
-              [&](size_t a, size_t b){ return rotated_legal[a] < rotated_legal[b]; });
+              [&](int a, int b){ return rotated_legal[a] < rotated_legal[b]; });
 
     // Build new policy vector in sorted order
     std::vector<float> new_policy(L);
-    for (size_t i = 0; i < L; ++i)
+    for (int i = 0; i < L; ++i)
         new_policy[i] = policy[idx[i]];
 
     // Reorder legal in the same way
     std::vector<Move> new_legal(L);
-    for (size_t i = 0; i < L; ++i)
+    for (int i = 0; i < L; ++i)
         new_legal[i] = rotated_legal[idx[i]];
 
     return {{new_policy, value, score, score_diff}, new_legal};

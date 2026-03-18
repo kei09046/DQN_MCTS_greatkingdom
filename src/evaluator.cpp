@@ -25,27 +25,27 @@ void Evaluator::HandlerWork() {
 
         // run batch
         std::vector<PolicyValueOutput> outputs;
-        std::cerr << "attempting batch evaluation" << std::endl;
+        // std::cerr << "attempting batch evaluation" << std::endl;
         while(true){
             try{
                 outputs = net->batchEvaluate(batchGames);
                 break;
             }catch(const c10::Error& e){
-                std::cerr << "batch evaluate failed" << std::endl;
+                std::cerr << "batch evaluate failed " << e.what() << std::endl;
             }catch(const std::exception& e){
                 std::cerr << e.what() << std::endl;
             }catch(...){
                 std::cerr << "other exception occured" << std::endl;
             }
         }
-        std::cerr << "Batch evaluated successfully" << std::endl;
+        // std::cerr << "Batch evaluated successfully" << std::endl;
 
         // write results back & notify
-        for (size_t i = 0; i < batchBufs.size(); i++) {
+        for (int i = 0; i < batchBufs.size(); i++) {
             auto buf = batchBufs[i];
             {
                 std::lock_guard<std::mutex> lk2(buf->resultmutex);
-                buf->result = std::make_shared<PolicyValueOutput>(PolicyValueOutput(outputs[i]));
+                buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
                 cache.insert(hashBufs[i], buf->result);
                 //buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
             }

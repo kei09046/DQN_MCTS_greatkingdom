@@ -1,9 +1,9 @@
 #include "threadpool.h"
 #include <iostream>
 
-ThreadPool::ThreadPool(size_t num_threads) 
+ThreadPool::ThreadPool(int num_threads) 
     : stop(false), total_tasks(0), tasks(1024) {  // Initialize MPMCQueue with capacity 1024
-    for (size_t i = 0; i < num_threads; ++i) {
+    for (int i = 0; i < num_threads; ++i) {
         workers.emplace_back([this] {
             while (true) {
                 std::function<void()> task;

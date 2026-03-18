@@ -80,7 +80,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	Color opp_turn = Game::reverseColor(turn);
 	Color state;
 
-	for(size_t i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
+	for(int i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard(i / colSize, i % colSize);
 		if(state == turn)
 			ret.at(i) = 1.0f;
@@ -91,7 +91,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	}
 
 	Color terr;
-	for(size_t i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
+	for(int i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
 		terr = game.getScoreBoard(i/colSize, i%colSize);
 		if(terr == turn){
 			ret.at(3*inputSize + i) = 1.0f;
@@ -102,7 +102,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	}
 
 	float diff = game.scoreDiff(turn);
-	for(size_t i=0; i<inputSize; ++i){ // channel 5 : difference of score -> turn. now nn predicts score difference.
+	for(int i=0; i<inputSize; ++i){ // channel 5 : difference of score -> turn. now nn predicts score difference.
 		ret.at(5*inputSize + i) = diff;
 	}
 
@@ -117,7 +117,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	}
 
 	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
-	for(size_t i=0; i<inputSize; ++i){
+	for(int i=0; i<inputSize; ++i){
 		const Chain c = game.getChain(i);
 
 		if(c.size != 0 && ret[8*inputSize + i] == 0 && ret[9*inputSize + i] == 0){
@@ -126,7 +126,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 			auto state = game.getBoard(i / colSize, i % colSize);
 			int liberty_count = 0;
 
-			for(size_t j=0; j<boardSize; ++j){
+			for(int j=0; j<boardSize; ++j){
 				// if one of the liberty is my territory(= completely alive group)
 				// set the liberty count to 5. Note that my stone can't be adjacent to enemy territory.
 				if(c.liberties.test(j) && ((ret[3*inputSize + j] == 1.0f) || (ret[4*inputSize + j] == 1.0f))){
@@ -161,7 +161,7 @@ std::vector<float> PolicyValueNet::getData(const std::vector<const Game*>& gameB
 	std::vector<float> ret;
 	ret.reserve(gameBatch.size() * globalConfig.inputChannel * inputSize);
 
-	for(size_t b=0; b<gameBatch.size(); ++b){
+	for(int b=0; b<gameBatch.size(); ++b){
 		auto data = getData(*gameBatch[b]);
 		ret.insert(ret.end(), data.begin(), data.end());
 	}
@@ -191,7 +191,11 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, distBatch;
 
-	batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
+	auto tmp = torch::tensor(batchData, options);
+	auto reshaped = tmp.view({B, globalConfig.inputChannel, rowSize, colSize});
+	batch = reshaped.to(device);
+
+	//batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
 
 	// ---- Forward pass ----
 	torch::NoGradGuard no_grad;
@@ -239,6 +243,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto data = getData(game);
 	torch::Tensor current_state = torch::tensor(data, options).view({ 1, globalConfig.inputChannel, rowSize, colSize }).to(device);
 	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> res;
+	torch::NoGradGuard no_grad;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
 		get<0>(res) = get<0>(r).to(torch::kCPU); // policy
@@ -252,20 +257,20 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 
 	std::vector<float> policy;
 	float* pt = get<0>(res).data_ptr<float>();
-	for (size_t i=0; i<outputSize; ++i) {
+	for (int i=0; i<outputSize; ++i) {
 		policy.push_back(pt[i]);
 	}
 
 	std::vector<float> winprob;
 	pt = get<1>(res).data_ptr<float>();
-	for (size_t i=0; i<4; ++i) {
+	for (int i=0; i<4; ++i) {
 		policy.push_back(pt[i]);
 	}
 
 	std::vector<float> scoredist;
 	scoredist.reserve(31);
 	pt = get<3>(res).data_ptr<float>();
-	for(size_t i=0; i<31; ++i){
+	for(int i=0; i<31; ++i){
 		scoredist.push_back(pt[i]);
 	}
 
@@ -283,7 +288,7 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
     torch::Tensor wb =
     torch::tensor(result_batch, options).view({globalConfig.batchSize}).to(device).to(torch::kLong);
 	torch::Tensor sd = torch::tensor(score_batch, options).view({ globalConfig.batchSize }).to(device);
-	torch::Tensor sdd = makeScoreDistributionBatch(sd, 15, 1.0f, 5).view({globalConfig.batchSize, 31}).to(device);
+	torch::Tensor sdd = torch::tensor(makeScoreDistributionBatch(score_batch, 15.0f, 1.0f, 5)).view({globalConfig.batchSize, 31}).to(device);
 
     optimizer->zero_grad();
     static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
@@ -352,36 +357,38 @@ void PolicyValueNet::load_model(const std::string& model_file){
 }
 
 
-torch::Tensor PolicyValueNet::makeScoreDistributionBatch(
-    const torch::Tensor& scores,
-    int scoreRange,
+std::vector<float> PolicyValueNet::makeScoreDistributionBatch(
+    const std::vector<float>& scores,
+    float scoreRange,
     float sigma,
     int window) const
 {
     int bins = 2 * scoreRange + 1;
 
-    auto device = scores.device();
-    auto dist = torch::zeros({scores.size(0), bins}, scores.options());
+    auto dist = std::vector<float>(scores.size() * bins, 0.0f);
 
-    auto clamped = torch::clamp(scores, -scoreRange, scoreRange);
-
-    for (int i = 0; i < scores.size(0); i++)
+    for (int i = 0; i < scores.size(); i++)
     {
-        float s = clamped[i].item<float>();
+        float s = std::clamp(scores[i], -scoreRange, scoreRange);
 
-        int start = std::max(-scoreRange, (int)std::floor(s - window));
-        int end   = std::min(scoreRange,  (int)std::ceil(s + window));
+        int start = std::max(-scoreRange, std::floor(s - window));
+        int end   = std::min(scoreRange,  std::ceil(s + window));
+		float sum = 0.0f;
 
         for (int b = start; b <= end; b++)
         {
             float diff = b - s;
             float val = std::exp(-(diff * diff) / (2 * sigma * sigma));
 
-            dist[i][b + scoreRange] = val;
+            dist[i * bins + b + scoreRange] = val;
+			sum += val;
+        }
+
+		for (int b = start; b <= end; b++)
+        {
+            dist[i * bins + b + scoreRange] /= sum;
         }
     }
-
-    dist /= dist.sum(1, true);
 
     return dist;
 }

@@ -6,8 +6,8 @@ constexpr char dc[4] = {0, 1, 0, -1};
 
 Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
     uint8_t temp = 0;
-    for(size_t i=0; i<rowSize; ++i)
-        for(size_t j=0; j<colSize; ++j){
+    for(int i=0; i<rowSize; ++i)
+        for(int j=0; j<colSize; ++j){
             board[i][j] = EMPTY;
             scoreBoard[i][j] = EMPTY;
             mark[i][j] = 0;
@@ -58,7 +58,7 @@ Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     stones[r][c] = {cord, cord}; // head, next
     chains[r * colSize + c] = {1U, {}};
 
-    for (size_t i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4; ++i) {
         uint8_t nr = r + dr[i], nc = c + dc[i];
         if (!inbound(nr, nc)) continue;
 
@@ -112,7 +112,7 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
             areaCount++;
             emptyCells.emplace_back(tr, tc);
 
-            for (size_t i = 0; i < 4; ++i) {
+            for (int i = 0; i < 4; ++i) {
                 uint8_t nr = tr + dr[i], nc = tc + dc[i];
                 if (inbound(nr, nc) && mark[nr][nc] != visitId) {
                     q.emplace(nr, nc);
@@ -150,7 +150,7 @@ void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
     if(!canbeScore(r, c, toCheck))
         return;
 
-    for (size_t i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4; ++i) {
         uint8_t tr = r + dr[i], tc = c + dc[i];
         score[toCheck] += static_cast<float>(checkScore(tr, tc, toCheck));
     }
@@ -161,9 +161,9 @@ void Game::getScore(){
     std::queue<std::pair<uint8_t, uint8_t>> q;
     std::vector<std::pair<uint8_t, uint8_t>> emptyCells;
 
-    for(size_t clr = 0; clr < 2; ++clr)
-        for(size_t r = 0; r<rowSize; ++r)
-            for(size_t c = 0; c<colSize; ++c){
+    for(int clr = 0; clr < 2; ++clr)
+        for(int r = 0; r<rowSize; ++r)
+            for(int c = 0; c<colSize; ++c){
                 if (!(scoreBoard[r][c] & EMPTY))
                     continue;
             
@@ -220,8 +220,8 @@ Color Game::gameEnd(){
 
 uint8_t Game::getLegalMoveCount() const{
     uint8_t ret = 0;
-    for(size_t i=0; i<rowSize; ++i)
-        for(size_t j=0; j<colSize; ++j)
+    for(int i=0; i<rowSize; ++i)
+        for(int j=0; j<colSize; ++j)
             ret += isLegal(i, j) ? 1 : 0;
     
     return ret;
@@ -246,7 +246,7 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
     // update board & scoreBoard
     board[r][c] = currentTurn;
     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
-    for(size_t i=0; i<4; ++i){ // make sure it can't be used for opponent
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
         uint8_t nr = r + dr[i];
         uint8_t nc = c + dc[i];
         if(inbound(nr, nc)){
@@ -290,7 +290,7 @@ Color Game::makeMoveNoScoreUpdate(Move move){
     board[r][c] = currentTurn;
     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
 
-    for(size_t i=0; i<4; ++i){ // make sure it can't be used for opponent
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
         uint8_t nr = r + dr[i];
         uint8_t nc = c + dc[i];
         if(inbound(nr, nc)){

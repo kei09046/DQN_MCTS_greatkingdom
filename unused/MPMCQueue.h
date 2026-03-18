@@ -42,10 +42,10 @@ SOFTWARE.
  namespace rigtorp {
  namespace mpmc {
  #if defined(__cpp_lib_hardware_interference_size) && !defined(__APPLE__)
- static constexpr size_t hardwareInterferenceSize =
+ static constexpr int hardwareInterferenceSize =
      std::hardware_destructive_interference_size;
  #else
- static constexpr size_t hardwareInterferenceSize = 64;
+ static constexpr int hardwareInterferenceSize = 64;
  #endif
  
  #if defined(__cpp_aligned_new)
@@ -54,8 +54,8 @@ SOFTWARE.
  template <typename T> struct AlignedAllocator {
    using value_type = T;
  
-   T *allocate(std::size_t n) {
-     if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+   T *allocate(std::int n) {
+     if (n > std::numeric_limits<std::int>::max() / sizeof(T)) {
        throw std::bad_array_new_length();
      }
  #ifdef _WIN32
@@ -73,7 +73,7 @@ SOFTWARE.
      return p;
    }
  
-   void deallocate(T *p, std::size_t) {
+   void deallocate(T *p, std::int) {
  #ifdef _WIN32
      _aligned_free(p);
  #else
@@ -105,7 +105,7 @@ SOFTWARE.
    T &&move() noexcept { return reinterpret_cast<T &&>(storage); }
  
    // Align to avoid false sharing between adjacent slots
-   alignas(hardwareInterferenceSize) std::atomic<size_t> turn = {0};
+   alignas(hardwareInterferenceSize) std::atomic<int> turn = {0};
    typename std::aligned_storage<sizeof(T), alignof(T)>::type storage;
  };
  
@@ -120,7 +120,7 @@ SOFTWARE.
                  "T must be nothrow destructible");
  
  public:
-   explicit Queue(const size_t capacity,
+   explicit Queue(const int capacity,
                   const Allocator &allocator = Allocator())
        : capacity_(capacity), allocator_(allocator), head_(0), tail_(0) {
      if (capacity_ < 1) {
@@ -131,11 +131,11 @@ SOFTWARE.
      // Allocators are not required to honor alignment for over-aligned types
      // (see http://eel.is/c++draft/allocator.requirements#10) so we verify
      // alignment here
-     if (reinterpret_cast<size_t>(slots_) % alignof(Slot<T>) != 0) {
+     if (reinterpret_cast<int>(slots_) % alignof(Slot<T>) != 0) {
        allocator_.deallocate(slots_, capacity_ + 1);
        throw std::bad_alloc();
      }
-     for (size_t i = 0; i < capacity_; ++i) {
+     for (int i = 0; i < capacity_; ++i) {
        new (&slots_[i]) Slot<T>();
      }
      static_assert(
@@ -154,7 +154,7 @@ SOFTWARE.
    }
  
    ~Queue() noexcept {
-     for (size_t i = 0; i < capacity_; ++i) {
+     for (int i = 0; i < capacity_; ++i) {
        slots_[i].~Slot();
      }
      allocator_.deallocate(slots_, capacity_ + 1);
@@ -270,12 +270,12 @@ SOFTWARE.
    bool empty() const noexcept { return size() <= 0; }
  
  private:
-   constexpr size_t idx(size_t i) const noexcept { return i % capacity_; }
+   constexpr int idx(int i) const noexcept { return i % capacity_; }
  
-   constexpr size_t turn(size_t i) const noexcept { return i / capacity_; }
+   constexpr int turn(int i) const noexcept { return i / capacity_; }
  
  private:
-   const size_t capacity_;
+   const int capacity_;
    Slot<T> *slots_;
  #if defined(__has_cpp_attribute) && __has_cpp_attribute(no_unique_address)
    Allocator allocator_ [[no_unique_address]];
@@ -284,8 +284,8 @@ SOFTWARE.
  #endif
  
    // Align to avoid false sharing between head_ and tail_
-   alignas(hardwareInterferenceSize) std::atomic<size_t> head_;
-   alignas(hardwareInterferenceSize) std::atomic<size_t> tail_;
+   alignas(hardwareInterferenceSize) std::atomic<int> head_;
+   alignas(hardwareInterferenceSize) std::atomic<int> tail_;
  };
  } // namespace mpmc
  

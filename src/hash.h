@@ -12,7 +12,7 @@ private:
     HashValue zobristTable[rowSize][colSize][4]; // 4 for BLACK, WHITE, NEUTRAL, EMPTY
     HashValue zobristToPlay; // to encode whose turn it is
 
-    static inline size_t colorToIndex(Color c);
+    static inline int colorToIndex(Color c);
 
 public:
     Hash();

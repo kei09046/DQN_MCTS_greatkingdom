@@ -22,18 +22,18 @@ template <typename T> struct my_pool_alloc {
         assert(pool_size() >= sizeof(T));
     }
 
-    T *allocate(const size_t n) {
+    T *allocate(const int n) {
         T* ret = static_cast<T*>(_pool.ordered_malloc(n));
         if (!ret && n) throw std::bad_alloc();
         return ret;
     }
 
-    void deallocate(T* ptr, const size_t n) {
+    void deallocate(T* ptr, const int n) {
         if (ptr && n) _pool.ordered_free(ptr, n);
     }
 
     // for comparing
-    size_t pool_size() const { return _pool.get_requested_size(); }
+    int pool_size() const { return _pool.get_requested_size(); }
 
   private:
     Pool& _pool;

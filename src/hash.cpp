@@ -1,6 +1,6 @@
 #include "hash.h"
 
-size_t Hash::colorToIndex(Color c){
+int Hash::colorToIndex(Color c){
     switch(c){
         case BLACK:
             return 0;

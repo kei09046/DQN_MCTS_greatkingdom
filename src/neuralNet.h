@@ -72,7 +72,7 @@ private:
 	std::unique_ptr<torch::optim::Adam> optimizer;
 	const std::string model_type;
 
-	torch::Tensor makeScoreDistributionBatch(const torch::Tensor& scores, int scoreRange, float sigma, int window) const;
+	std::vector<float> makeScoreDistributionBatch(const std::vector<float>& scores, float scoreRange, float sigma, int window) const;
 
 public:
 	std::shared_ptr<NetBase> policy_value_net;

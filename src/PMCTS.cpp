@@ -14,7 +14,7 @@ std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Mo
 
     // Compute exponentials after subtracting max_logit
     float sum_exp = 0.0f;
-    for (size_t i = 0; i < n_logit.size(); ++i) {
+    for (int i = 0; i < n_logit.size(); ++i) {
         exp_logit[i] = std::exp(n_logit[i] - max_logit);
         sum_exp += exp_logit[i];
     }
@@ -139,7 +139,7 @@ void Node::expand(){
     }
 
     if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
-        for(size_t idx = 0; idx < boardSize + 1; ++idx){
+        for(int idx = 0; idx < boardSize + 1; ++idx){
             if(candidateLegal[idx]){
                 uint8_t r = idx / colSize;
                 uint8_t c = idx % colSize;
@@ -159,7 +159,7 @@ void Node::expand(){
     }
 
     // finally add child
-    for(size_t idx = 0; idx < boardSize + 1; ++idx){
+    for(int idx = 0; idx < boardSize + 1; ++idx){
         if(candidateLegal[idx]){
             uint8_t r = idx / colSize;
             uint8_t c = idx % colSize;
@@ -265,7 +265,7 @@ MoveData Node::selectMoveProb(float temp){
         float rnd = dist(gen);
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-        size_t index = std::distance(cumulative.begin(), it);
+        int index = std::distance(cumulative.begin(), it);
         return {available_moves[index], visitPortion};
     }
 

@@ -56,7 +56,7 @@
 //   oldNNOutputsToCleanUp.reserve(8);
 // }
 // SearchThread::~SearchThread() {
-//   for(size_t i = 0; i<oldNNOutputsToCleanUp.size(); i++)
+//   for(int i = 0; i<oldNNOutputsToCleanUp.size(); i++)
 //     delete oldNNOutputsToCleanUp[i];
 //   oldNNOutputsToCleanUp.resize(0);
 // }
@@ -900,13 +900,13 @@
 // }
 
 // void Search::clearOldNNOutputs() {
-//   for(size_t i = 0; i<oldNNOutputsToCleanUp.size(); i++)
+//   for(int i = 0; i<oldNNOutputsToCleanUp.size(); i++)
 //     delete oldNNOutputsToCleanUp[i];
 //   oldNNOutputsToCleanUp.resize(0);
 // }
 // void Search::transferOldNNOutputs(SearchThread& thread) {
 //   std::lock_guard<std::mutex> lock(oldNNOutputsToCleanUpMutex);
-//   for(size_t i = 0; i<thread.oldNNOutputsToCleanUp.size(); i++)
+//   for(int i = 0; i<thread.oldNNOutputsToCleanUp.size(); i++)
 //     oldNNOutputsToCleanUp.push_back(thread.oldNNOutputsToCleanUp[i]);
 //   thread.oldNNOutputsToCleanUp.resize(0);
 // }
@@ -931,9 +931,9 @@
 //   int numAdditionalThreads = numAdditionalThreadsToUseForTasks();
 //   assert(numAdditionalThreads >= 0);
 //   std::function<void(int)> g = [&](int threadIdx) {
-//     size_t idx0 = (size_t)((uint64_t)(threadIdx) * nodeTable->entries.size() / (numAdditionalThreads+1));
-//     size_t idx1 = (size_t)((uint64_t)(threadIdx+1) * nodeTable->entries.size() / (numAdditionalThreads+1));
-//     for(size_t i = idx0; i<idx1; i++) {
+//     int idx0 = (int)((uint64_t)(threadIdx) * nodeTable->entries.size() / (numAdditionalThreads+1));
+//     int idx1 = (int)((uint64_t)(threadIdx+1) * nodeTable->entries.size() / (numAdditionalThreads+1));
+//     for(int i = idx0; i<idx1; i++) {
 //       std::map<Hash128,SearchNode*>& nodeMap = nodeTable->entries[i];
 //       for(auto it = nodeMap.cbegin(); it != nodeMap.cend();) {
 //         SearchNode* node = it->second;
@@ -956,9 +956,9 @@
 //   int numAdditionalThreads = numAdditionalThreadsToUseForTasks();
 //   assert(numAdditionalThreads >= 0);
 //   std::function<void(int)> g = [&](int threadIdx) noexcept {
-//     size_t idx0 = (size_t)((uint64_t)(threadIdx) * nodeTable->entries.size() / (numAdditionalThreads+1));
-//     size_t idx1 = (size_t)((uint64_t)(threadIdx+1) * nodeTable->entries.size() / (numAdditionalThreads+1));
-//     for(size_t i = idx0; i<idx1; i++) {
+//     int idx0 = (int)((uint64_t)(threadIdx) * nodeTable->entries.size() / (numAdditionalThreads+1));
+//     int idx1 = (int)((uint64_t)(threadIdx+1) * nodeTable->entries.size() / (numAdditionalThreads+1));
+//     for(int i = idx0; i<idx1; i++) {
 //       std::map<Hash128,SearchNode*>& nodeMap = nodeTable->entries[i];
 //       for(auto it = nodeMap.cbegin(); it != nodeMap.cend(); ++it) {
 //         delete it->second;

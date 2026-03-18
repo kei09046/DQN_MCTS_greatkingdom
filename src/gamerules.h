@@ -65,19 +65,19 @@ public:
         return moveCount;
     };
 
-    inline Color getBoard(u_int r, u_int c) const{
+    inline Color getBoard(int r, int c) const{
         return board[r][c];
     }
 
-    inline Color getScoreBoard(u_int r, u_int c) const{
+    inline Color getScoreBoard(int r, int c) const{
         return scoreBoard[r][c];
     }
 
-    inline const Chain& getChain(u_int idx) const{
+    inline const Chain& getChain(int idx) const{
         return chains[stones[idx/colSize][idx%colSize].head];
     }
 
-    inline const Stone& getStone(u_int r, u_int c) const{
+    inline const Stone& getStone(int r, int c) const{
         return stones[r][c];
     }
 

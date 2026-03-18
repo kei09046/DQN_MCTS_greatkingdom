@@ -46,7 +46,7 @@ void ModelCompare::play(const std::string& model, Color side, int playout, float
 
 	while (true) {
 		if (side == game_manager.getTurn()) {
-			u_int r, c;
+			int r, c;
 			std::cin >> r >> c;
 			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 		}
@@ -81,7 +81,7 @@ void ModelCompare::playWeb(const std::string& model, const Color humanColor, int
 	std::cout << "model loaded" << std::endl;
 	while (true) {
 		if (game_manager.getTurn() == humanColor) { // human turn
-			u_int r, c;
+			int r, c;
 			std::cin >> r >> c;
 			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 		}
@@ -157,7 +157,7 @@ void ModelCompare::playHuman() {
 	Move cord;
 	Color res;
 	while (true) {
-		u_int r, c;
+		int r, c;
 		std::cin >> r >> c;
 		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
@@ -265,8 +265,8 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
     char display[rowSize][colSize];
 
-    for(size_t i=0; i<rowSize; ++i){
-        for(size_t j=0; j<colSize; ++j){
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
             switch(game.getBoard(i, j)){
                 case BLACK:
                     display[i][j] = 'o';
@@ -297,8 +297,8 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
         }
     }
 
-    for(size_t i=0; i<rowSize; ++i){
-        for(size_t j=0; j<colSize; ++j){
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
             std::cout << display[i][j] << " ";
         }
         std::cout << "\n";
@@ -306,11 +306,11 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
 
 	// const auto nnInput = PolicyValueNet::getData(game);
 	// int cnt = rowSize * colSize * 8;
-	// for(size_t i=8; i<=17; ++i){
+	// for(int i=8; i<=17; ++i){
 	// 	std::cout << "\n channel " << i << "\n";
 		
-	// 	for(size_t j=0; j<rowSize; ++j){
-	// 		for(size_t k=0; k<colSize; ++k)
+	// 	for(int j=0; j<rowSize; ++j){
+	// 		for(int k=0; k<colSize; ++k)
 	// 			std::cout << nnInput[cnt++] << " ";
 	// 		std::cout << "\n";
 	// 	}

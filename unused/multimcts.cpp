@@ -83,7 +83,7 @@
 
 //         auto results = net.batchEvaluate(games, legalMoves);
 
-//         for (size_t i = 0; i < promises.size(); ++i) {
+//         for (int i = 0; i < promises.size(); ++i) {
 //             promises[i].set_value({results.first[i], results.second[i]});
 //         }
 //     }
@@ -95,7 +95,7 @@
 
 //     // Compute exponentials after subtracting max_logit
 //     float sum_exp = 0.0f;
-//     for (size_t i = 0; i < logit.size(); ++i) {
+//     for (int i = 0; i < logit.size(); ++i) {
 //         exp_logit[i] = std::exp(logit[i] - max_logit);
 //         sum_exp += exp_logit[i];
 //     }
@@ -403,7 +403,7 @@
 //         float rnd = dist(gen);
 
 //         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-//         size_t index = std::distance(cumulative.begin(), it);
+//         int index = std::distance(cumulative.begin(), it);
 
 //         // std::cout << "make move : " << legal[index].first << " " << legal[index].second << " win count : " << child[index]->W << " visit count : " << child[index]->N <<
 //         // " prob : " << child[index]->P << " eval : " << child[index]->initQ << "\n";

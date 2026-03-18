@@ -9,7 +9,7 @@
 
 class ThreadPool {
 public:
-    explicit ThreadPool(size_t num_threads);
+    explicit ThreadPool(int num_threads);
     ~ThreadPool();
 
     void enqueue(std::function<void()> task);
@@ -19,7 +19,7 @@ private:
     std::vector<std::thread> workers;
     rigtorp::MPMCQueue<std::function<void()>> tasks;  // MPMC queue for task storage
     std::atomic<bool> stop;
-    std::atomic<size_t> total_tasks;  // Tracks remaining tasks
+    std::atomic<int> total_tasks;  // Tracks remaining tasks
 };
 
 #endif // THREADPOOL_H

@@ -32,15 +32,15 @@ constexpr int outputRow = rowSize;
 constexpr int outputCol = colSize;
 constexpr int inputSize = inputRow * inputCol;
 
-constexpr Color BLACK = 0;
-constexpr Color WHITE = 1;
-constexpr Color NEUTRAL = 2;
-constexpr Color EMPTY = 4;
+constexpr Color BLACK = 0U;
+constexpr Color WHITE = 1U;
+constexpr Color NEUTRAL = 2U;
+constexpr Color EMPTY = 4U;
 
-constexpr Wintype CAPTURE = 0;
-constexpr Wintype SCORE = 1;
-constexpr Wintype RESIGN = 2;
-constexpr Wintype NONE = 3;
+constexpr Wintype CAPTURE = 0U;
+constexpr Wintype SCORE = 1U;
+constexpr Wintype RESIGN = 2U;
+constexpr Wintype NONE = 3U;
 
 constexpr uint8_t ADJTOBLACK = 8U;
 constexpr uint8_t ADJTOWHITE = 16U;

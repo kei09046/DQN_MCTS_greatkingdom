@@ -140,12 +140,13 @@ void TrainPipeline::insert_data(const TrainData& data) {
 
 void TrainPipeline::train(){
 	std::vector<int> indices = select_indices(std::min((int)game_buffer->size(), globalConfig.capacity), globalConfig.batchSize); // randomly select samples from buffer
-	std::vector<std::shared_ptr<TrainData>> batch_data(globalConfig.batchSize);
+	std::vector<std::shared_ptr<TrainData>> batch_data;
+	batch_data.reserve(globalConfig.batchSize);
 
 	buffer_mutex.lock(); 
 	for(int i=0; i<globalConfig.batchSize; ++i){
 		std::shared_ptr<TrainData> data = (*game_buffer)[indices[i]];
-		batch_data[i] = data;
+		batch_data.push_back(data);
 	}
 	buffer_mutex.unlock();
 
@@ -252,8 +253,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "model properly saved " << games_played << std::endl;
 					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
 					std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
-					std::cout << "average score difference : " << (float)total_score_diff / globalConfig.save_freq << std::endl;
-					std::cout << "average game length : " << (float)total_game_length / globalConfig.save_freq << std::endl;
+					int game_played = wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3];
+					std::cout << "games played " << game_played << std::endl;
+					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
+					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
 
 					total_game_length = 0;
 					total_score_diff = 0;
@@ -300,9 +303,9 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 			}
 			else if(pause_flag ^ train_paused){
 				if(train_paused)
-					std::cerr << "train paused" << std::endl;
-				else
 					std::cerr << "train resumed" << std::endl;
+				else
+					std::cerr << "train paused" << std::endl;
 				train_paused.store(pause_flag.load());
 				pause_cv.notify_one();
 			}

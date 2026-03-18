@@ -5,16 +5,16 @@
 
 #ifdef apvMCTS
 #ifdef measureTime
-thread_local size_t expandTime = 0; // expandTime = makeMoveTime + copyTime + extraTime
-thread_local size_t evaluateTime = 0;
-thread_local size_t searchTime = 0;
-thread_local size_t makeMoveTime = 0;
-thread_local size_t copyTime = 0;
-thread_local size_t extraTime = 0;
-thread_local size_t evalCacheInsertTime = 0;
-thread_local size_t evalCacheFindTime = 0;
-thread_local size_t evalCacheHit = 0;
-thread_local size_t terminalHit = 0;
+thread_local int expandTime = 0; // expandTime = makeMoveTime + copyTime + extraTime
+thread_local int evaluateTime = 0;
+thread_local int searchTime = 0;
+thread_local int makeMoveTime = 0;
+thread_local int copyTime = 0;
+thread_local int extraTime = 0;
+thread_local int evalCacheInsertTime = 0;
+thread_local int evalCacheFindTime = 0;
+thread_local int evalCacheHit = 0;
+thread_local int terminalHit = 0;
 
 std::vector<int> MCTS::getTimeStats() const{
     std::vector<int> stats;
@@ -53,7 +53,7 @@ std::vector<std::atomic<float>> Node::softmax(const std::vector<float>& logit, c
     // Compute exponentials after subtracting max_logit
     std::vector<float> exp_logit(size);
     float sum_exp = 0.0f;
-    for (size_t i = 0; i < size; ++i) {
+    for (int i = 0; i < size; ++i) {
         exp_logit[i] = std::exp(n_logit[i] - max_logit);
         sum_exp += exp_logit[i];
     }
@@ -64,7 +64,7 @@ std::vector<std::atomic<float>> Node::softmax(const std::vector<float>& logit, c
     }
 
     std::vector<std::atomic<float>> ret(size);
-    for(size_t i=0; i<size; ++i)
+    for(int i=0; i<size; ++i)
         ret[i].store(exp_logit[i]);
 
     return ret;
@@ -128,7 +128,7 @@ void Node::expand(){
     }
 
     if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
-        for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+        for(int idx = 0; idx < candidateLegal.size(); ++idx){
             if(candidateLegal[idx]){
                 uint8_t r = idx / colSize;
                 uint8_t c = idx % colSize;
@@ -148,7 +148,7 @@ void Node::expand(){
     }
 
     // finally add child
-    for(size_t idx = 0; idx < candidateLegal.size(); ++idx){
+    for(int idx = 0; idx < candidateLegal.size(); ++idx){
         if(candidateLegal[idx]){
             uint8_t r = idx / colSize;
             uint8_t c = idx % colSize;
@@ -335,7 +335,7 @@ MoveData Node::selectMoveProb(float temp){
         float rnd = dist(gen);
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-        size_t index = std::distance(cumulative.begin(), it);
+        int index = std::distance(cumulative.begin(), it);
 
         // std::cout << "make move : " << available_moves[index].first << " " << available_moves[index].second << " win count : " << child[index]->W << " visit count : " << child[index]->N <<
         // " prob : " << child[index]->P << " eval : " << child[index]->initQ << "\n";
