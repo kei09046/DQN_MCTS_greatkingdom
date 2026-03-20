@@ -70,9 +70,9 @@ Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
 }
 Evaluator::~Evaluator() { stop = true; qcv.notify_all(); handler.join(); }
 
-bool Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
+bool Evaluator::evaluate(NNResultBuf* buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
     // cache lookup
-    bool cacheHit = cache.get(hash, buf.result);
+    bool cacheHit = cache.get(hash, buf->result);
     if(cacheHit) {
         //std::cerr << "cache hit\n";
         return true;
@@ -81,19 +81,19 @@ bool Evaluator::evaluate(NNResultBuf& buf, const Game* game, HashValue hash) { /
     // enqueue request
     {
         std::lock_guard<std::mutex> lk(qmutex);
-        q.push({&buf, game, hash});
+        q.push({buf, game, hash});
     }
     qcv.notify_one();
 
     // wait for result
-    std::unique_lock<std::mutex> lk2(buf.resultmutex);
-    buf.resultcv.wait(lk2, [&]{ return buf.result != nullptr; });
+    std::unique_lock<std::mutex> lk2(buf->resultmutex);
+    buf->resultcv.wait(lk2, [&]{ return buf->result != nullptr; });
     return false;
 }
 
-bool Evaluator::asyncEvaluate(NNResultBuf& buf, const Game* game, HashValue hash){
+bool Evaluator::asyncEvaluate(NNResultBuf* buf, const Game* game, HashValue hash){
     // cache lookup
-    bool cacheHit = cache.get(hash, buf.result);
+    bool cacheHit = cache.get(hash, buf->result);
     if(cacheHit) {
         //std::cerr << "cache hit\n";
         return true;
@@ -102,7 +102,7 @@ bool Evaluator::asyncEvaluate(NNResultBuf& buf, const Game* game, HashValue hash
     // enqueue request
     {
         std::lock_guard<std::mutex> lk(qmutex);
-        q.push({&buf, game, hash});
+        q.push({buf, game, hash});
     }
     qcv.notify_one();
     return false;

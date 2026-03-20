@@ -1,4 +1,14 @@
 #include "PMCTS.h"
+#include "gamerules.h"
+#include "neuralNet.h"
+#include "random.h"
+#include "hash.h"
+#include "evaluator.h"
+#include "dirichlet.h"
+#include <cmath>
+#include <iostream>
+#include <random>
+#include <numeric>
 
 const Hash hash;
 
@@ -28,7 +38,8 @@ std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Mo
 
 std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float komi, float score_factor, float risk_aversion)
 {
-    // softmax
+    assert(winLogit.size() == 4 && scoreDist.size() == 31);
+    // softmax 
     float maxLogit = *std::max_element(winLogit.begin(), winLogit.end());
     float sum = 0.0f;
     float p[4];
@@ -316,11 +327,12 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     if (N == 0) {
         expand();
         if(winmove == RESIGNMOVE && available_moves.size() > 0){
-            NNResultBuf buf;
+            NNResultBuf* buf = new NNResultBuf();
             evaluator->evaluate(buf, &game, hashValue);
 
-            edgeP = softmax(std::get<0>(*buf.result), available_moves);
+            edgeP = softmax(std::get<0>(*(buf->result)), available_moves);
             edgeN.assign(edgeP.size(), 0.0f);
+            delete buf;
         }
     }
 
@@ -463,7 +475,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             // enqueue evaluation
             NNResultBuf* buf = new NNResultBuf();
 
-            bool cacheHit = evaluator->asyncEvaluate(*buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
+            bool cacheHit = evaluator->asyncEvaluate(buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
             if(!cacheHit){
                 resultBuffer.push_back(buf);
                 inEvaluation.push_back(cur);

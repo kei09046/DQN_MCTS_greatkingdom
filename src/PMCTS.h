@@ -2,21 +2,11 @@
 #define PMCTS_H
 
 #include "consts.h"
-#include "gamerules.h"
-#include "neuralNet.h"
-#include "random.h"
-#include "hash.h"
 #include "evaluator.h"
-#include "dirichlet.h"
+#include "gamerules.h"
 #include <vector>
 #include <utility>
-#include <cmath>
-#include <iostream>
-#include <random>
-#include <numeric>
 #include <unordered_map>
-#include <memory>
-
 
 std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& availableMoves);
 
