@@ -36,23 +36,31 @@ std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Mo
     return exp_logit;
 }
 
+std::vector<float> softmax(const std::vector<float>& logit){
+    std::vector<float> ret(logit.size());
+
+    float maxLogit = *std::max_element(logit.begin(), logit.end());
+    float sum = 0.0f;
+    for (int i = 0; i < logit.size(); ++i) {
+        ret[i] = std::exp(logit[i] - maxLogit);
+        sum += ret[i];
+    }
+    for (int i = 0; i < 4; ++i) ret[i] /= sum; // apply softmax to get actual probability
+
+    return ret;
+}
+
 std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float komi, float score_factor, float risk_aversion)
 {
     assert(winLogit.size() == 4 && scoreDist.size() == 31);
     // softmax 
-    float maxLogit = *std::max_element(winLogit.begin(), winLogit.end());
-    float sum = 0.0f;
-    float p[4];
-    for (int i = 0; i < 4; ++i) {
-        p[i] = std::exp(winLogit[i] - maxLogit);
-        sum += p[i];
-    }
-    for (int i = 0; i < 4; ++i) p[i] /= sum; // apply softmax to get actual probability
+    std::vector<float> p = softmax(winLogit);
+    std::vector<float> s = softmax(scoreDist);
 
     float p_win  = p[0] + p[1];
     float p_loss = p[2] + p[3];
     
-    if(true/*p[0] + p[2] < 0.1f*/) // if probability of winning by score is less than 0.1, only use policy output.
+    if(p[0] + p[2] < 0.1f) // if probability of winning by score is less than 0.1, only use policy output.
         return {2 * p_win - 1.0f, p_win};
 
     // Step 1: compute mean
@@ -60,7 +68,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
     for (int i = 0; i < 31; ++i)
     {
         int score = i - 15;   // map index 0..30 to score -15..15
-        score_mean += score * scoreDist[i];
+        score_mean += score * s[i];
     }
 
     // Step 2: compute variance
@@ -69,7 +77,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
     {
         int score = i - 15;
         float diff = score - score_mean;
-        score_var += diff * diff * scoreDist[i];
+        score_var += diff * diff * s[i];
     }
     float score_std = std::sqrt(score_var);
 
