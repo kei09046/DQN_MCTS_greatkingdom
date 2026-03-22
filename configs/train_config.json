@@ -49,7 +49,7 @@
     "compare_thread_num": 12,
     "search_thread_num": 4,
     "train_wait_time": 64000,
-    "save_freq": 96,
+    "save_freq": 12,
     "capacity": 10000
   }
 }

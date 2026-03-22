@@ -48,7 +48,7 @@ private:
     Move winmove;
     std::unordered_map<HashValue, Node*>* const trans_table;
 
-    void addChild(int r, int c, Game ng);
+    void addChild(const int r, const int c, const Game& ng);
 
     void expand();
 

@@ -13,6 +13,8 @@
 const Hash hash;
 
 std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
+    assert(logit.size() == outputSize);
+
     std::vector<float> n_logit;
     n_logit.reserve(available_moves.size());
     for(const auto& move : available_moves){
@@ -100,7 +102,7 @@ game(g), turn(g.getTurn()),
 N(0.0f), W(0.0f), initQ(0.0f), initS(0.0f), initW(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
 }
 
-void Node::addChild(int r, int c, Game ng){
+void Node::addChild(const int r, const int c, const Game& ng){
     HashValue newHash = hash.computeHashAfterMove(game, {r, c}, hashValue);
     Node* childNode;
 
@@ -192,8 +194,8 @@ int Node::selectChildInSearch(){
     float pref, maxval = -1.0f;
 
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
-        + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        pref = ((edgeN.at(i) == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child.at(i)->W / child.at(i)->N) 
+        + globalConfig.cPuct * edgeP.at(i) * sqrt(N)/(1 + edgeN.at(i));
         
         if(maxval < pref){
             maxval = pref; 
@@ -215,11 +217,11 @@ Move Node::selectMove(float temp){
 
     int maxi, maxn = -1, index;
     for(int i=0; i<available_moves.size(); ++i){
-        if(edgeN[i] > maxn){
-            maxn = edgeN[i];
+        if(edgeN.at(i) > maxn){
+            maxn = edgeN.at(i);
             maxi = i;
         }
-        weights[i] = std::pow(edgeN[i], temp);
+        weights.at(i) = std::pow(edgeN.at(i), temp);
     }
 
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -230,18 +232,18 @@ Move Node::selectMove(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         index = std::distance(cumulative.begin(), it);
-        return available_moves[index];
+        return available_moves.at(index);
     }
 
     std::cout << "available move size : " << available_moves.size() << std::endl;
     for(int i=0; i<available_moves.size(); ++i){
-        if(child[i]->N != 0.0f){
+        if(child.at(i)->N != 0.0f){
             std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
             " sc: " << edgeN[i] << " Q: " << 
             child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " W : " << child[i]->initW << " S : " << child[i]->initS << " P " << edgeP[i] << std::endl;
         }
     }
-    return available_moves[maxi];
+    return available_moves.at(maxi);
 }
 
 MoveData Node::selectMoveProb(float temp){
@@ -256,12 +258,12 @@ MoveData Node::selectMoveProb(float temp){
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
     int maxi, maxn = -1;
     for(int i=0; i<available_moves.size(); ++i){
-        if(edgeN[i] > maxn){
-            maxn = edgeN[i];
+        if(edgeN.at(i) > maxn){
+            maxn = edgeN.at(i);
             maxi = i;
         }
-        weights[i] = std::pow(edgeN[i], temp);
-        visitPortion[available_moves[i].first * colSize + available_moves[i].second] = edgeN[i]/N;
+        weights[i] = std::pow(edgeN.at(i), temp);
+        visitPortion.at(available_moves.at(i).first * colSize + available_moves.at(i).second) = edgeN.at(i)/N;
     }
 
     // std::cout << "visit portion" << std::endl;
@@ -277,10 +279,10 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
-        return {available_moves[index], visitPortion};
+        return {available_moves.at(index), visitPortion};
     }
 
-    return {available_moves[maxi], visitPortion};
+    return {available_moves.at(maxi), visitPortion};
 }
 
 Node* Node::jump(Move move){
@@ -407,7 +409,7 @@ void MCTS::reset(){
         }
         trans_table->clear();
     }
-    else{ // otherwise, nodes are deleted after each move is made.
+    else{ // otherwise, parent nodes are deleted after each move is made.
         root->deleteTree();
     }
 
@@ -458,7 +460,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             }
             int a = cur->selectChildInSearch(); // assume node is evaluated
             childIdx.push_back(a);
-            cur = cur->child[a];
+            cur = cur->child.at(a);
         }
 
         searchCounter++;
@@ -468,7 +470,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             node->W -= 1.0f; // apply VL
         }
         for(int i=0; i<childIdx.size(); ++i){
-            path[i]->edgeN[childIdx[i]] += 1.0f;
+            path.at(i)->edgeN.at(childIdx.at(i)) += 1.0f;
         }
 
         if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
@@ -508,20 +510,20 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     //EVALUATION & UPDATE
     if(inEvaluation.size() >= globalConfig.search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
         // wait for the result
-        NNResultBuf* rb = resultBuffer[inEvaluation.size() - 1];
+        NNResultBuf* rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
         rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; }); // wait until all evaluation queued are finished.
         evaluateCounter += inEvaluation.size();
 
         for(int i=0; i<inEvaluation.size(); ++i){
-            NNResultBuf* buf = resultBuffer[i];
-            std::vector<Node*> path = updateQueue[i];
-            Node* cur = inEvaluation[i]; 
+            NNResultBuf* buf = resultBuffer.at(i);
+            std::vector<Node*> path = updateQueue.at(i);
+            Node* cur = inEvaluation.at(i); 
 
             if(buf->result == nullptr){
                 std::cerr << "nullptr exception! " << i << " " << inEvaluation.size() << std::endl;
                 for(int j=0; j<inEvaluation.size(); ++j){
-                    std::cerr << resultBuffer[j]->result << std::endl; 
+                    std::cerr << resultBuffer.at(j)->result << std::endl; 
                 }
             }
             std::vector<float> evalP = std::get<0>(*(buf->result));

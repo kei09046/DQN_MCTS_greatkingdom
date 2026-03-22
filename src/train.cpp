@@ -192,7 +192,7 @@ void TrainPipeline::train(){
 	// std::cout << (*result_batch)[0] << std::endl;
 
 	for(int i=0; i<globalConfig.epochs; ++i)
-		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate);
+		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate); // state batch : 746496? nextmove:41984
 }
 
 void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp, const std::string& model_prefix)
@@ -233,6 +233,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				}
 
 				save_mutex.lock(); // critical part
+
 				if (((++games_played + save_cnt) % globalConfig.save_freq) == 0) {
 					std::cout << "save model" << std::endl;
 					pause_flag = true; // asks other threads to pause
@@ -284,6 +285,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					pause_flag.store(false); // restart train thread
 					train_cv.notify_one(); // notify train thread
 				}
+				
 				save_mutex.unlock();
 			}
 

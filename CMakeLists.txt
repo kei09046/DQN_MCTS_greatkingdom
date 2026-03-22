@@ -4,11 +4,9 @@ cmake_policy(SET CMP0144 NEW)
 
 # Set paths
 set(CMAKE_PREFIX_PATH "/home/me/libtorch")
-set(CMAKE_PREFIX_PATH "home/me/boost_1_89_0" ${CMAKE_PREFIX_PATH})
 set(CAFFE2_USE_CUDNN ON)
 set(USE_CUSPARSELT OFF)
 find_package(Torch REQUIRED)
-find_package(Boost REQUIRED)
 
 # Compiler and linker flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -pg")
@@ -20,7 +18,6 @@ add_executable(play ${SRC})
 
 # Link against LibTorch
 target_link_libraries(play "${TORCH_LIBRARIES}")
-target_link_libraries(play Boost::headers)
 
 # Include directories
 target_include_directories(play PRIVATE 

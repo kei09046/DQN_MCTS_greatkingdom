@@ -35,6 +35,7 @@ InputMatrix inputReflectHorizontal(const InputMatrix mat) {
 
 std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat) {
     std::vector<InputMatrix> transforms;
+    transforms.reserve(8);
     
     // Original InputMatrix
     transforms.push_back(mat);
@@ -50,10 +51,14 @@ std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat) {
 
     // Reflections
     InputMatrix reflH = inputReflectHorizontal(mat);
+    InputMatrix ref_rot90 = inputRotate90(reflH);
+    InputMatrix ref_rot180 = inputRotate90(ref_rot90);
+    InputMatrix ref_rot270 = inputRotate90(ref_rot180);
+
     transforms.push_back(reflH);
-    transforms.push_back(inputRotate90(reflH));
-    transforms.push_back(inputRotate90(inputRotate90(reflH)));
-    transforms.push_back(inputRotate90(inputRotate90(inputRotate90(reflH))));
+    transforms.push_back(ref_rot90);
+    transforms.push_back(ref_rot180);
+    transforms.push_back(ref_rot270);
 
     return transforms;
 }
@@ -125,7 +130,8 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
     auto value = std::get<2>(data);
     auto score_diff = std::get<3>(data);
 
-    for(int i=0; i<rotatedStates.size(); ++i){
+    assert(rotatedStates.size() == 8);
+    for(int i=0; i<8; ++i){
         transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i], rotatedMoves[i], value, score_diff));
     }
 
