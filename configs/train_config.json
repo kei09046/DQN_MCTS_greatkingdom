@@ -45,10 +45,10 @@
   "train": {
     "epochs": 5,
     "check_freq": 960,
-    "compare_game_cnt": 120,
-    "compare_thread_num": 12,
+    "compare_game_cnt": 40,
+    "compare_thread_num": 4,
     "search_thread_num": 4,
-    "train_wait_time": 16000,
+    "train_wait_time": 24000,
     "save_freq": 96,
     "capacity": 10000
   }

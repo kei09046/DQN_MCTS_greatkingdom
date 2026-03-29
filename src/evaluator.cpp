@@ -31,7 +31,7 @@ void Evaluator::HandlerWork() {
                 outputs = net->batchEvaluate(batchGames);
                 break;
             }catch(const c10::Error& e){
-                std::cerr << "batch evaluate failed " << e.what() << std::endl;
+                std::cerr << "batch evaluate failed" << std::endl;
             }catch(const std::exception& e){
                 std::cerr << e.what() << std::endl;
             }catch(...){

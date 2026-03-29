@@ -191,8 +191,11 @@ void TrainPipeline::train(){
 	
 	// std::cout << (*result_batch)[0] << std::endl;
 
-	for(int i=0; i<globalConfig.epochs; ++i)
+	try{
 		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate);
+	}catch(const c10::Error& e){
+		std::cerr << "failed while training " << e.what() << std::endl;
+	}
 }
 
 void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp, const std::string& model_prefix)
