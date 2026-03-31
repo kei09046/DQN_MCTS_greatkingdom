@@ -187,7 +187,6 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	std::vector<float> batchData = getData(gameBatch);
-	assert(batchData.size() == B * globalConfig.inputChannel * rowSize * colSize);
 
 	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, distBatch;
 
@@ -234,6 +233,41 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		std::vector<float> value_dist(src, src + 31);
 
 		outputs.emplace_back(std::move(policy), std::move(value), s, std::move(value_dist));
+	}
+	return outputs;
+}
+
+std::vector<PolicyValueOutput>
+PolicyValueNet::backupEvaluate(const std::vector<const Game*>& gameBatch){
+	const int B = gameBatch.size();
+	std::vector<PolicyValueOutput> outputs;
+	outputs.reserve(B);
+
+	auto options = torch::TensorOptions().dtype(torch::kFloat32);
+	std::vector<float> batchData = getData(gameBatch);
+
+	assert(batchData.size() == B * globalConfig.inputChannel * rowSize * colSize);
+
+	int cnt = 0;
+	for(int game_id = 0; game_id < B; ++game_id){
+		std::cerr << "game : " << game_id << std::endl;
+		for(int channel = 0; channel < globalConfig.inputChannel; ++channel){
+			std::cerr << "channel " << channel << std::endl;
+			for(int row = 0; row < rowSize; ++row){
+				for(int col = 0; col < colSize; ++col){
+					std::cerr << batchData[cnt++] << " ";
+				}
+				std::cerr << std::endl;
+			}
+		}
+		std::cerr << std::endl;
+	}
+
+	for(int b = 0; b < B; ++b) {
+		std::vector<float> policy(0.0f, outputSize);
+		std::vector<float> value(0.0f, 4);
+		std::vector<float> value_dist(0.0f, 31);
+		outputs.emplace_back(std::move(policy), std::move(value), 0.0f, std::move(value_dist));
 	}
 	return outputs;
 }

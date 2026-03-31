@@ -194,7 +194,7 @@ void TrainPipeline::train(){
 	try{
 		train_model.train_step(*state_batch, *nextmove_batch, *result_batch, *score_batch, learning_rate);
 	}catch(const c10::Error& e){
-		std::cerr << "failed while training " << e.what() << std::endl;
+		std::cerr << "failed while training " << std::endl;
 	}
 }
 
@@ -271,9 +271,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							std::cout, std::cout, false, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
 						std::cout << "model " << model_file << " vs " << current_best_model_file << 
 						" winrate " << win_rate << std::endl;
+
 						if(win_rate > 0.5f){
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
+							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + "B.pt"); // best models are saved
 						}
 						else if(win_rate < 0.4f){
 							std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
