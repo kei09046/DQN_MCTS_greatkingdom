@@ -20,7 +20,7 @@ struct NNResultBuf{
 };
 
 struct evalRequest {
-    NNResultBuf* buf;
+    std::shared_ptr<NNResultBuf> buf;
     const Game* game;
     HashValue hash;
 };
@@ -43,8 +43,8 @@ public:
     Evaluator(const std::string& model_file, const std::string& model_type, bool use_gpu);
     Evaluator(const std::string& model_file, bool use_gpu);
     ~Evaluator();
-    bool evaluate(NNResultBuf* buf, const Game* game, HashValue hash); // return true if cache hit
-    bool asyncEvaluate(NNResultBuf* buf, const Game* game, HashValue hash);
+    bool evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash); // return true if cache hit
+    bool asyncEvaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash);
     void updateModel(PolicyValueNet* updatedNet);
 };
 #endif

@@ -337,12 +337,11 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     if (N == 0) {
         expand();
         if(winmove == RESIGNMOVE && available_moves.size() > 0){
-            NNResultBuf* buf = new NNResultBuf();
+            auto buf = std::make_shared<NNResultBuf>();
             evaluator->evaluate(buf, &game, hashValue);
 
             edgeP = softmax(std::get<0>(*(buf->result)), available_moves);
             edgeN.assign(edgeP.size(), 0.0f);
-            delete buf;
         }
     }
 
@@ -383,7 +382,7 @@ void MCTS::runSimulation(){
     int evaluate_counter = 0;
     std::vector<Node*> current_evaluating_nodes;
     std::vector<std::vector<Node*>> need_update_chain;
-    std::vector<NNResultBuf*> result_buffer;
+    std::vector<std::shared_ptr<NNResultBuf>> result_buffer;
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
     while(evaluate_counter < nPlayout){
@@ -430,7 +429,7 @@ void MCTS::reset(){
 
 void MCTS::playout(int& searchCounter, int& evaluateCounter, 
     std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
-    std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck) {
+    std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck) {
 
     // SELECTION
     if((searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
@@ -483,7 +482,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
         if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
             // enqueue evaluation
-            NNResultBuf* buf = new NNResultBuf();
+            auto buf = std::make_shared<NNResultBuf>();
 
             bool cacheHit = evaluator->asyncEvaluate(buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
             if(!cacheHit){
@@ -498,8 +497,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 cur->edgeP = softmax(evalP, cur->available_moves);
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
                 evalQ = cur->initQ;
-
-                delete buf;
             }
         }
 
@@ -518,13 +515,14 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     //EVALUATION & UPDATE
     if(inEvaluation.size() >= globalConfig.search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
         // wait for the result
-        NNResultBuf* rb = resultBuffer.at(inEvaluation.size() - 1);
+        std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
         rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; }); // wait until all evaluation queued are finished.
+
         evaluateCounter += inEvaluation.size();
 
         for(int i=0; i<inEvaluation.size(); ++i){
-            NNResultBuf* buf = resultBuffer.at(i);
+            std::shared_ptr<NNResultBuf> buf = resultBuffer.at(i);
             std::vector<Node*> path = updateQueue.at(i);
             Node* cur = inEvaluation.at(i); 
 
@@ -551,9 +549,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 evalQ = -evalQ;
             }
         }
-
-        for(int i=0; i<resultBuffer.size(); ++i)
-            delete resultBuffer[i];
 
         resultBuffer.clear();
         updateQueue.clear();

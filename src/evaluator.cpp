@@ -6,7 +6,7 @@ void Evaluator::createHandlerThreads() {
 
 void Evaluator::HandlerWork() {
     std::vector<const Game*> batchGames;
-    std::vector<NNResultBuf*> batchBufs;
+    std::vector<std::shared_ptr<NNResultBuf>> batchBufs;
     std::vector<HashValue> hashBufs;
 
     while (!stop) {
@@ -70,7 +70,7 @@ Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
 }
 Evaluator::~Evaluator() { stop = true; qcv.notify_all(); handler.join(); }
 
-bool Evaluator::evaluate(NNResultBuf* buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
+bool Evaluator::evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
     // cache lookup
     bool cacheHit = cache.get(hash, buf->result);
     if(cacheHit) {
@@ -91,7 +91,7 @@ bool Evaluator::evaluate(NNResultBuf* buf, const Game* game, HashValue hash) { /
     return false;
 }
 
-bool Evaluator::asyncEvaluate(NNResultBuf* buf, const Game* game, HashValue hash){
+bool Evaluator::asyncEvaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash){
     // cache lookup
     bool cacheHit = cache.get(hash, buf->result);
     if(cacheHit) {

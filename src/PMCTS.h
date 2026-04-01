@@ -87,6 +87,6 @@ private:
     std::unordered_map<HashValue, Node*>* trans_table;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
-        std::vector<std::vector<Node*>>& updateQueue, std::vector<NNResultBuf*>& resultBuffer, bool& searchStuck);
+        std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck);
 };
 #endif
