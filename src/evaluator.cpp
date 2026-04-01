@@ -29,6 +29,7 @@ void Evaluator::HandlerWork() {
 
         try{
             outputs = net->batchEvaluate(batchGames);
+            //std::cerr << "Batch evaluated successfully" << std::endl;
         }catch(const c10::Error& e){
             std::cerr << "batch evaluate failed. retrying..." << std::endl;
             try{
@@ -52,6 +53,7 @@ void Evaluator::HandlerWork() {
             buf->resultcv.notify_one();
         }
 
+        hashBufs.clear();
         batchGames.clear();
         batchBufs.clear();
     }
