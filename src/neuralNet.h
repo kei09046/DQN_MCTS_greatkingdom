@@ -87,6 +87,8 @@ public:
 
 	std::vector<PolicyValueOutput> batchEvaluate(const std::vector<const Game*>& gameBatch);
 
+	std::vector<PolicyValueOutput> backupEvaluate(const std::vector<const Game*>& gameBatch); // run when batchEvaluate fails twice in a row. Checks gameBatch info as well.
+
 	PolicyValueOutput evaluate(const Game& game);
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,

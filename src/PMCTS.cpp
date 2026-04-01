@@ -62,7 +62,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
     float p_win  = p[0] + p[1];
     float p_loss = p[2] + p[3];
     
-    if(p[0] + p[2] < 0.1f) // if probability of winning by score is less than 0.1, only use policy output.
+    if(p[0] + p[2] < 0.25f) // if probability of winning by score is less than 0.1, only use policy output.
         return {2 * p_win - 1.0f, p_win};
 
     // Step 1: compute mean
