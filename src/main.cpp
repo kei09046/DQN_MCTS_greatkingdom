@@ -33,8 +33,7 @@ int main(int argc, char** argv) {
         globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
         int co = std::stoi(argv[3]); // human Color
-        int playout = std::stoi(argv[4]);
-        ModelCompare::play(model_file, (Color)co, playout, 10.0f, true, true);
+        ModelCompare::play(model_file, (Color)co, 10.0f, true, true);
     }
     else if(mod == "web"){
         globalConfig = loadConfig("../configs/play_config.json");
@@ -47,11 +46,10 @@ int main(int argc, char** argv) {
         ModelCompare::playWeb(model_file, (Color)co, playout, temp, true);
     }
     else if(mod == "gtp"){
-        std::cout << argv[2] << " " << argv[3] << " " << argv[4] << std::endl;
+        std::cout << argv[2] << " " << argv[3] << std::endl;
         globalConfig = loadConfig(argv[2]);
         std::string model_file = argv[3];
-        int playout = std::stoi(argv[4]);
-        ModelCompare::playGTP(model_file, playout, 10.0f, true);
+        ModelCompare::playGTP(model_file, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
         globalConfig = loadConfig("../configs/play_config.json");

@@ -9,8 +9,12 @@
 #include <iostream>
 #include <random>
 #include <numeric>
+#include <chrono>
 
+constexpr int PLAYOUT = 0;
+constexpr int TIMEOUT = 1;
 const Hash hash;
+
 
 std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
     assert(logit.size() == outputSize);
@@ -107,7 +111,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), initS(0.0f), initW(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::addChild(const int r, const int c, const Game& ng){
@@ -248,11 +252,13 @@ Move Node::selectMove(float temp){
         if(child.at(i)->N != 0.0f){
             std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
             " sc: " << edgeN[i] << " Q: " << 
-            child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " W : " << child[i]->initW << " S : " << child[i]->initS << " P " << edgeP[i] << std::endl;
+            child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
+            << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
         }
     }
     return available_moves.at(maxi);
 }
+
 
 MoveData Node::selectMoveProb(float temp){
     std::vector<float> visitPortion(outputSize, 0.0f);
@@ -307,13 +313,20 @@ Node* Node::jump(Move move){
         }
     }
 
-    std::cerr << "warning! jump to illegal location!" << std::endl;
-    std::cerr << "requested move : " << move.first << "," << move.second << std::endl;
-    std::cerr << "available options : " << std::endl;
-    for(auto p : available_moves)
-        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    // if no child matches the move, add one. Only happens when human opponent makes suboptimal move.
+    std::cerr << "unexpected move!" << std::endl;
+    Game nGame = game;
+    nGame.makeMove(move);
+    addChild(move.first, move.second, nGame);
+    return child[child.size() - 1];
 
-    return nullptr;
+    // std::cerr << "warning! jump to illegal location!" << std::endl;
+    // std::cerr << "requested move : " << move.first << "," << move.second << std::endl;
+    // std::cerr << "available options : " << std::endl;
+    // for(auto p : available_moves)
+    //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+
+    // return nullptr;
 }
 
 #ifndef transTable
@@ -352,8 +365,9 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     }
 }
 
-MCTS::MCTS(int playout, Evaluator* evaluator) : 
-nPlayout(playout), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
+MCTS::MCTS(Evaluator* evaluator, std::string mode, int playout, int time) : 
+nPlayout(playout), timeLimit(time), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
+    playMode = (mode == "playout") ? PLAYOUT : TIMEOUT;
     root = new Node(Game(), hash.baseHash(), trans_table);
     if(globalConfig.transTable){
         (*trans_table)[hash.baseHash()] = root;
@@ -385,8 +399,18 @@ void MCTS::runSimulation(){
     std::vector<std::shared_ptr<NNResultBuf>> result_buffer;
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
-    while(evaluate_counter < nPlayout){
-        playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
+    if(playMode == PLAYOUT){
+        while(evaluate_counter < nPlayout){
+            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
+        }
+    }
+    else{
+        auto duration = std::chrono::seconds(timeLimit);
+        auto start = std::chrono::steady_clock::now();
+        while(std::chrono::steady_clock::now() - start < duration){
+            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
+        }
+        std::cout << "playout : " << evaluate_counter << std::endl;
     }
 }
 
@@ -436,7 +460,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         std::vector<int> childIdx;
         std::vector<Node*> path;
         Node* cur = root;
-        float evalQ = 0.0f;
+        float evalQ = 0.0f, evalS = 0.0f, evalW = 0.0f;
 
         while (true) {
             path.push_back(cur);
@@ -491,24 +515,24 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 updateQueue.push_back(path);
             }
             else{
-                std::tie(cur->initQ, cur->initW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
-                cur->initS = std::get<2>(*(buf->result));
                 std::vector<float> evalP = std::get<0>(*(buf->result));
                 cur->edgeP = softmax(evalP, cur->available_moves);
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
-                evalQ = cur->initQ;
+
+                if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
+                    std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
+                    evalS = std::get<2>(*(buf->result));
+                    evalQ = cur->initQ;
+                }
+                else{
+                    evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result))).first;
+                }
             }
         }
 
         if(evalQ != 0.0f){ // if eval is available right now, do param update right away.
             evaluateCounter++;
-            path[path.size() - 1]->initQ = evalQ;
-            for (int i = path.size() - 1; i >= 0; --i) {
-                Node* n = path[i];
-                n->W += 1.0f;   // revert VL
-                n->W += evalQ;
-                evalQ = -evalQ;
-            }
+            propagate(path, evalQ, evalW, evalS);
         }
     }
 
@@ -519,40 +543,57 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
         rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; }); // wait until all evaluation queued are finished.
 
-        evaluateCounter += inEvaluation.size();
-
         for(int i=0; i<inEvaluation.size(); ++i){
             std::shared_ptr<NNResultBuf> buf = resultBuffer.at(i);
             std::vector<Node*> path = updateQueue.at(i);
             Node* cur = inEvaluation.at(i); 
 
-            if(buf->result == nullptr){
-                std::cerr << "nullptr exception! " << i << " " << inEvaluation.size() << std::endl;
-                for(int j=0; j<inEvaluation.size(); ++j){
-                    std::cerr << resultBuffer.at(j)->result << std::endl; 
-                }
-            }
             std::vector<float> evalP = std::get<0>(*(buf->result));
-
             cur->edgeP = softmax(evalP, cur->available_moves);
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
-            std::tie(cur->initQ, cur->initW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
-            cur->initS = std::get<2>(*(buf->result));
 
-            float evalQ = cur->initQ;
+            float evalQ = 0.0f, evalW = 0.0f, evalS = 0.0f;
+            if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
+                std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
+                evalS = std::get<2>(*(buf->result));
+                evalQ = cur->initQ;
+            }
+            else{
+                evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result))).first;
+            }
 
             // BACKUP (revert VL + add value)
-            for (int j = path.size() - 1; j >= 0; --j) {
-                Node* n = path[j];
-                n->W += 1.0f;   // revert VL
-                n->W += evalQ;
-                evalQ = -evalQ;
-            }
+            evaluateCounter += inEvaluation.size();
+            propagate(path, evalQ, evalW, evalS);
         }
 
         resultBuffer.clear();
         updateQueue.clear();
         inEvaluation.clear();
         searchStuck = false;
+    }
+}
+
+void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
+    if(globalConfig.detailedStat){ // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
+        for (int i = path.size() - 1; i >= 0; --i) {
+            Node* n = path[i];
+            n->W += 1.0f;   // revert VL
+            n->W += evalQ;
+            n->Wp += evalW;
+            n->S += evalS;
+            evalQ = -evalQ;
+            evalS = -evalS;
+            evalW = -evalW;
+        }
+    }
+
+    else{
+        for (int i = path.size() - 1; i >= 0; --i) {
+            Node* n = path[i];
+            n->W += 1.0f;   // revert VL
+            n->W += evalQ;
+            evalQ = -evalQ;
+        }
     }
 }

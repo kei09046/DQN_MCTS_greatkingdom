@@ -16,11 +16,11 @@ public:
     static float start_play(std::array<MCTS*, 2> player_list, // two models play against each other
 		std::ostream& part_res, bool is_shown = false, float temp = 0.1f);
 
-	static void play(const std::string& model, Color side, int playout, float temp, bool gpu, bool shown); // play against human
+	static void play(const std::string& model, Color side, float temp, bool gpu, bool shown); // play against human
 
 	static void playHuman();
 
-	static void playGTP(const std::string& model, int playout, float temp, bool gpu); // play against human via GTP
+	static void playGTP(const std::string& model, float temp, bool gpu); // play against human via GTP
 
 	static void playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 

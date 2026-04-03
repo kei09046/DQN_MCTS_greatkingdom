@@ -9,6 +9,7 @@ struct Config {
     bool transTable;
     bool dirichletNoise;
     bool googleDrive;
+    bool detailedStat;
     float fpu;
 
     //path
@@ -29,6 +30,8 @@ struct Config {
     float eps;   // dirichlet noise weight
 
     // mcts
+    std::string mode; // either time or playout.
+    int time;
     int nPlayout;
     float cPuct;
 
@@ -41,7 +44,6 @@ struct Config {
     float initRating;
 
     //train
-    int n_playout;
     int play_batch_size;
     int epochs;
     int check_freq;

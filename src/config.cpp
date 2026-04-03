@@ -20,6 +20,7 @@ Config loadConfig(const std::string& path) {
     c.dirichletNoise= F.value("dirichletNoise", false);
     c.googleDrive   = F.value("googleDrive", false);
     c.fpu = F.value("FPU", -1.0f);
+    c.detailedStat = F.value("detailedStat", false);
 
     // paths
     auto& P = j.at("path");
@@ -41,7 +42,9 @@ Config loadConfig(const std::string& path) {
 
     // mcts
     auto& M = j.at("mcts");
-    c.nPlayout = M.at("n_playout");
+    c.mode = M.at("mode");
+    c.time = M.at("time");
+    c.nPlayout = M.at("nPlayout");
     c.cPuct     = M.at("cPuct");
 
     // nn

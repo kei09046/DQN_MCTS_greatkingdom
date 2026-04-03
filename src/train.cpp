@@ -108,8 +108,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				std::cout << "average extra time : " << timeStats[5] / sequence.size() << "[us]\n";
 				std::cout << "average cache insert time : " << timeStats[8] / sequence.size() << "[us]\n";
 				std::cout << "average cache find time : " << timeStats[9] / sequence.size() << "[us]\n";
-				std::cout << "eval cache hit rate : " << static_cast<float>(timeStats[6]) / (sequence.size() * n_playout) << "\n";
-				std::cout << "terminal hit rate : " << static_cast<float>(timeStats[7]) / (sequence.size() * n_playout) << "\n";
+				std::cout << "eval cache hit rate : " << static_cast<float>(timeStats[6]) / (sequence.size() * nPlayout) << "\n";
+				std::cout << "terminal hit rate : " << static_cast<float>(timeStats[7]) / (sequence.size() * nPlayout) << "\n";
 				std::cout << "average move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() / sequence.size() << "[ms]\n";
 				std::cout << "move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() << "[ms]\n";
 				std::cout << "total time : " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
@@ -216,7 +216,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	auto evaluator = new Evaluator(&inference_model);
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(globalConfig.nPlayout, evaluator);
+		mcts_players.emplace_back(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
 		self_play_paused[i] = false;
 	}
 

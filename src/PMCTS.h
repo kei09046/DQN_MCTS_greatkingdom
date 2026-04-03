@@ -39,7 +39,8 @@ private:
     friend class MCTS;
 
     const Game game; // includes position, territory, valid moves etc. for heuristic
-    float N, W, initQ, initS, initW; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    float N, W, initQ, S, Wp; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP;
     std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
     const Color turn;
@@ -60,7 +61,7 @@ private:
 
 class alignas(64) MCTS{
 public:
-    MCTS(int nPlayout, Evaluator* evaluator);
+    MCTS(Evaluator* evaluator, std::string mode="playout", int playout=400, int time=10);
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
@@ -82,11 +83,13 @@ public:
 
 private:
     Node* root;
-    int nPlayout;
+    int playMode, nPlayout, timeLimit;
     Evaluator* evaluator; // shared along multiple MCTS instances
     std::unordered_map<HashValue, Node*>* trans_table;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck);
+
+    void propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS);
 };
 #endif

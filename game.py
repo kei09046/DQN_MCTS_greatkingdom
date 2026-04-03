@@ -412,7 +412,7 @@ class Game:
     # 0이면 흑 1이면 백
     def play_ai(self, Color=0, init_model='./weights/model249.pt', level=1000):
         self.ai = MCTSPlayer(PolicyValueNet(model_file=init_model, use_gpu=True).policy_value_fn, c_puct=5,
-                             n_playout=level)
+                             nPlayout=level)
         self.human_color = Color
         self.create_board(ag_ai=True)
 

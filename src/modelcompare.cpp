@@ -36,10 +36,10 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 	}
 }
 
-void ModelCompare::play(const std::string& model, Color side, int playout, float temp, bool gpu, bool shown) {
+void ModelCompare::play(const std::string& model, Color side, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(playout, evaluator);
+	MCTS player = MCTS(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
 
 	Move cord;
 	Color res;
@@ -57,13 +57,15 @@ void ModelCompare::play(const std::string& model, Color side, int playout, float
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		res = game_manager.makeMove(cord).first;
-		displayBoardGUI(true, game_manager);
-		if (res != EMPTY) {
-			game_manager.onGameEnd(res);
-			break;
+		if(game_manager.isLegal(cord.first, cord.second)){
+			res = game_manager.makeMove(cord).first;
+			displayBoardGUI(true, game_manager);
+			if (res != EMPTY) {
+				game_manager.onGameEnd(res);
+				break;
+			}
+			player.jump(cord);
 		}
-        player.jump(cord);
 	}
 
 	delete evaluator;
@@ -73,7 +75,7 @@ void ModelCompare::play(const std::string& model, Color side, int playout, float
 void ModelCompare::playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(playout, evaluator);
+	MCTS player = MCTS(evaluator, globalConfig.mode, playout, globalConfig.time);
 
 	Move cord;
 	Color res;
@@ -107,10 +109,10 @@ void ModelCompare::playWeb(const std::string& model, const Color humanColor, int
 	return;
 }
 
-void ModelCompare::playGTP(const std::string& model, int playout, float temp, bool gpu) {
+void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
     Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(playout, evaluator);
+	MCTS player = MCTS(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
 
 	Move cord;
 	Color res = EMPTY;
@@ -194,8 +196,8 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	std::vector<MCTS*> base_players, oppo_players;
 
 	for(int i=0; i<n_thread; ++i){
-		base_players.push_back(new MCTS(globalConfig.nPlayout, eo));
-		oppo_players.push_back(new MCTS(globalConfig.nPlayout, et));
+		base_players.push_back(new MCTS(eo, globalConfig.mode, globalConfig.nPlayout, globalConfig.time));
+		oppo_players.push_back(new MCTS(et, globalConfig.mode, globalConfig.nPlayout, globalConfig.time));
 	}
 
 	std::vector<std::thread> evaluate_threads;
@@ -229,7 +231,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 
 	for (int i = 0; i < N; ++i) {
 		evaluators[i] = new Evaluator(globalConfig.modelPath + model_list[i], gpu);
-		players[i] = new MCTS(globalConfig.nPlayout, evaluators[i]);
+		players[i] = new MCTS(evaluators[i], globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
 	}
 
 	bool load_from_file = false;

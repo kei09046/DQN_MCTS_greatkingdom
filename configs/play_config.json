@@ -3,7 +3,8 @@
     "transTable": false,
     "dirichletNoise": false,
     "googleDrive": false,
-    "FPU": 0.15
+    "FPU": 0.15,
+    "detailedStat": true
   },
 
   "path": {
@@ -28,7 +29,9 @@
   },
 
   "mcts": {
-    "n_playout": 400,
+    "mode": "time",
+    "time": 10,
+    "nPlayout": 400,
     "cPuct": 2.0
   },
 
