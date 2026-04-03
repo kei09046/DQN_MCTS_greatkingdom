@@ -410,7 +410,7 @@ void MCTS::runSimulation(){
         while(std::chrono::steady_clock::now() - start < duration){
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
         }
-        std::cout << "playout : " << evaluate_counter << std::endl;
+        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 }
 
@@ -456,7 +456,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck) {
 
     // SELECTION
-    if((searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
+    if((playMode == TIMEOUT || searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
         std::vector<int> childIdx;
         std::vector<Node*> path;
         Node* cur = root;
@@ -537,7 +537,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     }
 
     //EVALUATION & UPDATE
-    if(inEvaluation.size() >= globalConfig.search_thread_num || (searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
+    if(inEvaluation.size() >= globalConfig.search_thread_num || (playMode == PLAYOUT && searchCounter == nPlayout && !inEvaluation.empty()) || searchStuck){
         // wait for the result
         std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
@@ -563,10 +563,10 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             }
 
             // BACKUP (revert VL + add value)
-            evaluateCounter += inEvaluation.size();
             propagate(path, evalQ, evalW, evalS);
         }
 
+        evaluateCounter += inEvaluation.size();
         resultBuffer.clear();
         updateQueue.clear();
         inEvaluation.clear();
