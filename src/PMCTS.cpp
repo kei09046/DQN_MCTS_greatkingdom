@@ -98,12 +98,9 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 
     // Step 4: combine win probability and score utility
     // A simple linear combination
-    float utility = p_win + (score_util - risk_penalty) * (p[0] + p[2]);
+    float utility = (2 * p_win - 1.0f) + (score_util - risk_penalty) * (p[0] + p[2]);
 
-    // Step 5: clamp utility to [0,1] if desired
-    utility = std::clamp(utility, 0.0f, 1.0f);
-
-    return {2 * utility - 1.0f, p_win};
+    return {utility, p_win};
 }
 
 
@@ -478,10 +475,18 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
             if (cur->winmove != RESIGNMOVE){ // won
                 evalQ = -1.0f;
+                if(globalConfig.detailedStat){
+                    evalW = 0.0f;
+                    evalS = -(cur->game.scoreDiff(cur->turn) - globalConfig.komi);
+                }
                 break;
             }
             if(cur->available_moves.size() == 0){ // lost
                 evalQ = 1.0f;
+                if(globalConfig.detailedStat){
+                    evalW = 1.0f;
+                    evalS = -(cur->game.scoreDiff(cur->turn) - globalConfig.komi);
+                }
                 break;
             }
 

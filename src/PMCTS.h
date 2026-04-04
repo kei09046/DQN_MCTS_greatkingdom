@@ -13,8 +13,8 @@ std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Mo
 std::vector<float> softmax(const std::vector<float>& logit);
 
 std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float komi = globalConfig.komi,   // board komi
-    float score_factor = 0.02f,   // convert points to utility
-    float risk_aversion = 0.0f    // penalty per standard deviation);
+    float score_factor = 0.03f,   // convert points to utility
+    float risk_aversion = 0.03f    // penalty per standard deviation);
 );
 
 class alignas(64) Node{
