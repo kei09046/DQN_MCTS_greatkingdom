@@ -279,8 +279,8 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + "B.pt"); // best models are saved
 						}
 						else if(win_rate < 0.4f){
-							std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
-							train_model.load_model(globalConfig.modelPath + current_best_model_file);
+							//std::cout << "model fallback!" << model_file << " to " << current_best_model_file << std::endl;
+							//train_model.load_model(globalConfig.modelPath + current_best_model_file);
 						}
 					}
 
