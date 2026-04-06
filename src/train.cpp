@@ -216,7 +216,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 	auto evaluator = new Evaluator(&inference_model);
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
+		mcts_players.emplace_back(evaluator);
 		self_play_paused[i] = false;
 	}
 

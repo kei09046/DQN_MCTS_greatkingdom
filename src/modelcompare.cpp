@@ -1,4 +1,9 @@
+#include <thread>
+#include <atomic>
 #include "modelcompare.h"
+#include "consts.h"
+#include "elo.h"
+
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
 	//std::cerr << "start play" << std::endl;
@@ -39,7 +44,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 void ModelCompare::play(const std::string& model, Color side, float temp, bool gpu, bool shown) {
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
+	MCTS player = MCTS(evaluator);
 
 	Move cord;
 	Color res;
@@ -75,7 +80,7 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 void ModelCompare::playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator, globalConfig.mode, playout, globalConfig.time);
+	MCTS player = MCTS(evaluator);
 
 	Move cord;
 	Color res;
@@ -112,17 +117,37 @@ void ModelCompare::playWeb(const std::string& model, const Color humanColor, int
 void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
     Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator, globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
-
+	MCTS player = MCTS(evaluator);
 	Move cord;
 	Color res = EMPTY;
+
+	std::atomic<bool> evaluating = false;
+	std::mutex evalMutex;	
+	std::condition_variable evalcv;
+
+	std::thread eval_thread([&](){
+		std::unique_lock<std::mutex> lk(evalMutex);
+        evalcv.wait(lk, [&]{ return evaluating == true; });
+
+		lk.unlock();
+		while (evaluating) {
+			player.runSimulation(PLAYOUT, 400, 0);
+			float eval = player.getEval();
+			ok(std::to_string(eval));
+		}
+		lk.lock();
+	});
 
     std::string line;
     while (std::getline(std::cin, line)) {
         std::istringstream iss(line);
         std::string cmd;
         iss >> cmd;
+		std::cerr << cmd << "\n";
 
+		if(cmd != "evaluate"){
+			evaluating = false;
+		}
         if (cmd == "protocol_version") ok("2");
         else if (cmd == "name") ok(globalConfig.modelPath + model);
         else if (cmd == "version") ok("0.1");
@@ -134,6 +159,10 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
             player.reset();
             ok();
         }
+		else if(cmd == "evaluate"){
+			evaluating = true;
+			evalcv.notify_one();
+		}
         else if (cmd == "play"){ 
 			res = cmd_play(iss, game_manager, player);
 			if(res != EMPTY)
@@ -196,8 +225,8 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	std::vector<MCTS*> base_players, oppo_players;
 
 	for(int i=0; i<n_thread; ++i){
-		base_players.push_back(new MCTS(eo, globalConfig.mode, globalConfig.nPlayout, globalConfig.time));
-		oppo_players.push_back(new MCTS(et, globalConfig.mode, globalConfig.nPlayout, globalConfig.time));
+		base_players.push_back(new MCTS(eo));
+		oppo_players.push_back(new MCTS(et));
 	}
 
 	std::vector<std::thread> evaluate_threads;
@@ -231,7 +260,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 
 	for (int i = 0; i < N; ++i) {
 		evaluators[i] = new Evaluator(globalConfig.modelPath + model_list[i], gpu);
-		players[i] = new MCTS(evaluators[i], globalConfig.mode, globalConfig.nPlayout, globalConfig.time);
+		players[i] = new MCTS(evaluators[i]);
 	}
 
 	bool load_from_file = false;

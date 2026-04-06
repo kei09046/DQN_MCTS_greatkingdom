@@ -61,15 +61,17 @@ private:
 
 class alignas(64) MCTS{
 public:
-    MCTS(Evaluator* evaluator, std::string mode="playout", int playout=400, int time=10);
+    MCTS(Evaluator* evaluator);
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
-    void runSimulation();
+    void runSimulation(const int playMode, const int nPlayout, const int timeLimit);
 
     Move getMove(float temperature);
 
     MoveData getMoveProb(float temperature);
+
+    float getEval();
 
     bool jump(Move move);
 
@@ -83,12 +85,12 @@ public:
 
 private:
     Node* root;
-    int playMode, nPlayout, timeLimit;
     Evaluator* evaluator; // shared along multiple MCTS instances
     std::unordered_map<HashValue, Node*>* trans_table;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
-        std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck);
+        std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
+    const int playMode, const int nPlayout, const int timeLimit);
 
     void propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS);
 };

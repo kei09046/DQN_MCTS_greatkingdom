@@ -11,8 +11,7 @@
 #include <numeric>
 #include <chrono>
 
-constexpr int PLAYOUT = 0;
-constexpr int TIMEOUT = 1;
+
 const Hash hash;
 
 
@@ -362,9 +361,8 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     }
 }
 
-MCTS::MCTS(Evaluator* evaluator, std::string mode, int playout, int time) : 
-nPlayout(playout), timeLimit(time), evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
-    playMode = (mode == "playout") ? PLAYOUT : TIMEOUT;
+MCTS::MCTS(Evaluator* evaluator) : 
+evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
     root = new Node(Game(), hash.baseHash(), trans_table);
     if(globalConfig.transTable){
         (*trans_table)[hash.baseHash()] = root;
@@ -372,8 +370,7 @@ nPlayout(playout), timeLimit(time), evaluator(evaluator), trans_table(new std::u
 }
 
 MCTS::MCTS(MCTS&& other) noexcept
-    : root(other.root), nPlayout(other.nPlayout),
-      evaluator(other.evaluator), trans_table(other.trans_table)
+    : root(other.root), evaluator(other.evaluator), trans_table(other.trans_table)
 {
     other.root = nullptr;
     other.evaluator = nullptr;
@@ -384,7 +381,7 @@ MCTS::~MCTS(){
     delete trans_table;
 }
 
-void MCTS::runSimulation(){
+void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit){
     //std::cout << "run simulation " << nPlayout << std::endl;
     if(globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
@@ -398,27 +395,35 @@ void MCTS::runSimulation(){
 
     if(playMode == PLAYOUT){
         while(evaluate_counter < nPlayout){
-            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
+            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+            playMode, nPlayout, timeLimit);
         }
     }
     else{
         auto duration = std::chrono::seconds(timeLimit);
         auto start = std::chrono::steady_clock::now();
         while(std::chrono::steady_clock::now() - start < duration){
-            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search);
+            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+            playMode, nPlayout, timeLimit);
         }
         std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 }
 
 Move MCTS::getMove(float temp){
-    runSimulation();
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time);
     return root->selectMove(temp);
 }
 
 MoveData MCTS::getMoveProb(float temp){
-    runSimulation();
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time);
     return root->selectMoveProb(temp);
+}
+
+float MCTS::getEval(){
+    if(root->N = 0)
+        return 0.0f;
+    return static_cast<float>(root->W) / root->N;
 }
 
 bool MCTS::jump(Move move){
@@ -450,7 +455,8 @@ void MCTS::reset(){
 
 void MCTS::playout(int& searchCounter, int& evaluateCounter, 
     std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
-    std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck) {
+    std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
+    const int playMode, const int nPlayout, const int timeLimit) {
 
     // SELECTION
     if((playMode == TIMEOUT || searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){

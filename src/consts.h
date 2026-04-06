@@ -32,6 +32,9 @@ constexpr int outputRow = rowSize;
 constexpr int outputCol = colSize;
 constexpr int inputSize = inputRow * inputCol;
 
+constexpr int PLAYOUT = 0;
+constexpr int TIMEOUT = 1;
+
 constexpr Color BLACK = 0U;
 constexpr Color WHITE = 1U;
 constexpr Color NEUTRAL = 2U;

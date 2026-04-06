@@ -5,11 +5,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
-#include <thread>
-#include <atomic>
 #include "PMCTS.h"
-#include "consts.h"
-#include "elo.h"
 
 class ModelCompare{
 public:
