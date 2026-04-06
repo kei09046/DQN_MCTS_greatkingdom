@@ -190,9 +190,9 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, distBatch;
 
-	auto tmp = torch::tensor(batchData, options);
-	auto reshaped = tmp.view({B, globalConfig.inputChannel, rowSize, colSize});
-	batch = reshaped.to(device);
+	batch = torch::from_blob(batchData.data(),
+		{B, globalConfig.inputChannel, rowSize, colSize},
+		options).to(device);
 
 	//batch = torch::tensor(batchData, options).view({B, globalConfig.inputChannel, rowSize, colSize}).to(device);
 
@@ -315,21 +315,39 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
     std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch, float lr) {
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-    torch::Tensor sb = torch::tensor(state_batch, options).view({ globalConfig.batchSize, globalConfig.inputChannel, inputRow,
-		 inputCol }).to(device);
 
-    torch::Tensor mp = torch::tensor(nextmove_batch, options).view({ globalConfig.batchSize, outputSize }).to(device);
-    torch::Tensor wb =
-    torch::tensor(result_batch, options).view({globalConfig.batchSize}).to(device).to(torch::kLong);
-	torch::Tensor sd = torch::tensor(score_batch, options).view({ globalConfig.batchSize }).to(device);
-	torch::Tensor sdd = torch::tensor(makeScoreDistributionBatch(score_batch, 15.0f, 1.0f, 5)).view({globalConfig.batchSize, 31}).to(device);
+	auto sb = torch::from_blob(state_batch.data(),
+    {globalConfig.batchSize, globalConfig.inputChannel, inputRow, inputCol},
+    options).to(device);
 
+	auto mp = torch::from_blob(nextmove_batch.data(),
+		{globalConfig.batchSize, outputSize},
+		options).to(device);
+
+	auto wb = torch::from_blob(result_batch.data(),
+		{globalConfig.batchSize},
+		options).to(device, torch::kLong);
+
+	auto sd = torch::from_blob(score_batch.data(),
+		{globalConfig.batchSize},
+		options).to(device);
+
+	auto scoreDist = makeScoreDistributionBatch(score_batch, 15.0f, 1.0f, 5);
+	auto sdd = torch::from_blob(scoreDist.data(),
+		{globalConfig.batchSize, 31},
+		options).to(device);
+
+	auto mask = torch::where(
+		(wb % 2 == 0),
+		torch::ones_like(wb, torch::kFloat),          // for 0,2 → weight 1
+		torch::full_like(wb, 0.3f, torch::kFloat)      // for 1,3 → weight 0.3
+	);
+
+	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
-		static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 
 		torch::Tensor r1, r2, r3, r4;
-		//std::cerr << "train thread forward!" << std::endl; 
 		std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); // potential problem
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
@@ -337,13 +355,17 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 
 		torch::Tensor value_loss = torch::nn::functional::cross_entropy(r2, wb);
 
-		torch::Tensor score_loss = torch::nn::functional::mse_loss(r3.view(-1), sd);
+		torch::Tensor diff = (r3.view(-1) - sd);
+		torch::Tensor masked_score = diff * diff * mask;   // mask: shape [B], float (0 or 1)
+		torch::Tensor score_loss = masked_score.sum() / mask.sum();
 
 		torch::Tensor log_score_predict = torch::log_softmax(r4, 1);
-		torch::Tensor score_dist_loss = -torch::mean(torch::sum(sdd * log_score_predict, 1));
+		torch::Tensor per_sample = -torch::sum(sdd * log_score_predict, 1); // [B]
+		torch::Tensor masked_score_dist = per_sample * mask;  // [B]
+		torch::Tensor score_dist_loss = masked_score_dist.sum() / mask.sum();
 
-		torch::Tensor loss = value_loss + policy_loss + 0.5 * score_loss + 0.5 * score_dist_loss;
 
+		torch::Tensor loss = value_loss + policy_loss + score_loss + score_dist_loss;
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
 		optimizer->step();
@@ -352,7 +374,7 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "A" || model_type == "B" || model_type == "C"){
+	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
