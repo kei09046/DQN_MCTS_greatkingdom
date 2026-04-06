@@ -41,7 +41,7 @@ public:
 
 class Net : public NetBase{
 public:
-	Net(int channelSize);
+	Net(int channelSize, int blockSize);
 	int channelSize;
 
 	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;

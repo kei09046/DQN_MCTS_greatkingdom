@@ -6,7 +6,7 @@
 #include <stdexcept>
 
 // For 9*9 board.
-Net::Net(int channelSize): channelSize(channelSize), cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
+Net::Net(int channelSize, int blockSize): channelSize(channelSize), cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
 // Policy head
@@ -29,7 +29,7 @@ sc_fc_belief(256, 31) // score difference from -15 ~ +15
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 
-	for (int i = 0; i < 12; i++) {
+	for (int i = 0; i < blockSize; i++) {
 		blocks->push_back(ResidualBlock(128));
 	}
 	
@@ -391,13 +391,16 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		std::shared_ptr<NetBase> net;
 
 		if(model_type == "A"){
-			net = std::make_shared<Net>(7);
+			net = std::make_shared<Net>(7, 12);
 		}
 		else if(model_type == "B"){
-			net = std::make_shared<Net>(9);
+			net = std::make_shared<Net>(9, 12);
 		}
 		else if(model_type == "C"){
-			net = std::make_shared<Net>(18);
+			net = std::make_shared<Net>(18, 12);
+		}
+		else if(model_type == "E"){
+			net = std::make_shared<Net>(18, 15);
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -406,7 +409,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(globalConfig.inputChannel);
+		policy_value_net = std::make_shared<Net>(18, 15);
 	}
 
 	policy_value_net->to(device);
