@@ -1,1 +1,0 @@
-./runtrain evaluate_two i8928.pt i288.pt 0.5 4 1
