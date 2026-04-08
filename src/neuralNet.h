@@ -60,7 +60,7 @@ public:
 	torch::nn::Conv2d sc_cv3;
 	torch::nn::BatchNorm2d sc_bn3;
 	torch::nn::Linear sc_fc1;
-	torch::nn::Linear sc_fc2; // predicts single score result 
+	torch::nn::Linear sc_fc2; // predicts single score result. Only calculates from BLACK players perspective!!
 	torch::nn::Linear sc_fc_belief; // predicts score distribution
 };
 

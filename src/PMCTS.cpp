@@ -55,7 +55,7 @@ std::vector<float> softmax(const std::vector<float>& logit){
     return ret;
 }
 
-std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float komi, float score_factor, float risk_aversion)
+std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift, float score_factor, float risk_aversion)
 {
     assert(winLogit.size() == 4 && scoreDist.size() == 31);
     // softmax 
@@ -87,10 +87,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
     float score_std = std::sqrt(score_var);
 
     // Step 1: convert score to utility relative to komi
-    float score_util = score_mean - komi;
-
-    // Step 2: scale score utility to match value scale
-    score_util *= score_factor;
+    float score_util = (score_mean + scoreShift) * score_factor;
 
     // Step 3: optional risk aversion penalty
     float risk_penalty = risk_aversion * score_std;
@@ -245,11 +242,12 @@ Move Node::selectMove(float temp){
 
     std::cout << "available move size : " << available_moves.size() << std::endl;
     for(int i=0; i<available_moves.size(); ++i){
-        if(child.at(i)->N != 0.0f){
+        if(child[i]->N != 0.0f){
             std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
             " sc: " << edgeN[i] << " Q: " << 
             child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
-            << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
+            << " S : " << ((turn == BLACK) ? (child[i]->S / child[i]->N - globalConfig.komi) : (child[i]->S / child[i]->N + globalConfig.komi))
+            << " P " << edgeP[i] << std::endl;
         }
     }
     return available_moves.at(maxi);
@@ -531,12 +529,14 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
                 if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                    std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
+                    std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), 
+                    (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi));
                     evalS = std::get<2>(*(buf->result));
                     evalQ = cur->initQ;
                 }
                 else{
-                    evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result))).first;
+                    evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)),
+                     (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)).first;
                 }
             }
         }
@@ -565,12 +565,12 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
             float evalQ = 0.0f, evalW = 0.0f, evalS = 0.0f;
             if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)));
+                std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi));
                 evalS = std::get<2>(*(buf->result));
                 evalQ = cur->initQ;
             }
             else{
-                evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result))).first;
+                evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)).first;
             }
 
             // BACKUP (revert VL + add value)
@@ -595,7 +595,7 @@ void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, f
             n->S += evalS;
             evalQ = -evalQ;
             evalS = -evalS;
-            evalW = -evalW;
+            evalW = 1.0f-evalW;
         }
     }
 

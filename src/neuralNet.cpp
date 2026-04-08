@@ -339,8 +339,8 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 
 	auto mask = torch::where(
 		(wb % 2 == 0),
-		torch::ones_like(wb, torch::kFloat),          // for 0,2 → weight 1
-		torch::full_like(wb, 0.3f, torch::kFloat)      // for 1,3 → weight 0.3
+		torch::ones_like(wb, torch::kFloat),          // for score win → weight 1
+		torch::full_like(wb, 0.1f, torch::kFloat)      // for capture win → weight 0.1
 	);
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);

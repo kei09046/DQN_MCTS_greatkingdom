@@ -73,7 +73,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			int result = (winner == BLACK) ? ((wintype == SCORE) ? 2 : 3) 
 			: ((wintype == SCORE) ? 0 : 1); // if position is black's turn to move, judge from white's perspective.
-			float score_diff = game_manager.scoreDiff(BLACK); // komi not applied.
+			float score_diff = game_manager.scoreDiff(WHITE); // komi not applied.
 
 			// calculate train stats
 			total_score_diff.fetch_add((int)score_diff);
@@ -86,7 +86,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				std::get<3>(data) = score_diff;
 				insert_data(data);
 				result = (result + 2) % 4; // switch color
-				score_diff *= -1.0f;
+				score_diff = -score_diff;
 			}
 			player->reset();
 
