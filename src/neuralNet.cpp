@@ -102,7 +102,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	}
 
 	float diff = game.scoreDiff(turn);
-	for(int i=0; i<inputSize; ++i){ // channel 5 : difference of score -> turn. now nn predicts score difference.
+	for(int i=0; i<inputSize; ++i){ // channel 5 : difference of current score
 		ret.at(5*inputSize + i) = diff;
 	}
 

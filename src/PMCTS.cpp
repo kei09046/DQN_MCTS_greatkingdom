@@ -246,8 +246,7 @@ Move Node::selectMove(float temp){
             std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
             " sc: " << edgeN[i] << " Q: " << 
             child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
-            << " S : " << ((turn == BLACK) ? (child[i]->S / child[i]->N - globalConfig.komi) : (child[i]->S / child[i]->N + globalConfig.komi))
-            << " P " << edgeP[i] << std::endl;
+            << " S : " << child[i]->S / child[i]->N + ((turn == BLACK) ? -globalConfig.komi : globalConfig.komi) << " P " << edgeP[i] << std::endl;
         }
     }
     return available_moves.at(maxi);
@@ -481,7 +480,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 evalQ = -1.0f;
                 if(globalConfig.detailedStat){
                     evalW = 0.0f;
-                    evalS = -(cur->game.scoreDiff(cur->turn) - globalConfig.komi);
+                    evalS = -cur->game.scoreDiff(cur->turn);
                 }
                 break;
             }
@@ -489,7 +488,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 evalQ = 1.0f;
                 if(globalConfig.detailedStat){
                     evalW = 1.0f;
-                    evalS = -(cur->game.scoreDiff(cur->turn) - globalConfig.komi);
+                    evalS = -cur->game.scoreDiff(cur->turn);
                 }
                 break;
             }
