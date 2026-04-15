@@ -41,3 +41,7 @@ Problem solved. Problem was due to deleting mutex before unlocking on playout().
 Removed initW, initS -> replace with S(average score value) and Wp(average win probability)
 Added function which can handle user input that's not maximum territory.
 Added time based move making instead of only playout.
+
+4/16/2026 :
+Modified CalculateQ so that score factor is now bounded. Unlike Go, player should be more conservative in GreatKingdom.
+Also score mean / score distribution training part has changed.

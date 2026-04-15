@@ -29,7 +29,7 @@
   },
 
   "mcts": {
-    "mode": "time",
+    "mode": "playout",
     "time": 10,
     "nPlayout": 400,
     "cPuct": 2.0
