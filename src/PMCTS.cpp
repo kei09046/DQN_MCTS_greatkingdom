@@ -64,27 +64,22 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 
     float p_win  = p[0] + p[1];
     float p_loss = p[2] + p[3];
-    
-    if(p[0] + p[2] < 0.25f) // if probability of winning by score is less than 0.1, only use policy output.
-        return {2 * p_win - 1.0f, p_win};
 
     // Step 1: compute mean
     float score_mean = 0.0f;
     for (int i = 0; i < 31; ++i)
     {
-        int score = i - 15;   // map index 0..30 to score -15..15
-        score_mean += score * s[i];
+        score_mean += (i-15) * s[i];
     }
 
     // Step 2: compute variance
-    float score_var = 0.0f;
+    float score_std = 0.0f;
     for (int i = 0; i < 31; ++i)
     {
-        int score = i - 15;
-        float diff = score - score_mean;
-        score_var += diff * diff * s[i];
+        float diff = (i-15) - score_mean;
+        score_std += diff * diff * s[i];
     }
-    float score_std = std::sqrt(score_var);
+    score_std = std::sqrt(score_std);
 
     // Step 1: convert score to utility relative to komi
     float score_util = (score_mean + scoreShift) * score_factor;
@@ -94,8 +89,8 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 
     // Step 4: combine win probability and score utility
     // A simple linear combination
-    float utility = (2 * p_win - 1.0f) + (score_util - risk_penalty) * (p[0] + p[2]);
-
+    float utility = (2 * p_win - 1.0f) + std::tanh((score_util - risk_penalty) * (p[0] + p[2]));
+    
     return {utility, p_win};
 }
 
@@ -246,7 +241,7 @@ Move Node::selectMove(float temp){
             std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
             " sc: " << edgeN[i] << " Q: " << 
             child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
-            << " S : " << child[i]->S / child[i]->N + ((turn == BLACK) ? -globalConfig.komi : globalConfig.komi) << " P " << edgeP[i] << std::endl;
+            << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
         }
     }
     return available_moves.at(maxi);
@@ -322,7 +317,6 @@ Node* Node::jump(Move move){
     // return nullptr;
 }
 
-#ifndef transTable
 void Node::deleteTree(){
     for(Node* c : child){
         c->deleteTree();
@@ -337,7 +331,6 @@ void Node::deleteTree(Node* exception){
     }
     delete this;
 }
-#endif
 
 void Node::addDirichletNoise(Evaluator* evaluator){
     if (N == 0) {
@@ -426,9 +419,8 @@ float MCTS::getEval(){
 bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
-    #ifndef transTable
-    old_root->deleteTree(root);
-    #endif
+    if(!globalConfig.transTable)
+        old_root->deleteTree(root);
     return root != nullptr;
 }
 

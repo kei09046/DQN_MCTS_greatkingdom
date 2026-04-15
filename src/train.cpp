@@ -96,7 +96,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cout << i.first << "," << i.second << " ";
 				}
 				std::cout << "\n";
-				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
+				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << " score diff : " << score_diff << "\n\n";
 				
 				#ifdef measureTime
 				std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();

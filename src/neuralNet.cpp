@@ -313,6 +313,12 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 
 void PolicyValueNet::train_step(std::vector<float>& state_batch, 
     std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch, float lr) {
+	// for(const float& v : score_batch)
+	// 	std::cerr << v << " ";
+	// std::cerr << std::endl;
+	// for(const float& v : result_batch)
+	// 	std::cerr << v << " ";
+	// std::cerr << std::endl;
 
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
 
@@ -337,18 +343,19 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 		{globalConfig.batchSize, 31},
 		options).to(device);
 
-	auto mask = torch::where(
-		(wb % 2 == 0),
-		torch::ones_like(wb, torch::kFloat),          // for score win → weight 1
-		torch::full_like(wb, 0.1f, torch::kFloat)      // for capture win → weight 0.1
-	);
+	auto mask = (wb % 2 == 0);
+	// auto mask = torch::where(
+	// 	(wb % 2 == 0),
+	// 	torch::ones_like(wb, torch::kFloat),          // for score win → weight 1
+	// 	torch::full_like(wb, 0.01f, torch::kFloat)      // for capture win → weight 0.1
+	// );
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
 
 		torch::Tensor r1, r2, r3, r4;
-		std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); // potential problem
+		std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); 
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
 		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
@@ -357,15 +364,16 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 
 		torch::Tensor diff = (r3.view(-1) - sd);
 		torch::Tensor masked_score = diff * diff * mask;   // mask: shape [B], float (0 or 1)
-		torch::Tensor score_loss = masked_score.sum() / mask.sum();
+		torch::Tensor score_loss = masked_score.sum() / (mask.sum() + 0.000001f);
 
 		torch::Tensor log_score_predict = torch::log_softmax(r4, 1);
 		torch::Tensor per_sample = -torch::sum(sdd * log_score_predict, 1); // [B]
 		torch::Tensor masked_score_dist = per_sample * mask;  // [B]
-		torch::Tensor score_dist_loss = masked_score_dist.sum() / mask.sum();
+		torch::Tensor score_dist_loss = masked_score_dist.sum() / (mask.sum() + 0.000001f);
 
 
 		torch::Tensor loss = value_loss + policy_loss + score_loss + score_dist_loss;
+		// std::cout << "loss epoch " << i << " " << value_loss.item() << " " << policy_loss.item() << " " << score_loss.item() << " " << score_dist_loss.item() << std::endl;
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
 		optimizer->step();
