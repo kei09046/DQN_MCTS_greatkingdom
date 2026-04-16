@@ -217,11 +217,11 @@ Move Node::selectMove(float temp){
 
     int maxi, maxn = -1, index;
     for(int i=0; i<available_moves.size(); ++i){
-        if(edgeN.at(i) > maxn){
-            maxn = edgeN.at(i);
+        if(edgeN[i] > maxn){
+            maxn = edgeN[i];
             maxi = i;
         }
-        weights.at(i) = std::pow(edgeN.at(i), temp);
+        weights[i] = std::pow(edgeN[i], temp);
     }
 
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -232,19 +232,19 @@ Move Node::selectMove(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         index = std::distance(cumulative.begin(), it);
-        return available_moves.at(index);
+        return available_moves[index];
     }
 
-    std::cout << "available move size : " << available_moves.size() << std::endl;
-    for(int i=0; i<available_moves.size(); ++i){
-        if(child[i]->N != 0.0f){
-            std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
-            " sc: " << edgeN[i] << " Q: " << 
-            child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
-            << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
-        }
-    }
-    return available_moves.at(maxi);
+    // std::cout << "available move size : " << available_moves.size() << std::endl;
+    // for(int i=0; i<available_moves.size(); ++i){
+    //     if(child[i]->N != 0.0f){
+    //         std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
+    //         " sc: " << edgeN[i] << " Q: " << 
+    //         child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
+    //         << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
+    //     }
+    // }
+    return available_moves[maxi];
 }
 
 
@@ -260,12 +260,12 @@ MoveData Node::selectMoveProb(float temp){
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
     int maxi, maxn = -1;
     for(int i=0; i<available_moves.size(); ++i){
-        if(edgeN.at(i) > maxn){
-            maxn = edgeN.at(i);
+        if(edgeN[i] > maxn){
+            maxn = edgeN[i];
             maxi = i;
         }
-        weights[i] = std::pow(edgeN.at(i), temp);
-        visitPortion.at(available_moves.at(i).first * colSize + available_moves.at(i).second) = edgeN.at(i)/N;
+        weights[i] = std::pow(edgeN[i], temp);
+        visitPortion.at(available_moves[i].first * colSize + available_moves[i].second) = edgeN[i]/N;
     }
 
     // std::cout << "visit portion" << std::endl;
@@ -398,6 +398,8 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         }
         std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
+
+    printVariation();
 }
 
 Move MCTS::getMove(float temp){
@@ -414,6 +416,28 @@ float MCTS::getEval(){
     if(root->N = 0)
         return 0.0f;
     return static_cast<float>(root->W) / root->N;
+}
+
+void MCTS::printVariation(){
+    Node* node = root;
+    while(node->N > 1){
+        int maxv = -1;
+        int maxi = -1;
+        for(int i=0; i<node->available_moves.size(); ++i){
+            assert(node->edgeN[i] == node->child[i]->N);
+            if(node->edgeN[i] > maxv){
+                maxv = node->edgeN[i];
+                maxi = i;
+            }
+        }
+        if(maxi == -1)
+            break;
+        Move m = node->available_moves[maxi];
+        node = node->child[maxi];
+        std::cout << (int)m.first << " " << (int)m.second << " " << maxv << " " << " Q: " << 
+            node->W/node->N << " initQ : " << node->initQ << " Wp : " << node->Wp/node->N 
+            << " S : " << node->S / node->N << std::endl;  
+    }
 }
 
 bool MCTS::jump(Move move){
@@ -491,7 +515,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             }
             int a = cur->selectChildInSearch(); // assume node is evaluated
             childIdx.push_back(a);
-            cur = cur->child.at(a);
+            cur = cur->child[a];
         }
 
         searchCounter++;
@@ -501,7 +525,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             node->W -= 1.0f; // apply VL
         }
         for(int i=0; i<childIdx.size(); ++i){
-            path.at(i)->edgeN.at(childIdx.at(i)) += 1.0f;
+            path[i]->edgeN[childIdx[i]] += 1.0f;
         }
 
         if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
