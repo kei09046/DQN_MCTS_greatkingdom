@@ -71,6 +71,8 @@ public:
 
     float getEval();
 
+    void printVariation();
+
     bool jump(Move move);
 
     void reset();
