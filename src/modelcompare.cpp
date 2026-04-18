@@ -71,6 +71,9 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 			}
 			player.jump(cord);
 		}
+		else{
+			std::cout << "illegal move. try again" << std::endl;
+		}
 	}
 
 	delete evaluator;
