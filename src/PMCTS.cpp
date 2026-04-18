@@ -424,7 +424,11 @@ void MCTS::printVariation(){
         int maxv = -1;
         int maxi = -1;
         for(int i=0; i<node->available_moves.size(); ++i){
-            assert(node->edgeN[i] == node->child[i]->N);
+            if(!globalConfig.transTable)
+                assert(node->edgeN[i] == node->child[i]->N);
+            else
+                assert(node->edgeN[i] <= node->child[i]->N);
+                
             if(node->edgeN[i] > maxv){
                 maxv = node->edgeN[i];
                 maxi = i;

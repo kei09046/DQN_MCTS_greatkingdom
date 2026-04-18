@@ -308,6 +308,9 @@ Color Game::makeMoveNoScoreUpdate(Move move){
 }
 
 Color Game::updateScoreAfter(Move move){
+    if(move == PASSMOVE)
+        return EMPTY;
+        
     if(moveCount >= 2)
         updateScore(move.first, move.second);
 
