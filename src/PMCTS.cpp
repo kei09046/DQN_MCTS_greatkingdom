@@ -163,6 +163,7 @@ void Node::expand(){
                     return;
                 }
 
+                // TODO : fix this logic so that if one node is superior than the other node, other node's P value should be absorbed.
                 else if(clr == EMPTY){
                     candidateLegal &= nextGames[idx].getLegalMoves();
                     candidateLegal[idx] = true; // keep itself
@@ -191,11 +192,11 @@ void Node::expand(){
 
 int Node::selectChildInSearch(){
     int maxi = 0;
-    float pref, maxval = -1.0f;
+    float pref, maxval = -5.0f; // pref may be less than -1.(due to score head)
 
     for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN.at(i) == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child.at(i)->W / child.at(i)->N) 
-        + globalConfig.cPuct * edgeP.at(i) * sqrt(N)/(1 + edgeN.at(i));
+        pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
+        + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
         if(maxval < pref){
             maxval = pref; 
@@ -235,15 +236,21 @@ Move Node::selectMove(float temp){
         return available_moves[index];
     }
 
-    // std::cout << "available move size : " << available_moves.size() << std::endl;
-    // for(int i=0; i<available_moves.size(); ++i){
-    //     if(child[i]->N != 0.0f){
-    //         std::cout << "status: " << static_cast<int>(available_moves[i].first) << " " << static_cast<int>(available_moves[i].second) << 
-    //         " sc: " << edgeN[i] << " Q: " << 
-    //         child[i]->W/child[i]->N << " initQ : " << child[i]->initQ << " Wp : " << child[i]->Wp/child[i]->N 
-    //         << " S : " << child[i]->S / child[i]->N << " P " << edgeP[i] << std::endl;
-    //     }
-    // }
+    std::cout << "available move size : " << available_moves.size() << std::endl;
+    std::vector<int> v(available_moves.size());
+    std::iota(v.begin(), v.end(), 0);
+    std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
+        return child[a]->N > child[b]->N;
+    });
+
+    for(int i=0; i<std::min((int)available_moves.size(), 3); ++i){
+        int idx = v[i];
+        std::cout << "status: " << static_cast<int>(available_moves[idx].first) << " " << static_cast<int>(available_moves[idx].second) << 
+        " sc: " << edgeN[idx] << " Q: " << 
+        child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
+        << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
+    }
+
     return available_moves[maxi];
 }
 
