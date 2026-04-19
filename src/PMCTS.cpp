@@ -252,7 +252,7 @@ Move Node::selectMove(float temp){
         }
     }
 
-    if(onlyMove != RESIGNMOVE || forcedState < 0)
+    if(onlyMove != RESIGNMOVE /*|| forcedState < 0*/) // When condition is on, engine would resign when lost.
         return onlyMove;
 
     std::vector<float> weights(available_moves.size());
@@ -285,7 +285,7 @@ Move Node::selectMove(float temp){
 MoveData Node::selectMoveProb(float temp){
     std::vector<float> visitPortion(outputSize, 0.0f);
 
-    if(onlyMove != RESIGNMOVE || forcedState < 0){ // engine would just resign if it found forced lost.
+    if(onlyMove != RESIGNMOVE){ // engine would just resign if it found forced lost. -> need to fix
         visitPortion[onlyMove.first * colSize + onlyMove.second] = 1.0f;
         return {onlyMove, visitPortion};
     }
@@ -433,7 +433,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
-    printVariation();
+    //printVariation();
 }
 
 Move MCTS::getMove(float temp){
@@ -483,17 +483,17 @@ void MCTS::printVariation(){
                     maxi = i;
             }
         }
-        else if(node->forcedState == -3){ 
-            // losing in two moves. Due to optimization, not all children are searched until the end. 
-            // Show one variation that was calculated till the end.
-            for(int i=0; i<node->available_moves.size(); ++i){
-                if(node->child[i]->forcedState == 2){
-                    maxi = i;
-                    break;
-                }
-            }
-            m = node->available_moves[maxi];
-        }
+        // else if(node->forcedState == -3){ 
+        //     // losing in two moves. Due to optimization, not all children are searched until the end. 
+        //     // Show one variation that was calculated till the end.
+        //     for(int i=0; i<node->available_moves.size(); ++i){
+        //         if(node->child[i]->forcedState == 2){
+        //             maxi = i;
+        //             break;
+        //         }
+        //     }
+        //     m = node->available_moves[maxi];
+        // }
         else{ // losing in many moves
             for(int i=0; i<node->available_moves.size(); ++i){
                 if(node->child[i]->forcedState > maxv){
@@ -715,22 +715,22 @@ void MCTS::propagate(const std::vector<Node*>& path, const std::vector<int>& chi
             }
             // if threat is to win in one move.
             // look for the move that does not immediately lose. It is guaranteed that there is only one(or zero) such move.
-            else if(forced == 2){
-                Move threat = (path[i+1])->onlyMove;
-                for(int j=0; j<n->available_moves.size(); ++j){
-                    if(!(n->child[j]->game.isLegal(threat))){
-                        n->onlyMove = n->available_moves[j];
-                        break;
-                    }
-                }
-                if(n->onlyMove == RESIGNMOVE){ // could not find any move stop the threat
-                    forced = -forced + (forced > 0 ? -1 : 1);
-                    n->forcedState = forced;
-                }
-                else{ // found a move to keep game going. Stop propagating.
-                    break;
-                }
-            }
+            // else if(forced == 2){
+            //     Move threat = (path[i+1])->onlyMove;
+            //     for(int j=0; j<n->available_moves.size(); ++j){
+            //         if(!(n->child[j]->game.isLegal(threat))){
+            //             n->onlyMove = n->available_moves[j];
+            //             break;
+            //         }
+            //     }
+            //     if(n->onlyMove == RESIGNMOVE){ // could not find any move stop the threat
+            //         forced = -forced + (forced > 0 ? -1 : 1);
+            //         n->forcedState = forced;
+            //     }
+            //     else{ // found a move to keep game going. Stop propagating.
+            //         break;
+            //     }
+            // }
             else{
                 break;
             }
