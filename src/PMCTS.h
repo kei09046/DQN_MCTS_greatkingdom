@@ -8,9 +8,18 @@
 #include <utility>
 #include <unordered_map>
 
+std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& availableMoves);
+
+std::vector<float> softmax(const std::vector<float>& logit);
+
+std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift,
+    float score_factor = 0.03f,   // convert points to utility
+    float risk_aversion = 0.003f    // penalty per standard deviation);
+);
+
 class alignas(64) Node{
 public:
-    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const transTable);
+    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);
 
     Move selectMove(float temperature);
 
@@ -36,10 +45,9 @@ private:
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
     std::vector<Node*> child;
-    std::bitset<outputSize> availableMoves; // among game.isLegal() moves, consider actually useful moves.
-    int availableMoveSize;
+    std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
     Move winmove;
-    std::unordered_map<HashValue, Node*>* const transTable;
+    std::unordered_map<HashValue, Node*>* const trans_table;
 
     void addChild(const int r, const int c, const Game& ng);
 
@@ -69,13 +77,6 @@ public:
 
     void reset();
 
-    static std::vector<float> calculateP(const std::vector<float>& logit, const Node& node);
-
-    static std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift,
-        float score_factor = 0.03f,   // convert points to utility
-        float risk_aversion = 0.003f    // penalty per standard deviation);
-    );
-
     #ifdef measureTime
     std::vector<int> getTimeStats() const;
     
@@ -85,7 +86,7 @@ public:
 private:
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
-    std::unordered_map<HashValue, Node*>* transTable;
+    std::unordered_map<HashValue, Node*>* trans_table;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
