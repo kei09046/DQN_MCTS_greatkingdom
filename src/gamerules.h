@@ -29,6 +29,10 @@ public:
         return (board[r][c] == EMPTY) && (scoreBoard[r][c] & EMPTY);
     }
 
+    inline bool isLegal(Move m) const{ // return true if square is not occupied / nor is score of any side.
+        return isLegal(m.first, m.second);
+    }
+
     std::bitset<outputSize> getLegalMoves() const{
         std::bitset<outputSize> legal;
         for(uint8_t i=0; i<rowSize; ++i){

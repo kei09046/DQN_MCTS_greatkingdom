@@ -10,6 +10,7 @@
 #include <random>
 #include <numeric>
 #include <chrono>
+#include <ranges>
 
 
 const Hash hash;
@@ -99,7 +100,7 @@ std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), losingMoveCount(0), onlyMove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
 }
 
 void Node::addChild(const int r, const int c, const Game& ng){
@@ -137,9 +138,9 @@ void Node::expand(){
                 if(clr == EMPTY){
                     candidateLegal[i * colSize + j] = true;
                 }
-
-                else if(clr == turn){
-                    winmove = {i, j};
+                else if(clr == turn){ // there is immeidate win by capture. win in 1.
+                    onlyMove = {i, j};
+                    forcedState = 2;
                     return;
                 }
             }
@@ -151,6 +152,11 @@ void Node::expand(){
         candidateLegal[boardSize] = true;
     }
 
+    if(candidateLegal.none()){ // if for every possible move is suicidal(seki) and is behind on score, mark it as loss in 0.
+        forcedState = -1;
+        return;
+    }
+
     if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
         for(int idx = 0; idx < boardSize + 1; ++idx){
             if(candidateLegal[idx]){
@@ -158,18 +164,23 @@ void Node::expand(){
                 uint8_t c = idx % colSize;
                 clr = nextGames[idx].updateScoreAfter({r, c});
 
-                if(clr == turn){
-                    winmove = {r, c};
+                if(clr == turn){ // there is immediate win by score. win in 1.
+                    forcedState = 2;
+                    onlyMove = {r, c};
                     return;
                 }
 
-                // TODO : fix this logic so that if one node is superior than the other node, other node's P value should be absorbed.
                 else if(clr == EMPTY){
                     candidateLegal &= nextGames[idx].getLegalMoves();
                     candidateLegal[idx] = true; // keep itself
                 }
             }
         }
+    }
+
+    if(candidateLegal.none()){ // if loss is inevitable on the next move, mark it as loss in 2.
+        forcedState = -3;
+        return;
     }
 
     // finally add child
@@ -191,27 +202,58 @@ void Node::expand(){
 }
 
 int Node::selectChildInSearch(){
-    int maxi = 0;
+    int maxi = -1;
     float pref, maxval = -5.0f; // pref may be less than -1.(due to score head)
 
-    for(int i=0; i<available_moves.size(); ++i){
-        pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
-        + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
-        
-        if(maxval < pref){
-            maxval = pref; 
-            maxi = i;
+    if(onlyMove != RESIGNMOVE){
+        for(int i=0; i<available_moves.size(); ++i){
+            if(available_moves[i] == onlyMove)
+                return i;
         }
     }
+
+    for(int i=0; i<available_moves.size(); ++i){
+        //assert(child[i]->forcedState >= 0);
+        if(child[i]->forcedState == 0){
+            pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
+            + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+            
+            if(maxval < pref){
+                maxval = pref; 
+                maxi = i;
+            }
+        }
+    }
+    
+    assert(maxi >= 0);
     return maxi;
 }
 
 Move Node::selectMove(float temp){
-    if(winmove != RESIGNMOVE)
-        return winmove;
-    if(available_moves.size() == 0){ // if lost, resign
-        return RESIGNMOVE;
+    std::cout << "available move size : " << available_moves.size() << std::endl;
+
+    if(onlyMove != RESIGNMOVE){
+        std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
+        << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
     }
+    else{
+        std::vector<int> v(available_moves.size());
+        std::iota(v.begin(), v.end(), 0);
+        std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
+            return child[a]->N > child[b]->N;
+        });
+
+        for(int i=0; i<std::min(static_cast<int>(available_moves.size()), 3); ++i){
+            int idx = v[i];
+            std::cout << "status: " << static_cast<int>(available_moves[idx].first) << " " << static_cast<int>(available_moves[idx].second)
+            << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
+            << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
+            << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
+        }
+    }
+
+    if(onlyMove != RESIGNMOVE || forcedState < 0)
+        return onlyMove;
 
     std::vector<float> weights(available_moves.size());
     std::vector<float> cumulative(available_moves.size());
@@ -236,21 +278,6 @@ Move Node::selectMove(float temp){
         return available_moves[index];
     }
 
-    std::cout << "available move size : " << available_moves.size() << std::endl;
-    std::vector<int> v(available_moves.size());
-    std::iota(v.begin(), v.end(), 0);
-    std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
-        return child[a]->N > child[b]->N;
-    });
-
-    for(int i=0; i<std::min((int)available_moves.size(), 3); ++i){
-        int idx = v[i];
-        std::cout << "status: " << static_cast<int>(available_moves[idx].first) << " " << static_cast<int>(available_moves[idx].second) << 
-        " sc: " << edgeN[idx] << " Q: " << 
-        child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
-        << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
-    }
-
     return available_moves[maxi];
 }
 
@@ -258,10 +285,9 @@ Move Node::selectMove(float temp){
 MoveData Node::selectMoveProb(float temp){
     std::vector<float> visitPortion(outputSize, 0.0f);
 
-    if(winmove != RESIGNMOVE)
-        return {winmove, visitPortion};
-    if(available_moves.size() == 0){ // if lost, resign
-        return {RESIGNMOVE, visitPortion};
+    if(onlyMove != RESIGNMOVE || forcedState < 0){ // engine would just resign if it found forced lost.
+        visitPortion[onlyMove.first * colSize + onlyMove.second] = 1.0f;
+        return {onlyMove, visitPortion};
     }
 
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
@@ -272,7 +298,7 @@ MoveData Node::selectMoveProb(float temp){
             maxi = i;
         }
         weights[i] = std::pow(edgeN[i], temp);
-        visitPortion.at(available_moves[i].first * colSize + available_moves[i].second) = edgeN[i]/N;
+        visitPortion[available_moves[i].first * colSize + available_moves[i].second] = edgeN[i]/N;
     }
 
     // std::cout << "visit portion" << std::endl;
@@ -288,10 +314,10 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
-        return {available_moves.at(index), visitPortion};
+        return {available_moves[index], visitPortion};
     }
 
-    return {available_moves.at(maxi), visitPortion};
+    return {available_moves[maxi], visitPortion};
 }
 
 Node* Node::jump(Move move){
@@ -342,7 +368,7 @@ void Node::deleteTree(Node* exception){
 void Node::addDirichletNoise(Evaluator* evaluator){
     if (N == 0) {
         expand();
-        if(winmove == RESIGNMOVE && available_moves.size() > 0){
+        if(onlyMove == RESIGNMOVE && available_moves.size() > 0){
             auto buf = std::make_shared<NNResultBuf>();
             evaluator->evaluate(buf, &game, hashValue);
 
@@ -351,7 +377,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
         }
     }
 
-    if(winmove == RESIGNMOVE && available_moves.size() > 0){
+    if(onlyMove == RESIGNMOVE && available_moves.size() > 0){
         std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
         for(int i=0; i<edgeP.size(); ++i)
             edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
@@ -391,15 +417,16 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
     if(playMode == PLAYOUT){
-        while(evaluate_counter < nPlayout){
+        while(evaluate_counter < nPlayout && root->forcedState == 0){
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, nPlayout, timeLimit);
         }
+        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
     else{
         auto duration = std::chrono::seconds(timeLimit);
         auto start = std::chrono::steady_clock::now();
-        while(std::chrono::steady_clock::now() - start < duration){
+        while(std::chrono::steady_clock::now() - start < duration && root->forcedState == 0){
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, nPlayout, timeLimit);
         }
@@ -430,22 +457,56 @@ void MCTS::printVariation(){
     while(node->N > 1){
         int maxv = -1;
         int maxi = -1;
-        for(int i=0; i<node->available_moves.size(); ++i){
-            if(!globalConfig.transTable)
-                assert(node->edgeN[i] == node->child[i]->N);
-            else
-                assert(node->edgeN[i] <= node->child[i]->N);
-                
-            if(node->edgeN[i] > maxv){
-                maxv = node->edgeN[i];
-                maxi = i;
+        Move m;
+
+        if(node->forcedState == 0){
+            for(int i=0; i<node->available_moves.size(); ++i){
+                // if(!globalConfig.transTable)
+                //     assert(node->edgeN[i] == node->child[i]->N);
+                // else
+                //     assert(node->edgeN[i] <= node->child[i]->N);
+                    
+                if(node->edgeN[i] > maxv){
+                    maxv = node->edgeN[i];
+                    maxi = i;
+                }
+            }
+            if(maxi == -1)
+                break;
+
+            m = node->available_moves[maxi];
+        }
+        else if(node->onlyMove != RESIGNMOVE){
+            m = node->onlyMove;
+            for(int i=0; i<node->available_moves.size(); ++i){
+                if(node->available_moves[i] == m)
+                    maxi = i;
             }
         }
-        if(maxi == -1)
-            break;
-        Move m = node->available_moves[maxi];
+        else if(node->forcedState == -3){ 
+            // losing in two moves. Due to optimization, not all children are searched until the end. 
+            // Show one variation that was calculated till the end.
+            for(int i=0; i<node->available_moves.size(); ++i){
+                if(node->child[i]->forcedState == 2){
+                    maxi = i;
+                    break;
+                }
+            }
+            m = node->available_moves[maxi];
+        }
+        else{ // losing in many moves
+            for(int i=0; i<node->available_moves.size(); ++i){
+                if(node->child[i]->forcedState > maxv){
+                    maxv = node->child[i]->forcedState;
+                    maxi = i;
+                }
+            }
+            m = node->available_moves[maxi];
+        }
+
+        int visit = node->edgeN[maxi];
         node = node->child[maxi];
-        std::cout << (int)m.first << " " << (int)m.second << " " << maxv << " " << " Q: " << 
+        std::cout << (int)m.first << " " << (int)m.second << " " << visit << " forced " << node->forcedState << " Q: " << 
             node->W/node->N << " initQ : " << node->initQ << " Wp : " << node->Wp/node->N 
             << " S : " << node->S / node->N << std::endl;  
     }
@@ -488,37 +549,43 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         std::vector<Node*> path;
         Node* cur = root;
         float evalQ = 0.0f, evalS = 0.0f, evalW = 0.0f;
+        int forced = 0; // check if state is forced win / loss
 
         while (true) {
             path.push_back(cur);
 
             if (cur->N == 0.0f && (cur != root || !globalConfig.dirichletNoise)) { // first time visit
                 cur->expand();
-                if (cur->winmove != RESIGNMOVE){ // won
-                    evalQ = -1.0f;
-                }
-                else if(cur->available_moves.size() == 0){ // lost
-                    evalQ = 1.0f;
-                }
+                forced = cur->forcedState;
+                // if (cur->onlyMove != RESIGNMOVE){ // won
+                //     evalQ = -1.0f;
+                // }
+                // else if(cur->available_moves.size() == 0){ // lost
+                //     evalQ = 1.0f;
+                // }
                 break;
             }
 
-            if (cur->winmove != RESIGNMOVE){ // won
-                evalQ = -1.0f;
-                if(globalConfig.detailedStat){
-                    evalW = 0.0f;
-                    evalS = -cur->game.scoreDiff(cur->turn);
-                }
+            forced = cur->forcedState;
+            if(forced != 0)
                 break;
-            }
-            if(cur->available_moves.size() == 0){ // lost
-                evalQ = 1.0f;
-                if(globalConfig.detailedStat){
-                    evalW = 1.0f;
-                    evalS = -cur->game.scoreDiff(cur->turn);
-                }
-                break;
-            }
+
+            // if (cur->onlyMove != RESIGNMOVE){ // won
+            //     evalQ = -1.0f;
+            //     if(globalConfig.detailedStat){
+            //         evalW = 0.0f;
+            //         evalS = -cur->game.scoreDiff(cur->turn);
+            //     }
+            //     break;
+            // }
+            // if(cur->available_moves.size() == 0){ // lost
+            //     evalQ = 1.0f;
+            //     if(globalConfig.detailedStat){
+            //         evalW = 1.0f;
+            //         evalS = -cur->game.scoreDiff(cur->turn);
+            //     }
+            //     break;
+            // }
 
             if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is evaluating, return
                 searchStuck = true;
@@ -539,7 +606,16 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             path[i]->edgeN[childIdx[i]] += 1.0f;
         }
 
-        if(evalQ == 0.0f){ // if final search node is non-terminal, not evaluated node
+        if(forced != 0){ // if forced win/loss is found in leaf node, propagate that result immediately.
+            evaluateCounter++;
+            propagate(path, childIdx, forced);
+
+            if(forced > 0)
+                propagate(path, -1.0f);
+            else
+                propagate(path, 1.0f);
+        }
+        else{ // if final search node is non-determined node, ask for evaluation
             // enqueue evaluation
             auto buf = std::make_shared<NNResultBuf>();
 
@@ -564,12 +640,11 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                     evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)),
                      (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)).first;
                 }
-            }
-        }
 
-        if(evalQ != 0.0f){ // if eval is available right now, do param update right away.
-            evaluateCounter++;
-            propagate(path, evalQ, evalW, evalS);
+                // if eval is available right now, do param update right away.
+                evaluateCounter++;
+                propagate(path, evalQ, evalW, evalS);
+            }
         }
     }
 
@@ -611,10 +686,65 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     }
 }
 
+void MCTS::propagate(const std::vector<Node*>& path, const std::vector<int>& childIdx, int forced){
+    assert(forced != 0);
+
+    Node* n;
+    // std::cerr << path.size() << " " << childIdx.size() << std::endl;
+    // std::cerr << "found forced sequence : " << forced << " ";
+    // for(int i=0; i<childIdx.size(); ++i)
+    //     std::cerr << static_cast<int>(path[i]->available_moves[childIdx[i]].first) << 
+    //     static_cast<int>(path[i]->available_moves[childIdx[i]].second) << " ";
+    // std::cerr << std::endl;
+
+    for(int i=childIdx.size() - 1; i >= 0; --i){
+        // on Node n, made move nextMove.
+        n = path[i];
+
+        if(forced < 0){ // child node is forced loss.
+            forced = -forced + (forced > 0 ? -1 : 1); // loss in 1 -> win in 2.
+            n->forcedState = forced;
+            n->onlyMove = (n->available_moves)[childIdx[i]]; // check winning move as only move
+        }
+        else{ // child node is forced win.
+            n->losingMoveCount++;
+
+            if(n->onlyMove != RESIGNMOVE || n->losingMoveCount == n->available_moves.size()){
+                forced = -forced + (forced > 0 ? -1 : 1);
+                n->forcedState = forced;
+            }
+            // if threat is to win in one move.
+            // look for the move that does not immediately lose. It is guaranteed that there is only one(or zero) such move.
+            else if(forced == 2){
+                Move threat = (path[i+1])->onlyMove;
+                for(int j=0; j<n->available_moves.size(); ++j){
+                    if(!(n->child[j]->game.isLegal(threat))){
+                        n->onlyMove = n->available_moves[j];
+                        break;
+                    }
+                }
+                if(n->onlyMove == RESIGNMOVE){ // could not find any move stop the threat
+                    forced = -forced + (forced > 0 ? -1 : 1);
+                    n->forcedState = forced;
+                }
+                else{ // found a move to keep game going. Stop propagating.
+                    break;
+                }
+            }
+            else{
+                break;
+            }
+        }
+    }
+
+    // for(const Node* n : path){
+    //     std::cerr << n << " " << n->forcedState << std::endl;
+    // }
+}
+
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
     if(globalConfig.detailedStat){ // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
-        for (int i = path.size() - 1; i >= 0; --i) {
-            Node* n = path[i];
+        for (Node* n : path | std::views::reverse) {
             n->W += 1.0f;   // revert VL
             n->W += evalQ;
             n->Wp += evalW;
@@ -626,8 +756,7 @@ void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, f
     }
 
     else{
-        for (int i = path.size() - 1; i >= 0; --i) {
-            Node* n = path[i];
+        for (Node* n : path | std::views::reverse) {
             n->W += 1.0f;   // revert VL
             n->W += evalQ;
             evalQ = -evalQ;
