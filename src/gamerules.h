@@ -30,7 +30,7 @@ public:
     }
 
     inline bool isLegal(Move m) const{ // return true if square is not occupied / nor is score of any side.
-        return isLegal(m.first, m.second);
+        return (m == RESIGNMOVE) || isLegal(m.first, m.second);
     }
 
     std::bitset<outputSize> getLegalMoves() const{

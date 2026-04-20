@@ -436,7 +436,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
-    printVariation();
+    //printVariation();
 }
 
 Move MCTS::getMove(float temp){

@@ -375,8 +375,10 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
                 << std::chrono::duration_cast<std::chrono::microseconds>(end-begin).count()
                 << " us\n";
 
-    Color res = game_manager.makeMove(m).first;
-    player.jump(m);
+	if(m != RESIGNMOVE){
+		Color res = game_manager.makeMove(m).first;
+		player.jump(m);
+	}
 
 	if(m == PASSMOVE){
 		ok("pass");
