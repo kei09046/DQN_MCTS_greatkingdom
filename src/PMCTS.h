@@ -46,10 +46,8 @@ private:
 
     std::vector<Node*> child;
     std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
-    Move onlyMove; // if RESIGNMOVE : there is no only move. Set to other value if definite best move is found. 
-    // Best move : forced winning move, forced move not to lose, Only move that gives chances in lost position.
+    Move winmove; // if RESIGNMOVE : there is no winning move.
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
-    int losingMoveCount;
     std::unordered_map<HashValue, Node*>* const trans_table;
 
     void addChild(const int r, const int c, const Game& ng);
@@ -97,6 +95,6 @@ private:
 
     void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
 
-    void propagate(const std::vector<Node*>& path, const std::vector<int>& childIdx, int forced);
+    // void propagate(const std::vector<Node*>& path, const std::vector<int>& childIdx, int forced);
 };
 #endif
