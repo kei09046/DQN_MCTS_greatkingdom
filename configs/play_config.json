@@ -31,7 +31,7 @@
   "mcts": {
     "mode": "playout",
     "time": 10,
-    "nPlayout": 400,
+    "nPlayout": 4000,
     "cPuct": 2.0
   },
 

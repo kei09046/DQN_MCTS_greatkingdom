@@ -655,7 +655,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
     //EVALUATION & UPDATE
     if(inEvaluation.size() >= globalConfig.search_thread_num || (playMode == PLAYOUT && searchCounter == nPlayout && !inEvaluation.empty()) ||
-    root->forcedState != 0 || searchStuck){
+    (root->forcedState != 0 && inEvaluation.empty()) || searchStuck){
         // wait for the result
         std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
