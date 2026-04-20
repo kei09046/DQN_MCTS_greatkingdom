@@ -1,8 +1,10 @@
 /.vscode
 /CMakeCache.txt
+/CMakeLists.txt
 /CMakeFiles
 /Makefile
 /build
+/unused
 /cmake_install.cmake
 /detect_cuda_compute_capabilities.cu
 /detect_cuda_version.cc
