@@ -12,7 +12,7 @@
 #include <chrono>
 #include <ranges>
 
-
+#include "modelcompare.h"
 const Hash hash;
 
 
@@ -126,63 +126,70 @@ void Node::addChild(const int r, const int c, const Game& ng){
 
 void Node::expand(){
     Color clr;
-    std::vector<Game> nextGames(boardSize + 1, game); // +1 for pass
     std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
-    // improve performance by first checking capture for all moves -> calculate territory for all moves -> reduce options
-    for(uint8_t i=0; i<rowSize; ++i){
-        for(uint8_t j=0; j<colSize; ++j){
-            if(game.isLegal(i, j)){
-                clr = nextGames[i * colSize + j].makeMoveNoScoreUpdate({i, j}); // only check if capture occurs
+    // improve capture check performance by checking if there is any group with liberty count 1.
+    Move threat = RESIGNMOVE;
 
-                if(clr == EMPTY){
-                    candidateLegal[i * colSize + j] = true;
-                }
-                else if(clr == turn){ // there is immeidate win by capture. win in 1.
-                    winmove = {i, j};
-                    forcedState = 2;
-                    return;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            const Chain c = game.getChain({i, j});
+            if(c.size != 0 && c.liberties.count() == 1){
+                auto color = game.getBoard({i, j});
+                int onlyLib = c.liberties._Find_first();
+
+                if(game.isLegal(onlyLib / colSize, onlyLib % colSize)){
+                    // if my stone is under threat -> have to find only move unless can capture opponent's stone.
+                    if(color == game.getTurn()){
+                        threat = {onlyLib / colSize, onlyLib % colSize};
+                    }
+
+                    // if opponent stone is capturable
+                    else{
+                        winmove = {i, j};
+                        forcedState = 2;
+                        return;
+                    }
                 }
             }
         }
     }
 
-    if(game.scoreWinner() == game.getTurn()){ // can pass only if it's beneficial
-        nextGames[boardSize].makeMoveNoScoreUpdate(PASSMOVE);
-        candidateLegal[boardSize] = true;
+    candidateLegal = game.getLegalMoves();
+    // can only pass if it's beneficial
+    candidateLegal[outputSize - 1] = (game.scoreWinner() == game.getTurn());
+
+    std::vector<Game> nextGames(boardSize + 1); // +1 for pass
+    // update scores & remove useless moves
+    for(int idx = 0; idx < boardSize + 1; ++idx){
+        if(candidateLegal[idx]){
+            uint8_t r = idx / colSize;
+            uint8_t c = idx % colSize;
+            nextGames[idx] = game;
+            clr = nextGames[idx].makeMove({r, c}).first;
+
+            if(clr == turn){ // there is immediate win by score. win in 1.
+                forcedState = 2;
+                winmove = {r, c};
+                return;
+            }
+
+            else if((threat != RESIGNMOVE && nextGames[idx].isLegal(threat)) || clr == Game::reverseColor(turn)){ // self-suicidal move.
+                candidateLegal[idx] = false;
+            }
+
+            else{
+                candidateLegal &= nextGames[idx].getLegalMoves();
+                candidateLegal[idx] = true; // keep itself
+            }
+        }
     }
 
-    if(candidateLegal.none()){ // if for every possible move is suicidal(seki) and is behind on score, mark it as loss in 0.
+    if(candidateLegal.none()){ // if there are no moves, mark it as loss.
         forcedState = -1;
         return;
     }
-
-    if(game.getMoveCount() >= 2){ // if after second move, update scores & remove useless moves
-        for(int idx = 0; idx < boardSize + 1; ++idx){
-            if(candidateLegal[idx]){
-                uint8_t r = idx / colSize;
-                uint8_t c = idx % colSize;
-                clr = nextGames[idx].updateScoreAfter({r, c});
-
-                if(clr == turn){ // there is immediate win by score. win in 1.
-                    forcedState = 2;
-                    winmove = {r, c};
-                    return;
-                }
-
-                else if(clr == EMPTY){
-                    candidateLegal &= nextGames[idx].getLegalMoves();
-                    candidateLegal[idx] = true; // keep itself
-                }
-            }
-        }
-    }
-
-    if(candidateLegal.none()){ // if loss is inevitable on the next move, mark it as loss in 2.
-        forcedState = -3;
-        return;
-    }
-
+    
     // finally add child
     for(int idx = 0; idx < boardSize + 1; ++idx){
         if(candidateLegal[idx]){
@@ -191,6 +198,24 @@ void Node::expand(){
             addChild(r, c, nextGames[idx]);
         }
     }
+
+    assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
+    // if(threat != RESIGNMOVE && candidateLegal.count() >= 2){
+    //     std::cerr << "threat : " << static_cast<int>(threat.first) << " " << static_cast<int>(threat.second) << std::endl;
+    //     for(int idx = 0; idx < boardSize + 1; ++idx){
+    //         if(candidateLegal[idx]){
+    //             std::cerr << "options : " << idx << " ";
+    //             auto nextOptions = nextGames[idx].getLegalMoves();
+    //             for(int k=0; k < boardSize + 1; ++k){
+    //                 if(nextOptions[k])
+    //                     std::cerr << k << " ";
+    //             }
+    //             std::cerr << std::endl;
+    //             ModelCompare::displayBoardGUI(true, nextGames[idx]);
+    //             break;
+    //         }
+    //     }
+    // }
 
     // for(Move m : available_moves){
     //     std::cerr << "available move after expand : " << static_cast<int>(m.first) << "," << static_cast<int>(m.second) << std::endl;

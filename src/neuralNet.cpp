@@ -81,7 +81,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	Color state;
 
 	for(int i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
-		state = game.getBoard(i / colSize, i % colSize);
+		state = game.getBoard({i / colSize, i % colSize});
 		if(state == turn)
 			ret.at(i) = 1.0f;
 		else if(state == opp_turn)
@@ -92,7 +92,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 
 	Color terr;
 	for(int i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
-		terr = game.getScoreBoard(i/colSize, i%colSize);
+		terr = game.getScoreBoard({i/colSize, i%colSize});
 		if(terr == turn){
 			ret.at(3*inputSize + i) = 1.0f;
 		}
@@ -117,24 +117,29 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 	}
 
 	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
+	std::bitset<inputSize> mark;
+
 	for(int i=0; i<inputSize; ++i){
+		int cidx = game.getChainIdx(i);
 		const Chain c = game.getChain(i);
 
-		if(c.size != 0 && ret[8*inputSize + i] == 0 && ret[9*inputSize + i] == 0){
-			auto head = game.getStone( i / colSize, i % colSize).head;
+		if(c.size != 0 && !mark[cidx]){
+			mark[cidx] = true;
+
+			auto head = game.getStone({i / colSize, i % colSize}).head;
 			auto cur = head;
-			auto state = game.getBoard(i / colSize, i % colSize);
+			auto state = game.getBoard({i / colSize, i % colSize});
 			int liberty_count = 0;
 
 			for(int j=0; j<boardSize; ++j){
-				// if one of the liberty is my territory(= completely alive group)
-				// set the liberty count to 5. Note that my stone can't be adjacent to enemy territory.
-				if(c.liberties.test(j) && ((ret[3*inputSize + j] == 1.0f) || (ret[4*inputSize + j] == 1.0f))){
+				// if one of the liberty is unplayable by rule(=completely alive)
+				if(c.liberties.test(j) && !game.isLegal(j/colSize, j%colSize)){
 					liberty_count = 5;
 					break;
 				}
 			}
 
+			// if not completely alive.
 			if(liberty_count == 0){
 				liberty_count = std::min((int)c.liberties.count(), 4);
 			}
@@ -142,13 +147,13 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 			if(state == turn){ // my stone's liberties
 				do {
 					ret.at((7 + liberty_count)*inputSize + cur) = 1.0f;
-					cur = game.getStone(cur/colSize, cur%colSize).next;
+					cur = game.getStone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 			else if(state == opp_turn){ // opponent stone's liberties
 				do {
 					ret.at((12 + liberty_count)*inputSize + cur) = 1.0f;
-					cur = game.getStone(cur/colSize, cur%colSize).next;
+					cur = game.getStone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 		}

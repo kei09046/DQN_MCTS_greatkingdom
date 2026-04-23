@@ -41,7 +41,7 @@ public:
             }
         }
 
-        legal.set(rowSize * colSize);
+        legal[rowSize * colSize] = true;
         return legal;
     }
 
@@ -69,20 +69,28 @@ public:
         return moveCount;
     };
 
-    inline Color getBoard(int r, int c) const{
-        return board[r][c];
+    inline Color getBoard(Move m) const{
+        return board[m.first][m.second];
     }
 
-    inline Color getScoreBoard(int r, int c) const{
-        return scoreBoard[r][c];
+    inline Color getScoreBoard(Move m) const{
+        return scoreBoard[m.first][m.second];
     }
 
-    inline const Chain& getChain(int idx) const{
-        return chains[stones[idx/colSize][idx%colSize].head];
+    inline const int getChainIdx(int cord) const{
+        return stones[cord/colSize][cord%colSize].head;
     }
 
-    inline const Stone& getStone(int r, int c) const{
-        return stones[r][c];
+    inline const Chain& getChain(int cord) const{
+        return chains[stones[cord/colSize][cord%colSize].head];
+    }
+
+    inline const Chain& getChain(Move m) const{
+        return chains[stones[m.first][m.second].head];
+    }
+
+    inline const Stone& getStone(Move m) const{
+        return stones[m.first][m.second];
     }
 
     inline Move getLastMove(int idx) const{

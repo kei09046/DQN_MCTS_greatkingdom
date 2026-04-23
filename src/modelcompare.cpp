@@ -298,7 +298,7 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
 
     for(int i=0; i<rowSize; ++i){
         for(int j=0; j<colSize; ++j){
-            switch(game.getBoard(i, j)){
+            switch(game.getBoard({i, j})){
                 case BLACK:
                     display[i][j] = 'o';
                     break;
@@ -314,7 +314,7 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
             }
 
             if(showScore){
-                switch(game.getScoreBoard(i, j)){
+                switch(game.getScoreBoard({i, j})){
                     case BLACK:
                         display[i][j] = 'b';
                         break;
