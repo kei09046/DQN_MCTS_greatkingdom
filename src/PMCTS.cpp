@@ -235,14 +235,15 @@ int Node::selectChildInSearch(){
 }
 
 Move Node::selectMove(float temp){
-    std::cout << "available move size : " << available_moves.size() << std::endl;
+    //std::cout << "available move size : " << available_moves.size() << std::endl;
 
     if(forcedState > 0){
-        std::cout << "status: " << static_cast<int>(winmove.first) << " " << static_cast<int>(winmove.second)
-        << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
+        if(globalConfig.detailedStat)
+            std::cout << "status: " << static_cast<int>(winmove.first) << " " << static_cast<int>(winmove.second)
+            << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
         return winmove;
     }
-    else{
+    else if(globalConfig.detailedStat){
         std::vector<int> v(available_moves.size());
         std::iota(v.begin(), v.end(), 0);
         std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
@@ -292,7 +293,10 @@ MoveData Node::selectMoveProb(float temp){
         visitPortion[winmove.first * colSize + winmove.second] = 1.0f;
         return {winmove, visitPortion};
     }
-
+    if(available_moves.size() == 0){
+        std::cout << "resigning!" << std::endl;
+        return {RESIGNMOVE, visitPortion};
+    }
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());
     int maxi, maxn = -1;
     for(int i=0; i<available_moves.size(); ++i){
@@ -424,7 +428,8 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, nPlayout, timeLimit);
         }
-        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
+        if(globalConfig.detailedStat)
+            std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
     else{
         auto duration = std::chrono::seconds(timeLimit);
@@ -433,10 +438,12 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, nPlayout, timeLimit);
         }
-        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
+        if(globalConfig.detailedStat)
+            std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
-    //printVariation();
+    if(globalConfig.detailedStat)
+        printVariation();
 }
 
 Move MCTS::getMove(float temp){
@@ -655,7 +662,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
     //EVALUATION & UPDATE
     if(inEvaluation.size() >= globalConfig.search_thread_num || (playMode == PLAYOUT && searchCounter == nPlayout && !inEvaluation.empty()) ||
-    (root->forcedState != 0 && inEvaluation.empty()) || searchStuck){
+    (root->forcedState != 0 && !inEvaluation.empty()) || searchStuck){
         // wait for the result
         std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);

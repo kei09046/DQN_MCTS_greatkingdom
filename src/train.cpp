@@ -44,8 +44,10 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			moveProb = player->getMoveProb(temp * 5); // infinitesimal temp
 		
 		auto m = std::get<0>(moveProb);
-		sequence.push_back(m);
 		auto [winner, wintype] = game_manager.makeMove(m);
+		if(m != RESIGNMOVE){
+			sequence.push_back(m);
+		}
 
 		if (winner == EMPTY) {
 			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f);
@@ -71,8 +73,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			std::chrono::steady_clock::time_point middle = std::chrono::steady_clock::now();
 			#endif
 
-			int result = (winner == BLACK) ? ((wintype == SCORE) ? 2 : 3) 
-			: ((wintype == SCORE) ? 0 : 1); // if position is black's turn to move, judge from white's perspective.
+			int result = ((winner == BLACK) ? 2 : 0) + ((wintype == CAPTURE) ? 1 : 0);
+			// if position is black's turn to move, judge from white's perspective.
 			float score_diff = game_manager.scoreDiff(WHITE); // komi not applied.
 
 			// calculate train stats
