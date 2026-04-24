@@ -125,7 +125,6 @@ void Node::addChild(const int r, const int c, const Game& ng){
 }
 
 void Node::expand(){
-    Color clr;
     std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
     // improve capture check performance by checking if there is any group with liberty count 1.
@@ -146,7 +145,7 @@ void Node::expand(){
 
                     // if opponent stone is capturable
                     else{
-                        winmove = {i, j};
+                        winmove = {onlyLib / colSize, onlyLib % colSize};
                         forcedState = 2;
                         return;
                     }
@@ -166,7 +165,7 @@ void Node::expand(){
             uint8_t r = idx / colSize;
             uint8_t c = idx % colSize;
             nextGames[idx] = game;
-            clr = nextGames[idx].makeMove({r, c}).first;
+            auto [clr, wintype] = nextGames[idx].makeMove({r, c});
 
             if(clr == turn){ // there is immediate win by score. win in 1.
                 forcedState = 2;
@@ -174,7 +173,8 @@ void Node::expand(){
                 return;
             }
 
-            else if((threat != RESIGNMOVE && nextGames[idx].isLegal(threat)) || clr == Game::reverseColor(turn)){ // self-suicidal move.
+            // there is immediate capture next move, or the move is self-suicidal.
+            else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
                 candidateLegal[idx] = false;
             }
 
@@ -200,26 +200,7 @@ void Node::expand(){
     }
 
     assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
-    // if(threat != RESIGNMOVE && candidateLegal.count() >= 2){
-    //     std::cerr << "threat : " << static_cast<int>(threat.first) << " " << static_cast<int>(threat.second) << std::endl;
-    //     for(int idx = 0; idx < boardSize + 1; ++idx){
-    //         if(candidateLegal[idx]){
-    //             std::cerr << "options : " << idx << " ";
-    //             auto nextOptions = nextGames[idx].getLegalMoves();
-    //             for(int k=0; k < boardSize + 1; ++k){
-    //                 if(nextOptions[k])
-    //                     std::cerr << k << " ";
-    //             }
-    //             std::cerr << std::endl;
-    //             ModelCompare::displayBoardGUI(true, nextGames[idx]);
-    //             break;
-    //         }
-    //     }
-    // }
 
-    // for(Move m : available_moves){
-    //     std::cerr << "available move after expand : " << static_cast<int>(m.first) << "," << static_cast<int>(m.second) << std::endl;
-    // }
     #ifdef measureTime
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
@@ -367,19 +348,23 @@ Node* Node::jump(Move move){
     }
 
     // if no child matches the move, add one. Only happens when human opponent makes suboptimal move.
-    std::cerr << "unexpected move!" << std::endl;
-    Game nGame = game;
-    nGame.makeMove(move);
-    addChild(move.first, move.second, nGame);
-    return child[child.size() - 1];
+    // std::cerr << "unexpected move!" << std::endl;
+    // Game nGame = game;
+    // nGame.makeMove(move);
+    // addChild(move.first, move.second, nGame);
+    // return child[child.size() - 1];
 
-    // std::cerr << "warning! jump to illegal location!" << std::endl;
-    // std::cerr << "requested move : " << move.first << "," << move.second << std::endl;
-    // std::cerr << "available options : " << std::endl;
-    // for(auto p : available_moves)
-    //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    std::cerr << "warning! jump to illegal location!" << std::endl;
+    std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
+    std::cerr << "available options : " << std::endl;
+    for(auto p : available_moves)
+        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
 
-    // return nullptr;
+    std::cerr << "node's state : " << std::endl;
+    ModelCompare::displayBoardGUI(false, game);
+    std::cerr << std::endl;
+
+    return nullptr;
 }
 
 void Node::deleteTree(){
@@ -596,7 +581,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 // if (cur->winmove != RESIGNMOVE){ // won
                 //     evalQ = -1.0f;
                 // }
-                // else if(cur->available_moves.size() == 0){ // lost
+                // else if(cur->forcedState < 0){ // lost
                 //     evalQ = 1.0f;
                 // }
                 break;
@@ -614,7 +599,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             //     }
             //     break;
             // }
-            // if(cur->available_moves.size() == 0){ // lost
+            // if(cur->forcedState < 0){ // lost
             //     evalQ = 1.0f;
             //     if(globalConfig.detailedStat){
             //         evalW = 1.0f;

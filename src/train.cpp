@@ -45,8 +45,12 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		
 		auto m = std::get<0>(moveProb);
 		auto [winner, wintype] = game_manager.makeMove(m);
+
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
+		}
+		else{ // Agent only resigns when capture is unavoidable.
+			wintype = CAPTURE;
 		}
 
 		if (winner == EMPTY) {
