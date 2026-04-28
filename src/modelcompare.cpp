@@ -28,7 +28,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 		
         player_list[0]->reset();
         player_list[1]->reset();
-		
+		//std::cerr << std::endl;
 
 		if (is_shown) {
 			for (auto& moves : seq)

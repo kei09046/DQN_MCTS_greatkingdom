@@ -8,15 +8,6 @@
 #include <utility>
 #include <unordered_map>
 
-std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& availableMoves);
-
-std::vector<float> softmax(const std::vector<float>& logit);
-
-std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift,
-    float score_factor = 0.03f,   // convert points to utility
-    float risk_aversion = 0.003f    // penalty per standard deviation);
-);
-
 class alignas(64) Node{
 public:
     Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);

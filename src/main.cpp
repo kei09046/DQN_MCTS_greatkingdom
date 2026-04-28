@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
         ModelCompare::playGTP(model_file, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
-        globalConfig = loadConfig("../configs/play_config.json");
+        globalConfig = loadConfig("../configs/compare_config.json");
         std::string target = argv[2];
         std::string compare = argv[3];
         float temp = std::stof(argv[4]); // < 1.0f
@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){
-        globalConfig = loadConfig("../configs/play_config.json");
+        globalConfig = loadConfig("../configs/compare_config.json");
         int n_models = argc - 4;
         std::vector<std::string> model_list(n_models);
         for(int i=0; i<n_models; ++i)

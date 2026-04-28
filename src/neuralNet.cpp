@@ -316,7 +316,44 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	return { policy, winprob, get<2>(res).index({0, 0}).item<float>(), scoredist };
 }
 
-void PolicyValueNet::train_step(std::vector<float>& state_batch, 
+void PolicyValueNet::trainStep(std::vector<float>& state_batch, 
+    std::vector<float>& nextmove_batch, std::vector<float>& result_batch, float lr){
+	int B = result_batch.size();
+    auto options = torch::TensorOptions().dtype(torch::kFloat32);
+
+	auto sb = torch::from_blob(state_batch.data(),
+    {B, globalConfig.inputChannel, inputRow, inputCol},
+    options).to(device);
+
+	auto mp = torch::from_blob(nextmove_batch.data(),
+		{B, outputSize},
+		options).to(device);
+
+	auto wb = torch::from_blob(result_batch.data(),
+		{B},
+		options).to(device, torch::kLong);
+
+	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
+	for(int i=0; i<globalConfig.epochs; ++i){
+		optimizer->zero_grad();
+
+		torch::Tensor r1, r2, r3, r4;
+		std::tie(r1, r2, r3, r4) = policy_value_net->forward(sb); 
+
+		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
+		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
+
+		torch::Tensor value_loss = torch::nn::functional::cross_entropy(r2, wb);
+
+		torch::Tensor loss = value_loss + policy_loss;
+		// std::cout << "loss epoch " << i << " " << value_loss.item() << " " << policy_loss.item() << std::endl;
+		loss.backward();
+		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
+		optimizer->step();
+	}
+}
+
+void PolicyValueNet::trainStep(std::vector<float>& state_batch, 
     std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch, float lr) {
 	// for(const float& v : score_batch)
 	// 	std::cerr << v << " ";
@@ -324,31 +361,31 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 	// for(const float& v : result_batch)
 	// 	std::cerr << v << " ";
 	// std::cerr << std::endl;
-
+	int B = result_batch.size();
     auto options = torch::TensorOptions().dtype(torch::kFloat32);
 
 	auto sb = torch::from_blob(state_batch.data(),
-    {globalConfig.batchSize, globalConfig.inputChannel, inputRow, inputCol},
+    {B, globalConfig.inputChannel, inputRow, inputCol},
     options).to(device);
 
 	auto mp = torch::from_blob(nextmove_batch.data(),
-		{globalConfig.batchSize, outputSize},
+		{B, outputSize},
 		options).to(device);
 
 	auto wb = torch::from_blob(result_batch.data(),
-		{globalConfig.batchSize},
+		{B},
 		options).to(device, torch::kLong);
 
 	auto sd = torch::from_blob(score_batch.data(),
-		{globalConfig.batchSize},
+		{B},
 		options).to(device);
 
 	auto scoreDist = makeScoreDistributionBatch(score_batch, 15.0f, 1.0f, 5);
 	auto sdd = torch::from_blob(scoreDist.data(),
-		{globalConfig.batchSize, 31},
+		{B, 31},
 		options).to(device);
 
-	auto mask = (wb % 2 == 0);
+	// auto mask = (wb % 2 == 0);
 	// auto mask = torch::where(
 	// 	(wb % 2 == 0),
 	// 	torch::ones_like(wb, torch::kFloat),          // for score win → weight 1
@@ -367,17 +404,17 @@ void PolicyValueNet::train_step(std::vector<float>& state_batch,
 
 		torch::Tensor value_loss = torch::nn::functional::cross_entropy(r2, wb);
 
-		torch::Tensor diff = (r3.view(-1) - sd);
-		torch::Tensor masked_score = diff * diff * mask;   // mask: shape [B], float (0 or 1)
-		torch::Tensor score_loss = masked_score.sum() / (mask.sum() + 0.000001f);
+		torch::Tensor score_loss = torch::mse_loss(r3.view(-1), sd);
+		// torch::Tensor masked_score = diff * diff * mask;   // mask: shape [B], float (0 or 1)
+		// torch::Tensor score_loss = masked_score.sum() / (mask.sum() + 0.000001f);
 
 		torch::Tensor log_score_predict = torch::log_softmax(r4, 1);
-		torch::Tensor per_sample = -torch::sum(sdd * log_score_predict, 1); // [B]
-		torch::Tensor masked_score_dist = per_sample * mask;  // [B]
-		torch::Tensor score_dist_loss = masked_score_dist.sum() / (mask.sum() + 0.000001f);
+		torch::Tensor score_dist_loss = -torch::mean(torch::sum(sdd * log_score_predict, 1)); // [B]
+		// torch::Tensor masked_score_dist = per_sample * mask;  // [B]
+		// torch::Tensor score_dist_loss = masked_score_dist.sum() / (mask.sum() + 0.000001f);
 
 
-		torch::Tensor loss = value_loss + policy_loss + score_loss + score_dist_loss;
+		torch::Tensor loss = value_loss + policy_loss + score_loss * 2 + score_dist_loss * 2;
 		// std::cout << "loss epoch " << i << " " << value_loss.item() << " " << policy_loss.item() << " " << score_loss.item() << " " << score_dist_loss.item() << std::endl;
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);

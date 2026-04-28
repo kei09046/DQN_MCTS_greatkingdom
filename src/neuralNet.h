@@ -94,7 +94,10 @@ public:
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
 	// 	std::array<float, batchSize>& result_batch, float lr);
 
-	void train_step(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+	void trainStep(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+		std::vector<float>& result_batch, float lr);
+
+	void trainStep(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
 		std::vector<float>& result_batch, std::vector<float>& score_batch, float lr);
 
 	void save_model(const std::string& model_file) const;

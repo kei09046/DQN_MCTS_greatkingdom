@@ -13,89 +13,91 @@
 #include <ranges>
 
 #include "modelcompare.h"
-const Hash hash;
 
 
-std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
-    assert(logit.size() == outputSize);
+namespace{
+    const Hash hash;
 
-    std::vector<float> n_logit;
-    n_logit.reserve(available_moves.size());
-    for(const auto& move : available_moves){
-        n_logit.push_back(logit[move.first * colSize + move.second]);
+    std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
+        assert(logit.size() == outputSize);
+
+        std::vector<float> n_logit;
+        n_logit.reserve(available_moves.size());
+        for(const auto& move : available_moves){
+            n_logit.push_back(logit[move.first * colSize + move.second]);
+        }
+
+        std::vector<float> exp_logit(n_logit.size());
+        float max_logit = *std::max_element(n_logit.begin(), n_logit.end()); // For numerical stability
+
+        // Compute exponentials after subtracting max_logit
+        float sum_exp = 0.0f;
+        for (int i = 0; i < n_logit.size(); ++i) {
+            exp_logit[i] = std::exp(n_logit[i] - max_logit);
+            sum_exp += exp_logit[i];
+        }
+
+        // Normalize
+        for (float& val : exp_logit) {
+            val /= sum_exp;
+        }
+        return exp_logit;
     }
 
-    std::vector<float> exp_logit(n_logit.size());
-    float max_logit = *std::max_element(n_logit.begin(), n_logit.end()); // For numerical stability
+    std::vector<float> softmax(const std::vector<float>& logit){
+        std::vector<float> ret(logit.size());
 
-    // Compute exponentials after subtracting max_logit
-    float sum_exp = 0.0f;
-    for (int i = 0; i < n_logit.size(); ++i) {
-        exp_logit[i] = std::exp(n_logit[i] - max_logit);
-        sum_exp += exp_logit[i];
+        float maxLogit = *std::max_element(logit.begin(), logit.end());
+        float sum = 0.0f;
+        for (int i = 0; i < logit.size(); ++i) {
+            ret[i] = std::exp(logit[i] - maxLogit);
+            sum += ret[i];
+        }
+        for (int i = 0; i < 4; ++i) ret[i] /= sum; // apply softmax to get actual probability
+
+        return ret;
     }
 
-    // Normalize
-    for (float& val : exp_logit) {
-        val /= sum_exp;
-    }
-    return exp_logit;
-}
-
-std::vector<float> softmax(const std::vector<float>& logit){
-    std::vector<float> ret(logit.size());
-
-    float maxLogit = *std::max_element(logit.begin(), logit.end());
-    float sum = 0.0f;
-    for (int i = 0; i < logit.size(); ++i) {
-        ret[i] = std::exp(logit[i] - maxLogit);
-        sum += ret[i];
-    }
-    for (int i = 0; i < 4; ++i) ret[i] /= sum; // apply softmax to get actual probability
-
-    return ret;
-}
-
-std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift, float score_factor, float risk_aversion)
-{
-    assert(winLogit.size() == 4 && scoreDist.size() == 31);
-    // softmax 
-    std::vector<float> p = softmax(winLogit);
-    std::vector<float> s = softmax(scoreDist);
-
-    float p_win  = p[0] + p[1];
-    float p_loss = p[2] + p[3];
-
-    // Step 1: compute mean
-    float score_mean = 0.0f;
-    for (int i = 0; i < 31; ++i)
+    std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift, float score_factor=0.03f, float risk_aversion=0.003f)
     {
-        score_mean += (i-15) * s[i];
+        assert(winLogit.size() == 4 && scoreDist.size() == 31);
+        // softmax 
+        std::vector<float> p = softmax(winLogit);
+        std::vector<float> s = softmax(scoreDist);
+
+        float p_win  = p[0] + p[1];
+        float p_loss = p[2] + p[3];
+
+        // Step 1: compute mean
+        float score_mean = 0.0f;
+        for (int i = 0; i < 31; ++i)
+        {
+            score_mean += (i-15) * s[i];
+        }
+
+        // Step 2: compute variance
+        float score_std = 0.0f;
+        for (int i = 0; i < 31; ++i)
+        {
+            float diff = (i-15) - score_mean;
+            score_std += diff * diff * s[i];
+        }
+        score_std = std::sqrt(score_std);
+
+        // Step 1: convert score to utility relative to komi
+        float score_util = (score_mean + scoreShift) * score_factor;
+
+        // Step 3: optional risk aversion penalty
+        float risk_penalty = risk_aversion * score_std;
+
+        // Step 4: combine win probability and score utility
+        // A simple linear combination
+        float utility = (2 * p_win - 1.0f) + std::tanh((score_util - risk_penalty) * (p[0] + p[2]));
+        
+        return {utility, p_win};
     }
 
-    // Step 2: compute variance
-    float score_std = 0.0f;
-    for (int i = 0; i < 31; ++i)
-    {
-        float diff = (i-15) - score_mean;
-        score_std += diff * diff * s[i];
-    }
-    score_std = std::sqrt(score_std);
-
-    // Step 1: convert score to utility relative to komi
-    float score_util = (score_mean + scoreShift) * score_factor;
-
-    // Step 3: optional risk aversion penalty
-    float risk_penalty = risk_aversion * score_std;
-
-    // Step 4: combine win probability and score utility
-    // A simple linear combination
-    float utility = (2 * p_win - 1.0f) + std::tanh((score_util - risk_penalty) * (p[0] + p[2]));
-    
-    return {utility, p_win};
 }
-
-
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
@@ -249,6 +251,9 @@ Move Node::selectMove(float temp){
             << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
         return winmove;
     }
+    else if(available_moves.size() == 0){
+        return RESIGNMOVE;
+    }
     else if(globalConfig.detailedStat){
         std::vector<int> v(available_moves.size());
         std::iota(v.begin(), v.end(), 0);
@@ -300,7 +305,6 @@ MoveData Node::selectMoveProb(float temp){
         return {winmove, visitPortion};
     }
     if(available_moves.size() == 0){
-        std::cout << "resigning!" << std::endl;
         return {RESIGNMOVE, visitPortion};
     }
     std::vector<float> cumulative(available_moves.size()), weights(available_moves.size());

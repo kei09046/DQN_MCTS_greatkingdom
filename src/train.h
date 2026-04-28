@@ -26,7 +26,7 @@
 
 class TrainPipeline {
 private:
-	float learning_rate = 0.001f;
+	float learning_rate = 0.0005f;
 	int save_cnt; // indicate how many games have been played; used for model naming
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet prev_policy; // used for comparison
@@ -42,7 +42,7 @@ private:
 	void pin_threads_to_core(std::thread& th, int core_id);
 
 public:
-    std::deque<std::shared_ptr<TrainData>>* game_buffer;
+    std::deque<std::shared_ptr<TrainData>>* gameBuffer[2];
 	// std::array<float, inputChannel * batchSize * inputSize>* state_batch;
 	// std::array<float, batchSize * outputSize>* nextmove_batch;
 	// std::array<float, batchSize>* result_batch;
@@ -52,7 +52,7 @@ public:
 
 	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // used during training
 
-	void insert_data(const TrainData& data);
+	void insertData(const TrainData& data, uint8_t wintype);
 
 	void train();
 
