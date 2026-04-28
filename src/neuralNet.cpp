@@ -303,7 +303,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	std::vector<float> winprob;
 	pt = get<1>(res).data_ptr<float>();
 	for (int i=0; i<4; ++i) {
-		policy.push_back(pt[i]);
+		winprob.push_back(pt[i]);
 	}
 
 	std::vector<float> scoredist;
