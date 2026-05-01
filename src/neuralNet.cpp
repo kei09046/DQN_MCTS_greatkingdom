@@ -340,7 +340,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 
 	std::vector<float> capturemap;
 	capturemap.reserve(boardSize);
-	pt = get<3>(res).data_ptr<float>();
+	pt = get<4>(res).data_ptr<float>();
 	for(int i=0; i<boardSize; ++i){
 		capturemap.push_back(pt[i]);
 	}
