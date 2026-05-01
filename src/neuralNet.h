@@ -34,7 +34,7 @@ TORCH_MODULE(ResidualBlock);
 
 class NetBase : public torch::nn::Module {
 public:
-    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
+    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
     virtual ~NetBase() = default;
 };
 
@@ -44,24 +44,37 @@ public:
 	Net(int channelSize, int blockSize);
 	int channelSize;
 
-	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
+	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
 	torch::nn::ModuleList blocks;
 	
+	// action
 	torch::nn::Conv2d at_cv3;
 	torch::nn::BatchNorm2d at_bn3;
 	torch::nn::Linear at_fc1;
+
+	// value
 	torch::nn::Conv2d v_cv3;
 	torch::nn::BatchNorm2d v_bn3;
 	torch::nn::Linear v_fc1;
 	torch::nn::Linear v_fc2;
+
+	// score scalar
 	torch::nn::Conv2d sc_cv3;
 	torch::nn::BatchNorm2d sc_bn3;
 	torch::nn::Linear sc_fc1;
-	torch::nn::Linear sc_fc2; // predicts single score result. Only calculates from BLACK players perspective!!
-	torch::nn::Linear sc_fc_belief; // predicts score distribution
+	torch::nn::Linear sc_fc2;
+	
+	// score map
+	torch::nn::Conv2d sc_map_cv3;
+	torch::nn::Conv2d sc_map_cv4;
+
+	// capture
+	torch::nn::Conv2d cap_cv3;
+	torch::nn::BatchNorm2d cap_bn3;
+	torch::nn::Linear cap_fc1;
 };
 
 class PolicyValueNet {
@@ -94,11 +107,11 @@ public:
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
 	// 	std::array<float, batchSize>& result_batch, float lr);
 
-	void trainStep(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
-		std::vector<float>& result_batch, float lr);
+	std::tuple<float, float, float> trainCap(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+		std::vector<float>& result_batch, std::vector<float>& capture_batch, float lr);
 
-	void trainStep(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
-		std::vector<float>& result_batch, std::vector<float>& score_batch, float lr);
+	std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
 

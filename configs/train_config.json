@@ -51,7 +51,7 @@
     "compare_game_cnt": 96,
     "compare_thread_num": 12,
     "search_thread_num": 4,
-    "train_wait_time": 96000,
+    "train_wait_time": 200000,
     "save_freq": 96,
     "capacity": 10000
   }

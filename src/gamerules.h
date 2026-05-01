@@ -47,11 +47,14 @@ public:
 
     void onGameEnd(Color winner);
 
-    Color makeMoveNoScoreUpdate(Move move);
+    // Color makeMoveNoScoreUpdate(Move move);
 
-    Color updateScoreAfter(Move move);
+    // Color updateScoreAfter(Move move);
 
     std::pair<Color, Wintype> makeMove(Move move);
+
+    // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
+    std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[BLACK] - score[WHITE]) * ((turn == BLACK) ? 1.0f : -1.0f);
@@ -142,6 +145,8 @@ private:
     void mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2);
 
     Color captureResultbyMove(uint8_t r, uint8_t c);
+
+    std::pair<Color, std::vector<float>> captureResultWithStat(uint8_t r, uint8_t c);
 
     bool canbeScore(uint8_t r, uint8_t c, Color clr);
 

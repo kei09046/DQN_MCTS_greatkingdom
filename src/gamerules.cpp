@@ -83,6 +83,55 @@ Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     return EMPTY;
 }
 
+std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint8_t c){
+    Color winner = EMPTY;
+    std::vector<uint8_t> capturedChainIdx;
+
+    uint8_t cord = static_cast<uint8_t>(r * colSize + c);
+    stones[r][c] = {cord, cord}; // head, next
+    chains[r * colSize + c] = {1U, {}};
+
+    for (int i = 0; i < 4; ++i) {
+        uint8_t nr = r + dr[i], nc = c + dc[i];
+        if (!inbound(nr, nc)) continue;
+
+        if(board[nr][nc] == EMPTY){ 
+            chains[findHead(r, c)].liberties.set(nr * colSize + nc, true);
+        }
+        else if (board[nr][nc] == board[r][c]){
+            mergeChains(r, c, nr, nc);
+        }
+        else if (board[nr][nc] == reverseColor(board[r][c])){ 
+            auto& adj_chain = chains[findHead(nr, nc)];
+            adj_chain.liberties.set(r * colSize + c, false);
+            if(adj_chain.liberties.none()){
+                winner = board[r][c];
+                capturedChainIdx.push_back(findHead(nr, nc));
+            }
+        }
+        // else adjacent to neutral; nothing should happen
+    }
+
+    if(winner == EMPTY && chains[findHead(r, c)].liberties.none()){
+        winner = reverseColor(board[r][c]);
+        capturedChainIdx.push_back(findHead(r, c));
+    }
+
+    if(winner != EMPTY){
+        std::vector<float> captureMap(boardSize, 0.0f);
+        for(auto idx : capturedChainIdx){
+            uint8_t cur = idx, start = idx;
+            do {
+                captureMap[cur] = 1.0f;
+                cur = stones[cur / colSize][cur % colSize].next;
+            } while (cur != start);
+        }
+        return {winner, captureMap};
+    }
+    
+    return {EMPTY, {}};
+}
+
 uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
     if (!(inbound(r, c) && (scoreBoard[r][c] & EMPTY)))
         return 0;
@@ -269,19 +318,25 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
     return {EMPTY, NONE};
 }
 
-Color Game::makeMoveNoScoreUpdate(Move move){
+std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
+    if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties; add all of them to captureMap.
+        std::vector<float> captureMap(boardSize, 0.0f);
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                captureMap[i * colSize + j] = (board[i][j] == currentTurn && chains[findHead(i, j)].liberties.count() == 1) ? 1.0f : 0.0f;
+            }
+        }
 
-    if(move == RESIGNMOVE){ // resign
         switchTurn();
-        return currentTurn;
+        return {currentTurn, RESIGN, captureMap};
     }
 
     if(move == PASSMOVE){ // pass
         switchTurn();
         moveCount++;
-        return EMPTY;
+        return {EMPTY, NONE, {}};
     }
 
     uint8_t r = move.first;
@@ -289,7 +344,6 @@ Color Game::makeMoveNoScoreUpdate(Move move){
     // update board & scoreBoard
     board[r][c] = currentTurn;
     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
-
     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
         uint8_t nr = r + dr[i];
         uint8_t nc = c + dc[i];
@@ -298,27 +352,77 @@ Color Game::makeMoveNoScoreUpdate(Move move){
         }
     }
 
-    Color clr = captureResultbyMove(r, c);
+    auto [clr, captureMap] = captureResultWithStat(r, c);
     if(clr != EMPTY)
-        return clr;
+        return {clr, CAPTURE, captureMap};
+    if(moveCount >= 2)
+        updateScore(r, c);
     
     switchTurn();
     moveCount++;
-    return EMPTY;
-}
-
-Color Game::updateScoreAfter(Move move){
-    if(move == PASSMOVE)
-        return EMPTY;
-        
-    if(moveCount >= 2)
-        updateScore(move.first, move.second);
 
     if(getLegalMoveCount() == 0 || moveCount > boardSize){
-        return gameEnd();
+        std::vector<float> scoreMap(boardSize);
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                scoreMap[i * colSize + j] = (scoreBoard[i][j] == BLACK) ? -1.0f : (scoreBoard[i][j] == WHITE ? 1.0f : 0.0f);
+            }
+        }
+        return {gameEnd(), SCORE, scoreMap};
     }
-    return EMPTY;
+    return {EMPTY, NONE, {}};
 }
+
+// Color Game::makeMoveNoScoreUpdate(Move move){
+//     lastTwoMoves[0] = lastTwoMoves[1];
+//     lastTwoMoves[1] = move;
+
+//     if(move == RESIGNMOVE){ // resign
+//         switchTurn();
+//         return currentTurn;
+//     }
+
+//     if(move == PASSMOVE){ // pass
+//         switchTurn();
+//         moveCount++;
+//         return EMPTY;
+//     }
+
+//     uint8_t r = move.first;
+//     uint8_t c = move.second;
+//     // update board & scoreBoard
+//     board[r][c] = currentTurn;
+//     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
+
+//     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
+//         uint8_t nr = r + dr[i];
+//         uint8_t nc = c + dc[i];
+//         if(inbound(nr, nc)){
+//             scoreBoard[nr][nc] |= adjTo(currentTurn);
+//         }
+//     }
+
+//     Color clr = captureResultbyMove(r, c);
+//     if(clr != EMPTY)
+//         return clr;
+    
+//     switchTurn();
+//     moveCount++;
+//     return EMPTY;
+// }
+
+// Color Game::updateScoreAfter(Move move){
+//     if(move == PASSMOVE)
+//         return EMPTY;
+        
+//     if(moveCount >= 2)
+//         updateScore(move.first, move.second);
+
+//     if(getLegalMoveCount() == 0 || moveCount > boardSize){
+//         return gameEnd();
+//     }
+//     return EMPTY;
+// }
 
 void Game::onGameEnd(Color winner){
     std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;

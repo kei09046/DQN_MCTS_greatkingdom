@@ -11,7 +11,7 @@
 
 // for hash
 using HashValue = uint64_t;
-using PolicyValueOutput = std::tuple<std::vector<float>, std::vector<float>, float, std::vector<float>>; // policy, expected result, score diff, score distribution
+using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vector<float>, std::vector<float>>; // policy, winP, score diff, score map, capture map
 
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
@@ -19,7 +19,7 @@ using MoveData = std::tuple<Move, std::vector<float> >; // move + move probabili
 
 using Color = uint8_t;
 using Wintype = uint8_t;
-using TrainData = std::tuple<std::vector<float>, std::vector<float>, Wintype, float>; // board, moveprob, outcome, score diff
+using TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>>; // board, moveprob, outcome, score diff, (score map/capture map)
 
 
 constexpr int rowSize = 9;

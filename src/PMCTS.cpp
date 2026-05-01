@@ -11,6 +11,7 @@
 #include <numeric>
 #include <chrono>
 #include <ranges>
+#include <execution>
 
 #include "modelcompare.h"
 
@@ -58,45 +59,40 @@ namespace{
         return ret;
     }
 
-    std::pair<float, float> calculateQ(const std::vector<float>& winLogit, const std::vector<float>& scoreDist, float scoreShift, float score_factor=0.03f, float risk_aversion=0.003f)
+    std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game)
     {
-        assert(winLogit.size() == 4 && scoreDist.size() == 31);
-        // softmax 
-        std::vector<float> p = softmax(winLogit);
-        std::vector<float> s = softmax(scoreDist);
+        const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = *nnOutput;
 
-        float p_win  = p[0] + p[1];
-        float p_loss = p[2] + p[3];
+        float captureV[2] = {0.0f, 0.0f};
+        float scoreV = std::reduce(std::execution::unseq, scoreMap.begin(), scoreMap.end()) + scoreEXP;
 
-        // Step 1: compute mean
-        float score_mean = 0.0f;
-        for (int i = 0; i < 31; ++i)
-        {
-            score_mean += (i-15) * s[i];
+        const Color turn = game.getTurn();
+        std::bitset<boardSize> mark;
+        for(int i=0; i<inputSize; ++i){
+            int cidx = game.getChainIdx(i);
+		    const Chain c = game.getChain(i);
+
+		    if(c.size != 0 && !mark[cidx]){
+			    mark[cidx] = true;
+                auto head = game.getStone({i / colSize, i % colSize}).head;
+                auto cur = head;
+                float avgCapChance = 0.0f;
+
+                do {
+                    avgCapChance += captureMap[i];
+                    cur = game.getStone({cur/colSize, cur%colSize}).next;
+                } while (cur != head);
+
+                avgCapChance /= c.size;
+
+                int type = game.getBoard({i / colSize, i % colSize}) == turn ? 0 : 1;
+                captureV[type] = (captureV[type] > avgCapChance) ? captureV[type] : avgCapChance;
+            }
         }
 
-        // Step 2: compute variance
-        float score_std = 0.0f;
-        for (int i = 0; i < 31; ++i)
-        {
-            float diff = (i-15) - score_mean;
-            score_std += diff * diff * s[i];
-        }
-        score_std = std::sqrt(score_std);
-
-        // Step 1: convert score to utility relative to komi
-        float score_util = (score_mean + scoreShift) * score_factor;
-
-        // Step 3: optional risk aversion penalty
-        float risk_penalty = risk_aversion * score_std;
-
-        // Step 4: combine win probability and score utility
-        // A simple linear combination
-        float utility = (2 * p_win - 1.0f) + std::tanh((score_util - risk_penalty) * (p[0] + p[2]));
-        
-        return {utility, p_win};
+        float utility = winP * 0.75 + (captureV[0] - captureV[1]) * 0.25 + scoreV / boardSize;
+        return {utility, winP};
     }
-
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
@@ -657,14 +653,12 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
                 if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                    std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), 
-                    (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi));
+                    std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
                     evalS = std::get<2>(*(buf->result));
                     evalQ = cur->initQ;
                 }
                 else{
-                    evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)),
-                     (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)).first;
+                    evalQ = calculateQ(buf->result, cur->game).first;
                 }
 
                 // if eval is available right now, do param update right away.
@@ -693,12 +687,13 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
             float evalQ = 0.0f, evalW = 0.0f, evalS = 0.0f;
             if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                std::tie(cur->initQ, evalW) = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi));
+                std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
+                //(cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)
                 evalS = std::get<2>(*(buf->result));
                 evalQ = cur->initQ;
             }
             else{
-                evalQ = calculateQ(std::get<1>(*(buf->result)), std::get<3>(*(buf->result)), (cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)).first;
+                evalQ = calculateQ(buf->result, cur->game).first;
             }
 
             // BACKUP (revert VL + add value)
