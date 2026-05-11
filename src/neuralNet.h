@@ -73,8 +73,7 @@ public:
 
 	// capture
 	torch::nn::Conv2d cap_cv3;
-	torch::nn::BatchNorm2d cap_bn3;
-	torch::nn::Linear cap_fc1;
+	torch::nn::Conv2d cap_cv4;
 };
 
 class PolicyValueNet {

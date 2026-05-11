@@ -10,7 +10,7 @@
 
 class alignas(64) Node{
 public:
-    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table);
+    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const transposTable);
 
     Move selectMove(float temperature);
 
@@ -32,6 +32,7 @@ private:
     // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP;
     std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
+    std::array<int, outputSize> transferTable; 
     const Color turn;
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
@@ -39,7 +40,7 @@ private:
     std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
     Move winmove; // if RESIGNMOVE : there is no winning move.
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
-    std::unordered_map<HashValue, Node*>* const trans_table;
+    std::unordered_map<HashValue, Node*>* const transposTable;
 
     void addChild(const int r, const int c, const Game& ng);
 
@@ -78,7 +79,7 @@ public:
 private:
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
-    std::unordered_map<HashValue, Node*>* trans_table;
+    std::unordered_map<HashValue, Node*>* transposTable;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,

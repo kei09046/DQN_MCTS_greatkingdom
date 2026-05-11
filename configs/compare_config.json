@@ -3,8 +3,8 @@
     "transTable": false,
     "dirichletNoise": false,
     "googleDrive": false,
-    "FPU": 0.15,
-    "detailedStat": true
+    "FPU": -1.0,
+    "detailedStat": false
   },
 
   "path": {
@@ -31,7 +31,7 @@
   "mcts": {
     "mode": "playout",
     "time": 10,
-    "nPlayout": 4000,
+    "nPlayout": 400,
     "cPuct": 2.0
   },
 
@@ -48,10 +48,10 @@
   "train": {
     "epochs": 5,
     "check_freq": 960,
-    "compare_game_cnt": 120,
+    "compare_game_cnt": 96,
     "compare_thread_num": 12,
     "search_thread_num": 4,
-    "train_wait_time": 64000,
+    "train_wait_time": 200000,
     "save_freq": 96,
     "capacity": 10000
   }

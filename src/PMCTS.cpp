@@ -19,21 +19,22 @@
 namespace{
     const Hash hash;
 
-    std::vector<float> softmax(const std::vector<float>& logit, const std::vector<Move>& available_moves){
-        assert(logit.size() == outputSize);
+    std::vector<float> softmax(const std::vector<float>& logit, const std::array<int, outputSize>& transferTable, const int moveSize){
+        //std::cerr << "softmax start" << std::endl;
 
-        std::vector<float> n_logit;
-        n_logit.reserve(available_moves.size());
-        for(const auto& move : available_moves){
-            n_logit.push_back(logit[move.first * colSize + move.second]);
+        std::vector<float> n_logit(moveSize, -5.0f);
+
+        for(int i=0; i<outputSize; ++i){
+            if(transferTable[i] >= 0)
+                n_logit[transferTable[i]] = std::max(n_logit[transferTable[i]], logit[i]);
         }
 
-        std::vector<float> exp_logit(n_logit.size());
+        std::vector<float> exp_logit(moveSize);
         float max_logit = *std::max_element(n_logit.begin(), n_logit.end()); // For numerical stability
 
         // Compute exponentials after subtracting max_logit
         float sum_exp = 0.0f;
-        for (int i = 0; i < n_logit.size(); ++i) {
+        for (int i = 0; i < moveSize; ++i) {
             exp_logit[i] = std::exp(n_logit[i] - max_logit);
             sum_exp += exp_logit[i];
         }
@@ -42,21 +43,8 @@ namespace{
         for (float& val : exp_logit) {
             val /= sum_exp;
         }
+        //std::cerr << "softmax done" << std::endl;
         return exp_logit;
-    }
-
-    std::vector<float> softmax(const std::vector<float>& logit){
-        std::vector<float> ret(logit.size());
-
-        float maxLogit = *std::max_element(logit.begin(), logit.end());
-        float sum = 0.0f;
-        for (int i = 0; i < logit.size(); ++i) {
-            ret[i] = std::exp(logit[i] - maxLogit);
-            sum += ret[i];
-        }
-        for (int i = 0; i < 4; ++i) ret[i] /= sum; // apply softmax to get actual probability
-
-        return ret;
     }
 
     std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game)
@@ -64,9 +52,17 @@ namespace{
         const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = *nnOutput;
 
         float captureV[2] = {0.0f, 0.0f};
-        float scoreV = std::reduce(std::execution::unseq, scoreMap.begin(), scoreMap.end()) + scoreEXP;
-
         const Color turn = game.getTurn();
+        const Color oppturn = Game::reverseColor(turn);
+        float scoreV = scoreEXP + ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
+
+        for(int i=0; i<boardSize; ++i){
+            if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
+                Color owned = game.getScoreBoard({i / colSize, i % colSize});
+                scoreV += (owned == oppturn) ? 1.0f : ((owned == turn) ? -1.0f : scoreMap[i]);
+            }
+        }
+
         std::bitset<boardSize> mark;
         for(int i=0; i<inputSize; ++i){
             int cidx = game.getChainIdx(i);
@@ -79,7 +75,7 @@ namespace{
                 float avgCapChance = 0.0f;
 
                 do {
-                    avgCapChance += captureMap[i];
+                    avgCapChance += captureMap[cur];
                     cur = game.getStone({cur/colSize, cur%colSize}).next;
                 } while (cur != head);
 
@@ -90,15 +86,38 @@ namespace{
             }
         }
 
-        float utility = winP * 0.75 + (captureV[0] - captureV[1]) * 0.25 + scoreV / boardSize;
+        //float capChance = std::max(captureV[0], captureV[1]) * 0.5f;
+        float utility = winP * 0.5f + (captureV[0] - captureV[1]) * 0.25f + std::tanh(scoreV / 5.0f) * 0.25f;
+        if(globalConfig.detailedStat){
+            static int cntr = 0;
+            if(cntr++ % 100 == 0){
+                ModelCompare::displayBoardGUI(true, game);
+                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 5.0f) << " " << utility << std::endl;
+                for(int i=0; i<rowSize; ++i){
+                    for(int j=0; j<colSize; ++j){
+                        std::cout << scoreMap[i * colSize + j] << " ";
+                    }
+                    std::cout << std::endl;
+                }
+                std::cout << std::endl;
+                for(int i=0; i<rowSize; ++i){
+                    for(int j=0; j<colSize; ++j){
+                        std::cout << captureMap[i * colSize + j] << " ";
+                    }
+                    std::cout << std::endl;
+                }
+                std::cout << std::endl;
+            }
+        }
         return {utility, winP};
     }
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
-Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const trans_table):
+Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), trans_table(trans_table){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), transposTable(transposTable){
+    transferTable.fill(-1);
 }
 
 void Node::addChild(const int r, const int c, const Game& ng){
@@ -106,23 +125,26 @@ void Node::addChild(const int r, const int c, const Game& ng){
     Node* childNode;
 
     if(globalConfig.transTable){
-        if(trans_table->count(newHash) == 0){
-            childNode = new Node(ng, newHash, trans_table);
-            (*trans_table)[newHash] = childNode;
+        if(transposTable->count(newHash) == 0){
+            childNode = new Node(ng, newHash, transposTable);
+            (*transposTable)[newHash] = childNode;
         }
         else{
-            childNode = (*trans_table)[newHash];
+            childNode = (*transposTable)[newHash];
         }
     }
     else{
-        childNode = new Node(ng, newHash, trans_table);
+        childNode = new Node(ng, newHash, transposTable);
     }
 
     child.push_back(childNode);
+    //std::cerr << "adding! " << r << " " << c << std::endl;
     available_moves.push_back({r, c});
+    //std::cerr << "adding done!" << std::endl;
 }
 
 void Node::expand(){
+    //std::cerr << "expanding!" << std::endl;
     std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
     // improve capture check performance by checking if there is any group with liberty count 1.
@@ -189,16 +211,21 @@ void Node::expand(){
     }
     
     // finally add child
+    int cntr = 0;
     for(int idx = 0; idx < boardSize + 1; ++idx){
         if(candidateLegal[idx]){
-            uint8_t r = idx / colSize;
-            uint8_t c = idx % colSize;
-            addChild(r, c, nextGames[idx]);
+            addChild(idx/colSize, idx%colSize, nextGames[idx]);
+            transferTable[idx] = cntr;
+            const auto acquired = game.getLegalMoves() ^ nextGames[idx].getLegalMoves();
+            for (size_t i = acquired._Find_first(); i < acquired.size(); i = acquired._Find_next(i)) {
+                transferTable[i] = cntr;
+            }
+            cntr++;
         }
     }
 
     assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
-
+    //std::cerr << "expand finished" << std::endl;
     #ifdef measureTime
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
@@ -389,7 +416,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
             auto buf = std::make_shared<NNResultBuf>();
             evaluator->evaluate(buf, &game, hashValue);
 
-            edgeP = softmax(std::get<0>(*(buf->result)), available_moves);
+            edgeP = softmax(std::get<0>(*(buf->result)), transferTable, available_moves.size());
             edgeN.assign(edgeP.size(), 0.0f);
         }
     }
@@ -402,23 +429,23 @@ void Node::addDirichletNoise(Evaluator* evaluator){
 }
 
 MCTS::MCTS(Evaluator* evaluator) : 
-evaluator(evaluator), trans_table(new std::unordered_map<HashValue, Node*>()){
-    root = new Node(Game(), hash.baseHash(), trans_table);
+evaluator(evaluator), transposTable(new std::unordered_map<HashValue, Node*>()){
+    root = new Node(Game(), hash.baseHash(), transposTable);
     if(globalConfig.transTable){
-        (*trans_table)[hash.baseHash()] = root;
+        (*transposTable)[hash.baseHash()] = root;
     }
 }
 
 MCTS::MCTS(MCTS&& other) noexcept
-    : root(other.root), evaluator(other.evaluator), trans_table(other.trans_table)
+    : root(other.root), evaluator(other.evaluator), transposTable(other.transposTable)
 {
     other.root = nullptr;
     other.evaluator = nullptr;
-    other.trans_table = nullptr;
+    other.transposTable = nullptr;
 }
 
 MCTS::~MCTS(){
-    delete trans_table;
+    delete transposTable;
 }
 
 void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit){
@@ -543,19 +570,19 @@ bool MCTS::jump(Move move){
 
 void MCTS::reset(){
     if(globalConfig.transTable){ // if transposition table is used, then all node is deleted when reset.
-        for (auto& [hash, node] : *trans_table) {
+        for (auto& [hash, node] : *transposTable) {
             delete node;
         }
-        trans_table->clear();
+        transposTable->clear();
     }
     else{ // otherwise, parent nodes are deleted after each move is made.
         root->deleteTree();
     }
 
-    root = new Node(Game(), hash.baseHash(), trans_table);
+    root = new Node(Game(), hash.baseHash(), transposTable);
 
     if(globalConfig.transTable){
-        (*trans_table)[hash.baseHash()] = root;
+        (*transposTable)[hash.baseHash()] = root;
     }
 }
 
@@ -578,35 +605,12 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             if (cur->N == 0.0f && (cur != root || !globalConfig.dirichletNoise)) { // first time visit
                 cur->expand();
                 forced = cur->forcedState;
-                // if (cur->winmove != RESIGNMOVE){ // won
-                //     evalQ = -1.0f;
-                // }
-                // else if(cur->forcedState < 0){ // lost
-                //     evalQ = 1.0f;
-                // }
                 break;
             }
 
             forced = cur->forcedState;
             if(forced != 0)
                 break;
-
-            // if (cur->winmove != RESIGNMOVE){ // won
-            //     evalQ = -1.0f;
-            //     if(globalConfig.detailedStat){
-            //         evalW = 0.0f;
-            //         evalS = -cur->game.scoreDiff(cur->turn);
-            //     }
-            //     break;
-            // }
-            // if(cur->forcedState < 0){ // lost
-            //     evalQ = 1.0f;
-            //     if(globalConfig.detailedStat){
-            //         evalW = 1.0f;
-            //         evalS = -cur->game.scoreDiff(cur->turn);
-            //     }
-            //     break;
-            // }
 
             if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is evaluating, return
                 searchStuck = true;
@@ -649,7 +653,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             }
             else{
                 std::vector<float> evalP = std::get<0>(*(buf->result));
-                cur->edgeP = softmax(evalP, cur->available_moves);
+                cur->edgeP = softmax(evalP, cur->transferTable, cur->available_moves.size());
                 cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
                 if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
@@ -682,7 +686,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             Node* cur = inEvaluation.at(i); 
 
             std::vector<float> evalP = std::get<0>(*(buf->result));
-            cur->edgeP = softmax(evalP, cur->available_moves);
+            cur->edgeP = softmax(evalP, cur->transferTable, cur->available_moves.size());
             cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
             float evalQ = 0.0f, evalW = 0.0f, evalS = 0.0f;
@@ -756,7 +760,7 @@ void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, f
             n->S += evalS;
             evalQ = -evalQ;
             evalS = -evalS;
-            evalW = 1.0f-evalW;
+            evalW = -evalW;
         }
     }
 

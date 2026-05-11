@@ -81,7 +81,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 		else {
 			// if position is black's turn to move, judge from white's perspective.
-			float result = (winner == BLACK) ? -1.0f : 1.0f;
+			float result = (winner == BLACK) ? -0.9f : 0.9f;
 			float score_diff = game_manager.scoreDiff(WHITE); // komi not applied.
 
 			// calculate train stats
@@ -149,16 +149,25 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			else{
 				std::vector<float> maps[2];
 				maps[0] = std::move(map);
+				maps[1].reserve(boardSize);
 				for(auto v : maps[0])
 					maps[1].push_back(-v);
-				int idx = 0;
+				std::vector<float> capMap(boardSize, 0.0f);
 
+				int idx = 0;
+				static long toWhere = 0;
 				for(TrainData& data : buffer){
 					std::get<2>(data) = result;
 					std::get<3>(data) = score_diff;
-					std::get<4>(data) = maps[idx];
-					insertData(data, SCORE);
-
+					if(toWhere++ % 2 == 0){
+						std::get<4>(data) = maps[idx];
+						insertData(data, SCORE);
+					}
+					else{
+						std::get<4>(data) = capMap;
+						insertData(data, CAPTURE);
+					}
+					
 					result = -result; // switch color
 					score_diff = -score_diff;
 					idx = 1 - idx;
