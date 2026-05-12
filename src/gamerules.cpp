@@ -4,13 +4,12 @@ constexpr char dr[4] = {-1, 0, 1, 0};
 constexpr char dc[4] = {0, 1, 0, -1};
 
 
-Game::Game() : visitId(0), moveCount(0), finalScore(0.0f) {
+Game::Game() : moveCount(0), finalScore(0.0f) {
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
             board[i][j] = EMPTY;
             scoreBoard[i][j] = EMPTY;
-            mark[i][j] = 0;
             chains[temp] = {0, {}};
             stones[i][j] = {temp, temp};
             temp++;
@@ -143,7 +142,8 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
     uint8_t areaCount = 0;
 
     q.emplace(r, c);
-    mark[r][c] = ++visitId;
+    std::bitset<boardSize> marker;
+    marker[r * colSize + c] = true;
 
     while (!q.empty()) {
         auto [tr, tc] = q.front();
@@ -163,9 +163,9 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
 
             for (int i = 0; i < 4; ++i) {
                 uint8_t nr = tr + dr[i], nc = tc + dc[i];
-                if (inbound(nr, nc) && mark[nr][nc] != visitId) {
+                if (inbound(nr, nc) && !marker[nr * colSize + nc]) {
                     q.emplace(nr, nc);
-                    mark[nr][nc] = visitId;
+                    marker[nr * colSize + nc] = true;
                 }
             }
         }
@@ -207,6 +207,7 @@ void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
 void Game::getScore(){
     std::queue<std::pair<uint8_t, uint8_t>> q;
     std::vector<std::pair<uint8_t, uint8_t>> emptyCells;
+    std::bitset<boardSize> marker;
 
     for(int clr = 0; clr < 2; ++clr)
         for(int r = 0; r<rowSize; ++r)
@@ -220,7 +221,8 @@ void Game::getScore(){
 
                 emptyCells.clear();
                 q.emplace(r, c);
-                mark[r][c] = ++visitId;
+                marker.reset();
+                marker[r * colSize + c] = true;
             
                 while (!q.empty()) {
                     auto [tr, tc] = q.front();
@@ -240,9 +242,9 @@ void Game::getScore(){
             
                         for (uint8_t i = 0; i < 4; ++i) {
                             uint8_t nr = tr + dr[i], nc = tc + dc[i];
-                            if (inbound(nr, nc) && mark[nr][nc] != visitId) {
+                            if (inbound(nr, nc) && !marker[nr * colSize + nc]) {
                                 q.emplace(nr, nc);
-                                mark[nr][nc] = visitId;
+                                marker[nr * colSize + nc] = true;
                             }
                         }
                     }
@@ -369,6 +371,119 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
         return {gameEnd(), SCORE, scoreMap};
     }
     return {EMPTY, NONE, {}};
+}
+
+void Game::expand(){
+    //std::cerr << "expanding!" << std::endl;
+    // improve capture check performance by checking if there is any group with liberty count 1.
+    Move winmove;
+    int forcedState;
+    Move threat = RESIGNMOVE;
+    std::vector<std::vector<uint8_t>> transferTable;
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            const Chain c = getChain({i, j});
+            if(c.size != 0 && c.liberties.count() == 1){
+                auto color = board[i][j];
+                int onlyLib = c.liberties._Find_first();
+
+                if(isLegal(onlyLib / colSize, onlyLib % colSize)){
+                    // if my stone is under threat -> have to find only move unless can capture opponent's stone.
+                    if(color == getTurn()){
+                        threat = {onlyLib / colSize, onlyLib % colSize};
+                    }
+
+                    // if opponent stone is capturable
+                    else{
+                        winmove = {onlyLib / colSize, onlyLib % colSize};
+                        forcedState = 2;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    Color terrMap[rowSize][colSize];
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            terrMap[i][j] = (canbeScore(i, j, currentTurn) ? POTSCORE : 0U) ^ scoreBoard[i][j];
+        }
+    }
+
+    if(threat != RESIGNMOVE){
+        // find shortest path from T to opposite color stone.
+        std::bitset<boardSize> marked;
+
+
+    }
+
+    else{
+
+    }
+
+    std::bitset<outputSize> candidateLegal = getLegalMoves();
+    // can only pass if it's beneficial
+    candidateLegal[outputSize - 1] = (scoreWinner() == currentTurn);
+
+    std::vector<Game> nextGames(boardSize + 1); // +1 for pass
+    // update scores & remove useless moves
+    for(int idx = 0; idx < boardSize + 1; ++idx){
+        if(candidateLegal[idx]){
+            uint8_t r = idx / colSize;
+            uint8_t c = idx % colSize;
+            nextGames[idx] = *this;
+            auto [clr, wintype] = nextGames[idx].makeMove({r, c});
+
+            if(clr == currentTurn){ // there is immediate win by score. win in 1.
+                forcedState = 2;
+                winmove = {r, c};
+                return;
+            }
+
+            // there is immediate capture next move, or the move is self-suicidal.
+            else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
+                candidateLegal[idx] = false;
+            }
+
+            else{
+                candidateLegal &= nextGames[idx].getLegalMoves();
+                candidateLegal[idx] = true; // keep itself
+            }
+        }
+    }
+
+    if(candidateLegal.none()){ // if there are no moves, mark it as loss.
+        forcedState = -1;
+        return;
+    }
+    
+    // finally add child
+    int cntr = 0;
+    for(uint8_t idx = 0; idx < outputSize; ++idx){
+        if(candidateLegal[idx]){
+            //addChild(idx/colSize, idx%colSize, nextGames[idx]);
+            const auto acquired = (getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
+            // if any points of territory is acquired
+            if(acquired.count() > 1){
+                std::vector<uint8_t> acquiredV;
+                acquiredV.reserve(acquired.count() + 1);
+                // acquiredV : {which move it indicates, terr 1, terr 2, ...}
+                acquiredV.push_back(cntr++);
+                for (size_t i = acquired._Find_first(); i < boardSize; i = acquired._Find_next(i)) {
+                    acquiredV.push_back(i);
+                }
+                transferTable.push_back(std::move(acquiredV));
+            }
+        }
+    }
+
+    //std::cerr << "expand finished" << std::endl;
+    #ifdef measureTime
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+    #endif
 }
 
 // Color Game::makeMoveNoScoreUpdate(Move move){

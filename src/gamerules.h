@@ -56,6 +56,8 @@ public:
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
+    void expand();
+
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[BLACK] - score[WHITE]) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
@@ -109,12 +111,9 @@ private:
     Color board[rowSize][colSize];
     Color scoreBoard[rowSize][colSize];
     Move lastTwoMoves[2];
-    int visitId;
     int moveCount;
     float score[2];
     float finalScore;
-
-    uint8_t mark[rowSize][colSize];
 
     Chain chains[boardSize];   // Chain data
     Stone stones[rowSize][colSize];    // Stone linked list info

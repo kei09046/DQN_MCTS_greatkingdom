@@ -47,6 +47,7 @@ constexpr Wintype NONE = 3U;
 
 constexpr uint8_t ADJTOBLACK = 8U;
 constexpr uint8_t ADJTOWHITE = 16U;
+constexpr uint8_t POTSCORE = 32U;
 
 constexpr Move PASSMOVE = {rowSize, 0};
 constexpr Move RESIGNMOVE = {255, 255};
