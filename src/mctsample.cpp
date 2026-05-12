@@ -1478,7 +1478,7 @@
 //         auto& logp = entry->first;
 //         auto q = entry->second;
 
-//         edgeP = softmax(logp, available_moves);
+//         edgeP = softmax(logp, availableMoves);
 //         edgeN = std::vector<float>(edgeP.size(), 0.0f);
 
 //         initQ = q;
@@ -1491,7 +1491,7 @@
 //         W--;
 //         return 1.0f;
 //     }
-//     if(available_moves.size() == 0){ // position is lost
+//     if(availableMoves.size() == 0){ // position is lost
 //         W++;
 //         return -1.0f;
 //     }
@@ -1500,7 +1500,7 @@
 //     int maxi = 0;
 //     float pref, maxval = -1.0f;
 
-//     for(int i=0; i<available_moves.size(); ++i){
+//     for(int i=0; i<availableMoves.size(); ++i){
 //         pref = ((edgeN[i] == 0.0f) ? 0.0f : child[i]->W / child[i]->N) + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         
 //         if(maxval < pref){

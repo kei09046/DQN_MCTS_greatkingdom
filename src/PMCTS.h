@@ -24,6 +24,14 @@ public:
 
     void deleteTree(Node* exception);
 
+    inline const std::vector<std::vector<uint8_t>>& TransferTable_() const{
+        return transferTable;
+    }
+
+    inline const std::vector<Move>& availableMoves_() const{
+        return availableMoves;
+    }
+
 private:
     friend class MCTS;
 
@@ -32,12 +40,12 @@ private:
     // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP;
     std::vector<float> edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
-    std::array<int, outputSize> transferTable; 
+    std::vector<std::vector<uint8_t>> transferTable; 
     const Color turn;
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
 
     std::vector<Node*> child;
-    std::vector<Move> available_moves; // among game.isLegal() moves, consider actually useful moves.
+    std::vector<Move> availableMoves; // among game.isLegal() moves, consider actually useful moves.
     Move winmove; // if RESIGNMOVE : there is no winning move.
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
     std::unordered_map<HashValue, Node*>* const transposTable;

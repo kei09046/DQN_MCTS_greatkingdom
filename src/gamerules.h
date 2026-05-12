@@ -26,7 +26,7 @@ class Game{
 public:
     Game();
     inline bool isLegal(uint8_t r, uint8_t c) const{
-        return (board[r][c] == EMPTY) && (scoreBoard[r][c] & EMPTY);
+        return scoreBoard[r][c] & EMPTY;
     }
 
     inline bool isLegal(Move m) const{ // return true if square is not occupied / nor is score of any side.

@@ -184,14 +184,12 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
 }
 
 bool Game::canbeScore(uint8_t r, uint8_t c, Color clr){
-    if (r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) return true;
-
     int cnt = 0;
-    for (int dr = -1; dr <= 1; dr++)
-        for (int dc = -1; dc <= 1; dc++)
+    for (int dr = ((r == 0U) ? 0 : -1); dr <= ((r == rowSize-1) ? 0 : 1); dr++)
+        for (int dc = ((c == 0U) ? 0 : -1); dc <= ((c == colSize-1) ? 0 : 1); dc++)
                 cnt += ((board[r+dr][c+dc] == clr || board[r+dr][c+dc] == NEUTRAL) ? 1 : 0);
 
-    return cnt >= 3;
+    return cnt >= ((r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) ? 2 : 3);
 }
 
 void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
