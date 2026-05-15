@@ -63,12 +63,15 @@ namespace{
         float captureV[2] = {0.0f, 0.0f};
         const Color turn = game.getTurn();
         const Color oppturn = Game::reverseColor(turn);
+        const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
+        const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
+
         float scoreV = scoreEXP + ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
 
         for(int i=0; i<boardSize; ++i){
             if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
                 Color owned = game.getScoreBoard({i / colSize, i % colSize});
-                scoreV += (owned == oppturn) ? 1.0f : ((owned == turn) ? -1.0f : scoreMap[i]);
+                scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
             }
         }
 
@@ -127,8 +130,8 @@ Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValu
 game(g), turn(g.getTurn()), 
 N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), transposTable(transposTable){}
 
-void Node::addChild(const int r, const int c, const Game& ng){
-    HashValue newHash = hash.computeHashAfterMove(game, {r, c}, hashValue);
+void Node::addChild(const Move& move, const Game& ng){
+    HashValue newHash = hash.computeHashAfterMove(game, move, hashValue);
     Node* childNode;
 
     if(globalConfig.transTable){
@@ -146,11 +149,36 @@ void Node::addChild(const int r, const int c, const Game& ng){
 
     child.push_back(childNode);
     //std::cerr << "adding! " << r << " " << c << std::endl;
-    availableMoves.push_back({r, c});
     //std::cerr << "adding done!" << std::endl;
 }
 
 void Node::expand(){
+    //ModelCompare::displayBoardGUI(true, game);
+    //std::cerr << "Expand called" << std::endl;
+    auto [result, moves, games, tranfTable] = game.expand();
+
+    // printMove(result.first);
+    // for(int i=0; i<moves.size(); ++i){
+    //     printMove(moves[i]);
+    //     ModelCompare::displayBoardGUI(true, games[i]);
+    // }
+
+    // for(const auto& v : tranfTable){
+    //     for(const auto idx : v){
+    //         std::cerr << idx << " ";
+    //     }
+    //     std::cerr << std::endl;
+    // }
+
+    // transferTable = std::move(tranfTable);
+    // winmove = std::move(result.first);
+    // forcedState = std::move(result.second);
+
+    // for (int i=0; i<games.size(); ++i) {
+    //     addChild(moves[i], std::move(games[i])); 
+    // }
+    // availableMoves = std::move(moves);
+
     //std::cerr << "expanding!" << std::endl;
     std::bitset<outputSize> candidateLegal; // mark candidate legal moves
 
@@ -221,7 +249,8 @@ void Node::expand(){
     int cntr = 0;
     for(uint8_t idx = 0; idx < outputSize; ++idx){
         if(candidateLegal[idx]){
-            addChild(idx/colSize, idx%colSize, nextGames[idx]);
+            availableMoves.push_back({idx / colSize, idx % colSize});
+            addChild({idx/colSize, idx%colSize}, nextGames[idx]);
             const auto acquired = (game.getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
             // if any points of territory is acquired
             if(acquired.count() > 1){
@@ -237,7 +266,7 @@ void Node::expand(){
         }
     }
 
-    assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
+    // assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
     //std::cerr << "expand finished" << std::endl;
     #ifdef measureTime
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
@@ -287,7 +316,7 @@ Move Node::selectMove(float temp){
             << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
         return winmove;
     }
-    else if(availableMoves.size() == 0){
+    else if(availableMoves.empty()){
         return RESIGNMOVE;
     }
     else if(globalConfig.detailedStat){
@@ -340,7 +369,7 @@ MoveData Node::selectMoveProb(float temp){
         visitPortion[winmove.first * colSize + winmove.second] = 1.0f;
         return {winmove, visitPortion};
     }
-    if(availableMoves.size() == 0){
+    if(availableMoves.empty()){
         return {RESIGNMOVE, visitPortion};
     }
     std::vector<float> cumulative(availableMoves.size()), weights(availableMoves.size());
@@ -563,6 +592,9 @@ void MCTS::printVariation(){
                     maxi = i;
                 }
             }
+
+            if(maxi == -1)
+                break;
             m = node->availableMoves[maxi];
         }
 

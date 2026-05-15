@@ -96,26 +96,29 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 std::vector<float> PolicyValueNet::getData(const Game& game){
     std::vector<float> ret(inputSize * globalConfig.inputChannel, 0.0f);
 	Color turn = game.getTurn();
-	Color opp_turn = Game::reverseColor(turn);
+	Color oppturn = Game::reverseColor(turn);
 	Color state;
 
 	for(int i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
 		state = game.getBoard({i / colSize, i % colSize});
 		if(state == turn)
 			ret.at(i) = 1.0f;
-		else if(state == opp_turn)
+		else if(state == oppturn)
 			ret.at(inputSize + i) = 1.0f;
 		else if(state == NEUTRAL)
 			ret.at(2 * inputSize + i) = 1.0f;
 	}
 
 	Color terr;
+	Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
+	Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
+
 	for(int i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
 		terr = game.getScoreBoard({i/colSize, i%colSize});
-		if(terr == turn){
+		if(terr == turnScore){
 			ret.at(3*inputSize + i) = 1.0f;
 		}
-		else if(terr == opp_turn){
+		else if(terr == oppturnScore){
 			ret.at(4*inputSize + i) = 1.0f;
 		}
 	}
@@ -169,7 +172,7 @@ std::vector<float> PolicyValueNet::getData(const Game& game){
 					cur = game.getStone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
-			else if(state == opp_turn){ // opponent stone's liberties
+			else if(state == oppturn){ // opponent stone's liberties
 				do {
 					ret.at((12 + liberty_count)*inputSize + cur) = 1.0f;
 					cur = game.getStone({cur/colSize, cur%colSize}).next;

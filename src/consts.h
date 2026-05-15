@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <array>
+#include <iostream>
 #include "config.h"
 
 
@@ -35,20 +36,26 @@ constexpr int inputSize = inputRow * inputCol;
 constexpr int PLAYOUT = 0;
 constexpr int TIMEOUT = 1;
 
-constexpr Color BLACK = 0U;
-constexpr Color WHITE = 1U;
-constexpr Color NEUTRAL = 2U;
-constexpr Color EMPTY = 4U;
+constexpr Color BLACK = 1U;
+constexpr Color WHITE = 2U;
+constexpr Color NEUTRAL = 4U;
+constexpr Color EMPTY = 8U;
+constexpr uint8_t ADJTOBLACK = 16U;
+constexpr uint8_t ADJTOWHITE = 32U;
+constexpr uint8_t BSCORE = 64U;
+constexpr uint8_t WSCORE = 128U;
+constexpr uint8_t BOARDMASK = EMPTY | BLACK | NEUTRAL | WHITE;
+constexpr uint8_t SCOREMASK = BSCORE | WSCORE;
 
 constexpr Wintype CAPTURE = 0U;
 constexpr Wintype SCORE = 1U;
 constexpr Wintype RESIGN = 2U;
 constexpr Wintype NONE = 3U;
 
-constexpr uint8_t ADJTOBLACK = 8U;
-constexpr uint8_t ADJTOWHITE = 16U;
-constexpr uint8_t POTSCORE = 32U;
-
 constexpr Move PASSMOVE = {rowSize, 0};
 constexpr Move RESIGNMOVE = {255, 255};
+
+inline void printMove(const Move& m){
+    std::cerr << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
+}
 #endif

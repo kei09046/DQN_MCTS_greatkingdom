@@ -1,31 +1,343 @@
 #include "gamerules.h"
+#include <utility>
+#include <queue>
+#include <vector>
+#include <iostream>
+#include <algorithm>
+#include <cstdint>
+#include <bitset>
+#include <cassert>
 
-constexpr char dr[4] = {-1, 0, 1, 0};
-constexpr char dc[4] = {0, 1, 0, -1};
+namespace{
+    constexpr char dr[4] = {-1, 0, 1, 0};
+    constexpr char dc[4] = {0, 1, 0, -1};
+}
 
 
-Game::Game() : moveCount(0), finalScore(0.0f) {
+Game::Game() : moveCount(0){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
             board[i][j] = EMPTY;
-            scoreBoard[i][j] = EMPTY;
             chains[temp] = {0, {}};
             stones[i][j] = {temp, temp};
             temp++;
         }
     
     currentTurn = BLACK;
-    score[BLACK] = 0.0f;
-    score[WHITE] = 0.0f;
+    score[0] = 0.0f;
+    score[1] = 0.0f;
     lastTwoMoves[0] = PASSMOVE;
     lastTwoMoves[1] = PASSMOVE;
 
     for(const auto& neutral : globalConfig.neutrals){
         board[neutral.first][neutral.second] = NEUTRAL;
-        scoreBoard[neutral.first][neutral.second] = NEUTRAL;
     }
 }
+
+std::pair<Color, Wintype> Game::makeMove(Move move){
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+    if(move == RESIGNMOVE){ // resign
+        switchTurn();
+        return {currentTurn, RESIGN};
+    }
+
+    if(move == PASSMOVE){ // pass
+        switchTurn();
+        moveCount++;
+        return {EMPTY, NONE};
+    }
+
+    uint8_t r = move.first;
+    uint8_t c = move.second;
+    // turn off the empty bit, turn on the color bit.
+    board[r][c] ^= currentTurn | EMPTY;
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
+        uint8_t nr = r + dr[i];
+        uint8_t nc = c + dc[i];
+        if(inbound(nr, nc)){
+            board[nr][nc] |= adjTo(currentTurn);
+        }
+    }
+
+    Color clr = captureResultbyMove(r, c);
+    if(clr != EMPTY)
+        return {clr, CAPTURE};
+    if(moveCount >= 2)
+        updateScore(r, c);
+    
+    switchTurn();
+    moveCount++;
+
+    if(getLegalMoveCount() == 0 || moveCount > boardSize){
+        return {scoreWinner(), SCORE};
+    }
+    return {EMPTY, NONE};
+}
+
+std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+    if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties; add all of them to captureMap.
+        std::vector<float> captureMap(boardSize, 0.0f);
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                captureMap[i * colSize + j] = ((board[i][j] & currentTurn) && chains[findHead(i, j)].liberties.count() == 1) ? 1.0f : 0.0f;
+            }
+        }
+
+        switchTurn();
+        return {currentTurn, RESIGN, captureMap};
+    }
+
+    if(move == PASSMOVE){ // pass
+        switchTurn();
+        moveCount++;
+        return {EMPTY, NONE, {}};
+    }
+
+    uint8_t r = move.first;
+    uint8_t c = move.second;
+    // turn off empty bit, turn on color bit.
+    board[r][c] ^= currentTurn | EMPTY;
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
+        uint8_t nr = r + dr[i];
+        uint8_t nc = c + dc[i];
+        if(inbound(nr, nc)){
+            board[nr][nc] |= adjTo(currentTurn);
+        }
+    }
+
+    auto [clr, captureMap] = captureResultWithStat(r, c);
+    if(clr != EMPTY)
+        return {clr, CAPTURE, captureMap};
+    if(moveCount >= 2)
+        updateScore(r, c);
+    
+    switchTurn();
+    moveCount++;
+
+    if(getLegalMoveCount() == 0 || moveCount > boardSize){
+        std::vector<float> scoreMap(boardSize);
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                scoreMap[i * colSize + j] = (board[i][j] & BSCORE) ? -1.0f : (board[i][j] & WSCORE ? 1.0f : 0.0f);
+            }
+        }
+        return {scoreWinner(), SCORE, scoreMap};
+    }
+    return {EMPTY, NONE, {}};
+}
+
+std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> Game::expand() const{
+    // improve capture check performance by checking if there is any group with liberty count 1.
+
+    Move threat = RESIGNMOVE;
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            const Chain c = getChain({i, j});
+            if(c.size != 0 && c.liberties.count() == 1){
+                int onlyLib = c.liberties._Find_first();
+
+                if(isLegal(onlyLib / colSize, onlyLib % colSize)){
+                    // if my stone is under threat -> have to find only move unless can capture opponent's stone.
+                    if(board[i][j] & currentTurn){
+                        threat = {onlyLib / colSize, onlyLib % colSize};
+                    }
+
+                    // if opponent stone is capturable
+                    else{
+                        return {{{onlyLib / colSize, onlyLib % colSize}, 2}, {}, {}, {}};
+                    }
+                }
+            }
+        }
+    }
+
+    std::bitset<boardSize> potScore;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            potScore[i * colSize + j] = (board[i][j] & EMPTY) && canbeScore(i, j, currentTurn);
+        }
+    }
+
+    if(threat != RESIGNMOVE){
+        // first find list of possible moves.
+        // for(int i=0; i<rowSize; ++i){
+        //     for(int j=0; j<colSize; ++j){
+        //         std::cerr << static_cast<int>(board[i][j]) << " ";
+        //     }
+        //     std::cerr << std::endl;
+        // }
+
+        //std::cerr << "threat move search called!" << std::endl;
+        std::vector<Move> possibleMoves = possibleMovesWhenThreat(threat, potScore);
+
+        // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
+        const auto segTable = segmentTable(potScore);
+        const auto threatSeg = segTable.second[threat.first * colSize + threat.second];
+        std::bitset<boardSize> acquiredSeg, threatAcquireSeg;
+
+        Move bestMove = threat;
+        std::vector<std::vector<uint8_t>> transferTable;
+
+        for(const auto& option : possibleMoves){
+            if(!acquiredSeg[segTable.second[option.first * colSize + option.second]]){
+                const std::bitset<boardSize> acquired = checkScore(option.first, option.second, currentTurn, segTable);
+                acquiredSeg |= acquired;
+                // if option == threat, it means that no other move made threat a territory.
+                if(acquired[threatSeg] || (option == threat)){
+                    bestMove = option;
+                    threatAcquireSeg = acquired;
+                }
+            }
+        }
+
+        if(!threatAcquireSeg.none()){
+            transferTable.push_back({0U});
+            for(uint8_t i=0U; i<boardSize; ++i){
+                if(threatAcquireSeg[segTable.second[i]])
+                    transferTable[0].push_back(i);
+            }
+        }
+
+        // std::cerr << "threat : " << std::endl;
+        // printMove(threat);
+        // std::cerr << "response : " << std::endl;
+        // printMove(bestMove); 
+
+        Game ng = (*this);
+        assert(transferTable.size() <= 1);
+
+        Color winner;
+        if(!transferTable.empty())
+            winner = ng.makeMoveNoScoreUpdate(bestMove, transferTable[0]);
+        else
+            winner = ng.makeMoveNoScoreUpdate(bestMove, {});
+
+        if(winner == EMPTY){
+            // game goes on.
+            // std::cerr << "game goes on" << std::endl;
+            return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
+        }
+        else{
+            // lost
+            // std::cerr << "game lost" << std::endl;
+            return {{RESIGNMOVE, -1}, {}, {}, {}};
+        }
+    }
+
+    else{
+        // if(!potScore.none()){
+        //     std::cerr << "printing board" << std::endl;
+        //     for(int i=0; i<rowSize; ++i){
+        //         for(int j=0; j<colSize; ++j){
+        //             std::cerr << static_cast<int>(board[i][j]) << " ";
+        //         }
+        //         std::cerr << std::endl;
+        //     }
+
+        //     std::cerr << "printing potScore" << std::endl;
+        //     for(int i=0; i<rowSize; ++i){
+        //         for(int j=0; j<colSize; ++j){
+        //             std::cerr << potScore[i * colSize + j] << " ";
+        //         }
+        //         std::cerr << std::endl;
+        //     }
+        // }
+
+        const auto segTable = segmentTable(potScore);
+        std::bitset<outputSize> candidates = getLegalMoves();
+        std::bitset<boardSize> acquiredSeg;
+        std::vector<std::vector<uint8_t>> transferTable;
+        std::array<std::bitset<boardSize>, boardSize> buffer;
+
+        //first check potential score gaining moves
+
+        // if(!potScore.none()){
+        //     std::cerr << "printing segIdx" << std::endl;
+        //     for(int i=0; i<rowSize; ++i){
+        //         for(int j=0; j<colSize; ++j){
+        //             std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
+        //         }
+        //         std::cerr << std::endl;
+        //     }
+
+        //     std::cerr << "printing connectionInfo" << std::endl;
+        //     for(const auto& seginfo : segTable.first){
+        //         for(uint8_t connected : seginfo.connectedSeg)
+        //             std::cerr << static_cast<int>(connected) << " ";
+        //         std::cerr << std::endl;
+        //         std::cerr << seginfo.adjEdge << " " << seginfo.adjOpp << std::endl;
+        //     }
+        // }
+
+        for(int i=0; i<boardSize; ++i){
+            if(potScore[i] && !acquiredSeg[segTable.second[i]]){
+                //std::cerr << "checkScore called" << std::endl;
+                auto acquired = checkScore(i/colSize, i%colSize, currentTurn, segTable);
+                //std::cerr << acquired << std::endl;
+                acquiredSeg |= acquired;
+                buffer[i] = acquired;
+            }
+        }
+        //Check non-score gaining moves
+        // for(int i=0; i<boardSize; ++i){
+        //     if(candidates[i] && !potScore[i] && !acquiredSeg[segTable.second[i]]){
+        //         acquiredSeg |= checkScore(i/colSize, i%colSize, currentTurn, segTable);
+        //     }
+        // }
+
+        std::vector<Move> possibleMoves;
+        std::vector<Game> children;
+        // push back possible moves
+        uint8_t cntr = 0U;
+        for(int i=0; i<boardSize; ++i){
+            if(candidates[i] && !acquiredSeg[segTable.second[i]]){
+                possibleMoves.push_back({i / colSize, i % colSize});
+                Game ng = *this;
+                
+                // if territory is gained.
+                if(!buffer[i].none()){
+                    transferTable.push_back({cntr});
+                    for(int j=0; j<boardSize; ++j){
+                        if(buffer[i][j])
+                            transferTable[cntr].push_back(j);
+                    }
+                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, transferTable[cntr]);
+                }
+                // no territory difference
+                else{
+                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, {});
+                }
+
+                children.push_back(ng);
+                cntr++;
+            }
+        }
+        if(scoreWinner() == currentTurn){
+            possibleMoves.push_back(PASSMOVE);
+            Game ng = *this;
+            ng.makeMove(PASSMOVE);
+            children.push_back(ng);
+        }
+        
+        return {{RESIGNMOVE, 0}, possibleMoves, children, transferTable};
+    }
+
+    //std::cerr << "expand finished" << std::endl;
+    #ifdef measureTime
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+    #endif
+}
+
+void Game::onGameEnd(Color winner){
+    std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
+}
+
 
 void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     //std::cout << "merging chain :" << (int)r1 << (int)c1 << " " << (int)r2 << (int)c2 << std::endl;
@@ -56,28 +368,30 @@ Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
     chains[r * colSize + c] = {1U, {}};
+    Color sColor = getBoard({r, c});
 
     for (int i = 0; i < 4; ++i) {
         uint8_t nr = r + dr[i], nc = c + dc[i];
         if (!inbound(nr, nc)) continue;
 
-        if(board[nr][nc] == EMPTY){ 
+        Color adjColor = getBoard({nr, nc});
+        if(adjColor == EMPTY){ 
             chains[findHead(r, c)].liberties.set(nr * colSize + nc, true);
         }
-        else if (board[nr][nc] == board[r][c]){
+        else if (adjColor == sColor){
             mergeChains(r, c, nr, nc);
         }
-        else if (board[nr][nc] == reverseColor(board[r][c])){ 
+        else if (adjColor == reverseColor(sColor)){ 
             auto& adj_chain = chains[findHead(nr, nc)];
             adj_chain.liberties.set(r * colSize + c, false);
             if(adj_chain.liberties.none())
-                return board[r][c];
+                return sColor;
         }
         // else adjacent to neutral; nothing should happen
     }
 
     if(chains[findHead(r, c)].liberties.none())
-        return reverseColor(board[r][c]);
+        return reverseColor(sColor);
     
     return EMPTY;
 }
@@ -89,22 +403,24 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
     chains[r * colSize + c] = {1U, {}};
+    Color sColor = getBoard({r, c});
 
     for (int i = 0; i < 4; ++i) {
         uint8_t nr = r + dr[i], nc = c + dc[i];
         if (!inbound(nr, nc)) continue;
 
-        if(board[nr][nc] == EMPTY){ 
+        Color adjColor = getBoard({nr, nc});
+        if(adjColor == EMPTY){ 
             chains[findHead(r, c)].liberties.set(nr * colSize + nc, true);
         }
-        else if (board[nr][nc] == board[r][c]){
+        else if (adjColor == sColor){
             mergeChains(r, c, nr, nc);
         }
-        else if (board[nr][nc] == reverseColor(board[r][c])){ 
+        else if (adjColor == reverseColor(sColor)){ 
             auto& adj_chain = chains[findHead(nr, nc)];
             adj_chain.liberties.set(r * colSize + c, false);
             if(adj_chain.liberties.none()){
-                winner = board[r][c];
+                winner = sColor;
                 capturedChainIdx.push_back(findHead(nr, nc));
             }
         }
@@ -112,7 +428,7 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
     }
 
     if(winner == EMPTY && chains[findHead(r, c)].liberties.none()){
-        winner = reverseColor(board[r][c]);
+        winner = reverseColor(sColor);
         capturedChainIdx.push_back(findHead(r, c));
     }
 
@@ -131,14 +447,30 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
     return {EMPTY, {}};
 }
 
+
+//////////////////////////////////////////////////////////////////////////////////
+/// Score related functions
+
+void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
+    Color toCheck = getBoard({r, c});
+    int idx = (toCheck == BLACK) ? 0 : 1;
+    if(!canbeScore(r, c, toCheck))
+        return;
+
+    for (int i = 0; i < 4; ++i) {
+        uint8_t tr = r + dr[i], tc = c + dc[i];
+        score[idx] += static_cast<float>(checkScore(tr, tc, toCheck));
+    }
+}
+
 uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
-    if (!(inbound(r, c) && (scoreBoard[r][c] & EMPTY)))
-        return 0;
+    if (!(inbound(r, c) && (board[r][c] & EMPTY)))
+        return 0U;
 
     uint8_t adjToOppositeSide = adjToOpposite(clr);
     uint8_t meetEdgeFlags = 0;  // 4bit integer to track edge touching
-    std::queue<std::pair<uint8_t, uint8_t>> q;
-    std::vector<std::pair<uint8_t, uint8_t>> emptyCells;
+    std::queue<Move> q;
+    std::vector<Move> emptyCells;
     uint8_t areaCount = 0;
 
     q.emplace(r, c);
@@ -149,8 +481,8 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
         auto [tr, tc] = q.front();
         q.pop();
 
-        if (scoreBoard[tr][tc] & EMPTY) { // if cell is empty
-            if (scoreBoard[tr][tc] & adjToOppositeSide) { // if place is adjacent to opponent stone
+        if (board[tr][tc] & EMPTY) { // if cell is empty
+            if (board[tr][tc] & adjToOppositeSide) { // if place is adjacent to opponent stone
                 return 0; 
             }
             meetEdgeFlags |= (tr == 0);          // Top edge
@@ -173,98 +505,310 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
     }
 
     if (meetEdgeFlags == 0b1111)  // All edges are touched
-        return 0;
+        return 0U;
 
     // Mark valid territory
+    Color scoreMarker = (clr == BLACK) ? BSCORE : WSCORE;
     for (auto [tr, tc] : emptyCells) {
-        scoreBoard[tr][tc] = clr;
+        board[tr][tc] |= scoreMarker;
     }
 
     return areaCount;
 }
 
-bool Game::canbeScore(uint8_t r, uint8_t c, Color clr){
+std::bitset<boardSize> Game::checkScore(uint8_t r, uint8_t c, Color clr, const std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>>& segTable) const{
+    if (!(inbound(r, c) && (board[r][c] & EMPTY)))
+        return {};
+
+    const auto& segInfos = segTable.first;
+    const auto& segIdx = segTable.second;
+
+    uint8_t blockedSeg = segIdx[r * colSize + c];
+    std::bitset<boardSize> globalVisitMark, terrMark;
+    globalVisitMark[blockedSeg] = true;
+
+
+    for(int i=0; i<4; ++i){
+        auto nr = r + dr[i];
+        auto nc = c + dc[i];
+        if(!(inbound(nr, nc) && (board[nr][nc] & EMPTY)))
+            continue;
+
+        std::bitset<4> meetEdgeFlags;  // 4bit integer to track edge touching
+        std::queue<uint8_t> segQ;
+        std::bitset<boardSize> localVisitMark;
+        bool isScore = true;
+
+        const auto startSeg = segIdx[nr * colSize + nc];
+        // if segment was checked by previous iterations.
+        if(globalVisitMark[startSeg])
+            continue;
+
+        segQ.push(startSeg);
+        localVisitMark[startSeg] = true;
+
+        // perform BFS on segment
+        while (!segQ.empty()) {
+            localVisitMark[segQ.front()] = true;
+            const auto& sInfo = segInfos[segQ.front()];
+            segQ.pop();
+
+            // if segment is adjacent to opposite color
+            if(sInfo.adjOpp){
+                isScore = false;
+                break;
+            }
+            meetEdgeFlags |= sInfo.adjEdge;
+            if(meetEdgeFlags.all()){
+                isScore = false;
+                break;
+            }
+
+            for(const auto& adjSegs : sInfo.connectedSeg){
+                if(globalVisitMark[adjSegs]){
+                    // if flow reaches here, it basically means that startSeg hasn't been visited yet reachable segment has been visited.
+                    // This indicates BFS quitted in previous iteration, which means this is not territory.
+                    isScore = false;
+                    break;
+                }
+                else if(!localVisitMark[adjSegs]){
+                    segQ.push(adjSegs);
+                    localVisitMark[adjSegs] = true;
+                }
+            }
+        }
+
+        if(isScore)
+            terrMark |= localVisitMark;
+        globalVisitMark |= localVisitMark;
+    }
+
+    return terrMark;
+}
+
+bool Game::canbeScore(uint8_t r, uint8_t c, Color clr) const{
     int cnt = 0;
     for (int dr = ((r == 0U) ? 0 : -1); dr <= ((r == rowSize-1) ? 0 : 1); dr++)
         for (int dc = ((c == 0U) ? 0 : -1); dc <= ((c == colSize-1) ? 0 : 1); dc++)
-                cnt += ((board[r+dr][c+dc] == clr || board[r+dr][c+dc] == NEUTRAL) ? 1 : 0);
+                cnt += ((board[r+dr][c+dc] & (clr | NEUTRAL)) ? 1 : 0);
+    
+    if(board[r][c] & (clr | NEUTRAL))
+        cnt--;
 
-    return cnt >= ((r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) ? 2 : 3);
+    return cnt >= ((r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) ? 1 : 2);
 }
 
-void Game::updateScore(uint8_t r, uint8_t c) { // major bottleneck
-    Color toCheck = board[r][c];
-    if(!canbeScore(r, c, toCheck))
-        return;
+std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segmentTable(const std::bitset<boardSize>& potScore) const{
+    std::array<uint8_t, boardSize> segMap;
+    std::vector<SegInfo> segInfos;
+    // maximum possible number of segments
+    // Absolutely essential to prevent memory reallocation.
+    segInfos.reserve(boardSize - moveCount);
+    segMap.fill(255U);
 
-    for (int i = 0; i < 4; ++i) {
-        uint8_t tr = r + dr[i], tc = c + dc[i];
-        score[toCheck] += static_cast<float>(checkScore(tr, tc, toCheck));
+    std::vector<Move> terrCandidate;
+    uint8_t segN = 0U;
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            if(potScore[i * colSize + j]){
+                segMap[i * colSize + j] = segN++;
+                terrCandidate.push_back({i, j});
+                std::bitset<4> adjEdge;
+                if(i == 0) 
+                    adjEdge[0] = true;
+                else if(i == rowSize - 1) 
+                    adjEdge[1] = true;
+                if(j == 0) 
+                    adjEdge[2] = true;
+                else if(j == colSize - 1) 
+                    adjEdge[3] = true;
+                segInfos.emplace_back(std::vector<uint8_t>{}, (board[i][j] & adjToOpposite(currentTurn)) ? 1U : 0U, std::move(adjEdge));
+            }
+        }
     }
-    finalScore = score[BLACK] - score[WHITE] - globalConfig.komi;
-}
 
-void Game::getScore(){
-    std::queue<std::pair<uint8_t, uint8_t>> q;
-    std::vector<std::pair<uint8_t, uint8_t>> emptyCells;
-    std::bitset<boardSize> marker;
+    // if(!potScore.none()){
+    //     for(int i=0; i<rowSize; ++i){
+    //         for(int j=0; j<colSize; ++j){
+    //             std::cerr << static_cast<int>(segMap[i * colSize + j]) << " ";
+    //         }
+    //         std::cerr << std::endl;
+    //     }
+    // }
 
-    for(int clr = 0; clr < 2; ++clr)
-        for(int r = 0; r<rowSize; ++r)
-            for(int c = 0; c<colSize; ++c){
-                if (!(scoreBoard[r][c] & EMPTY))
-                    continue;
-            
-                uint8_t adjToOppositeSide = adjToOpposite(clr);
-                char meetEdgeFlags = 0;
-                uint8_t areaCount = 0;
+    for(const Move& cand : terrCandidate){
+        SegInfo& currentSeg = segInfos.at(segMap[cand.first * colSize + cand.second]);
+        for(int i=0; i<4; ++i){
+            uint8_t r = cand.first + dr[i];
+            uint8_t c = cand.second + dc[i];
+            if(!(inbound(r, c) && (board[r][c] & EMPTY)))
+                continue;
 
-                emptyCells.clear();
-                q.emplace(r, c);
-                marker.reset();
-                marker[r * colSize + c] = true;
-            
-                while (!q.empty()) {
-                    auto [tr, tc] = q.front();
-                    q.pop();
-            
-                    if (scoreBoard[tr][tc] & adjToOppositeSide)
-                        continue;
-            
-                    if (scoreBoard[tr][tc] & EMPTY) {
-                        meetEdgeFlags |= (tr == 0);          // Top edge
-                        meetEdgeFlags |= (tr == rowSize - 1) << 1; // Bottom edge
-                        meetEdgeFlags |= (tc == 0) << 2;          // Left edge
-                        meetEdgeFlags |= (tc == colSize - 1) << 3; // Right edge
-            
-                        areaCount++;
-                        emptyCells.emplace_back(tr, tc);
-            
-                        for (uint8_t i = 0; i < 4; ++i) {
-                            uint8_t nr = tr + dr[i], nc = tc + dc[i];
-                            if (inbound(nr, nc) && !marker[nr * colSize + nc]) {
-                                q.emplace(nr, nc);
-                                marker[nr * colSize + nc] = true;
+
+            if(segMap[r * colSize + c] != 255U){
+                currentSeg.connectedSeg.push_back(segMap[r * colSize + c]);
+            }
+            // if new segment is detected
+            else{
+                // set up connection
+                currentSeg.connectedSeg.push_back(segN);
+                segInfos.emplace_back();
+
+                // start BFS
+                std::queue<Move> seg;
+                seg.push({r, c});
+                segMap[r * colSize + c] = segN;
+                std::bitset<boardSize> checker;
+                checker[r * colSize + c] = true;
+
+                while(!seg.empty()){
+                    Move m = seg.front();
+                    seg.pop();
+                    if(board[m.first][m.second] & adjToOpposite(currentTurn))
+                        segInfos[segN].adjOpp = true;
+                    if(m.first == 0) 
+                        segInfos[segN].adjEdge[0] = true;
+                    else if(m.first == rowSize - 1) 
+                        segInfos[segN].adjEdge[1] = true;
+                    if(m.second == 0) 
+                        segInfos[segN].adjEdge[2] = true;
+                    else if(m.second == colSize - 1) 
+                        segInfos[segN].adjEdge[3] = true;
+                    
+
+                    for(int j=0; j<4; ++j){
+                        uint8_t nr = m.first + dr[j];
+                        uint8_t nc = m.second + dc[j];
+                        if(inbound(nr, nc) && (board[nr][nc] & EMPTY) && !checker[nr * colSize + nc]){
+                            checker[nr * colSize + nc] = true;
+                            uint8_t mapVal = segMap[nr * colSize + nc];
+                            if(mapVal == 255U){
+                                seg.push({nr, nc});
+                                segMap[nr * colSize + nc] = segN;
+                            }
+                            else if(mapVal != segN){
+                                segInfos[segN].connectedSeg.push_back(mapVal);
                             }
                         }
                     }
                 }
-            
-                if (meetEdgeFlags == 0b1111) 
-                    continue;
-            
-                // Mark valid territory
-                for (auto [tr, tc] : emptyCells) {
-                    scoreBoard[tr][tc] = static_cast<Color>(clr);
-                }
-                score[clr] += areaCount;
+                segN++;
             }
-            
-    finalScore = score[BLACK] - score[WHITE] - globalConfig.komi;
+        }
+
+        // if(!potScore.none()){
+        //     for(int i=0; i<rowSize; ++i){
+        //         for(int j=0; j<colSize; ++j){
+        //             std::cerr << static_cast<int>(segMap[i * colSize + j]) << " ";
+        //         }
+        //         std::cerr << std::endl;
+        //     }
+        // }
+    }
+
+    return {segInfos, segMap};
 }
 
-Color Game::gameEnd(){
-    return finalScore > 0 ? BLACK : WHITE;
+std::vector<Move> Game::possibleMovesWhenThreat(const Move& threat, const std::bitset<boardSize>& potScore) const{
+    if(potScore.none())
+        return {threat};
+        
+    // find shortest path from T to opposite color stone.
+    uint8_t direction[rowSize][colSize] = {0U};
+    std::queue<Move> q;
+    Move oppStone = RESIGNMOVE;
+    Move option = RESIGNMOVE;
+    std::vector<Move> possibleMoves;
+    
+    // direction : stores way to the closest white stone. 
+    direction[threat.first][threat.second] = 5U;
+    q.push(threat);
+    while(!q.empty()){
+        Move m = q.front();
+        q.pop();
+        for(int i=0; i<4; ++i){
+            auto nr = m.first + dr[i];
+            auto nc = m.second + dc[i];
+            if(inbound(nr, nc) && (board[nr][nc] & EMPTY)){
+                if(board[nr][nc] & adjToOpposite(currentTurn)){
+                    q = {};
+                    oppStone = {nr, nc};
+                    direction[nr][nc] = i+1;
+                    break;
+                }
+                else if(direction[nr][nc] == 0U){
+                    q.push({nr, nc});
+                    direction[nr][nc] = i+1;
+                }
+            }
+        }
+    }
+
+    // extremely rare case where there are no reachable opposite color stone yet it is not territory.
+    if(oppStone == RESIGNMOVE){
+        for(uint8_t i=0U; i<rowSize; ++i){
+            for(uint8_t j=0U; j<colSize; ++j){
+                if((direction[i][j] > 0U && potScore[i * colSize + j]) || (threat == Move{i, j}))
+                    possibleMoves.push_back({i, j});
+            }
+        }
+    }
+
+    // for each cord in path, should check if making a move there would make T a territory.
+    else{
+        option = oppStone;
+        while(option != threat){
+            if(potScore[option.first * colSize + option.second])
+                possibleMoves.push_back(option);
+
+            const auto dir = direction[option.first][option.second];
+            assert(dir >= 1 && dir <= 4);
+            option.first -= dr[dir - 1];
+            option.second -= dc[dir - 1];
+        }
+        possibleMoves.push_back(threat);
+    }
+
+    return possibleMoves;
+}
+
+Color Game::makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& acquired){
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+
+    if(move == PASSMOVE){ // pass
+        switchTurn();
+        moveCount++;
+        return EMPTY;
+    }
+
+    uint8_t r = move.first;
+    uint8_t c = move.second;
+    // turn off the empty bit, turn on the color bit.
+    board[r][c] ^= currentTurn | EMPTY;
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
+        uint8_t nr = r + dr[i];
+        uint8_t nc = c + dc[i];
+        if(inbound(nr, nc)){
+            board[nr][nc] |= adjTo(currentTurn);
+        }
+    }
+
+    Color clr = captureResultbyMove(r, c);
+    if(clr != EMPTY)
+        return clr;
+    
+    // update territory without BFS. 
+    for(int i=1; i<acquired.size(); ++i){
+        auto idx = acquired[i];
+        board[idx / colSize][idx % colSize] = ((currentTurn == BLACK) ? BSCORE : WSCORE);
+    }
+
+    switchTurn();
+    moveCount++;
+
+    return EMPTY;
 }
 
 uint8_t Game::getLegalMoveCount() const{
@@ -274,269 +818,4 @@ uint8_t Game::getLegalMoveCount() const{
             ret += isLegal(i, j) ? 1 : 0;
     
     return ret;
-}
-
-std::pair<Color, Wintype> Game::makeMove(Move move){
-    lastTwoMoves[0] = lastTwoMoves[1];
-    lastTwoMoves[1] = move;
-    if(move == RESIGNMOVE){ // resign
-        switchTurn();
-        return {currentTurn, RESIGN};
-    }
-
-    if(move == PASSMOVE){ // pass
-        switchTurn();
-        moveCount++;
-        return {EMPTY, NONE};
-    }
-
-    uint8_t r = move.first;
-    uint8_t c = move.second;
-    // update board & scoreBoard
-    board[r][c] = currentTurn;
-    scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            scoreBoard[nr][nc] |= adjTo(currentTurn);
-        }
-    }
-
-    Color clr = captureResultbyMove(r, c);
-    if(clr != EMPTY)
-        return {clr, CAPTURE};
-    if(moveCount >= 2)
-        updateScore(r, c);
-    
-    switchTurn();
-    moveCount++;
-
-    if(getLegalMoveCount() == 0 || moveCount > boardSize){
-        return {gameEnd(), SCORE};
-    }
-    return {EMPTY, NONE};
-}
-
-std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
-    lastTwoMoves[0] = lastTwoMoves[1];
-    lastTwoMoves[1] = move;
-    if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties; add all of them to captureMap.
-        std::vector<float> captureMap(boardSize, 0.0f);
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                captureMap[i * colSize + j] = (board[i][j] == currentTurn && chains[findHead(i, j)].liberties.count() == 1) ? 1.0f : 0.0f;
-            }
-        }
-
-        switchTurn();
-        return {currentTurn, RESIGN, captureMap};
-    }
-
-    if(move == PASSMOVE){ // pass
-        switchTurn();
-        moveCount++;
-        return {EMPTY, NONE, {}};
-    }
-
-    uint8_t r = move.first;
-    uint8_t c = move.second;
-    // update board & scoreBoard
-    board[r][c] = currentTurn;
-    scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            scoreBoard[nr][nc] |= adjTo(currentTurn);
-        }
-    }
-
-    auto [clr, captureMap] = captureResultWithStat(r, c);
-    if(clr != EMPTY)
-        return {clr, CAPTURE, captureMap};
-    if(moveCount >= 2)
-        updateScore(r, c);
-    
-    switchTurn();
-    moveCount++;
-
-    if(getLegalMoveCount() == 0 || moveCount > boardSize){
-        std::vector<float> scoreMap(boardSize);
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                scoreMap[i * colSize + j] = (scoreBoard[i][j] == BLACK) ? -1.0f : (scoreBoard[i][j] == WHITE ? 1.0f : 0.0f);
-            }
-        }
-        return {gameEnd(), SCORE, scoreMap};
-    }
-    return {EMPTY, NONE, {}};
-}
-
-void Game::expand(){
-    //std::cerr << "expanding!" << std::endl;
-    // improve capture check performance by checking if there is any group with liberty count 1.
-    Move winmove;
-    int forcedState;
-    Move threat = RESIGNMOVE;
-    std::vector<std::vector<uint8_t>> transferTable;
-
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            const Chain c = getChain({i, j});
-            if(c.size != 0 && c.liberties.count() == 1){
-                auto color = board[i][j];
-                int onlyLib = c.liberties._Find_first();
-
-                if(isLegal(onlyLib / colSize, onlyLib % colSize)){
-                    // if my stone is under threat -> have to find only move unless can capture opponent's stone.
-                    if(color == getTurn()){
-                        threat = {onlyLib / colSize, onlyLib % colSize};
-                    }
-
-                    // if opponent stone is capturable
-                    else{
-                        winmove = {onlyLib / colSize, onlyLib % colSize};
-                        forcedState = 2;
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    Color terrMap[rowSize][colSize];
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            terrMap[i][j] = (canbeScore(i, j, currentTurn) ? POTSCORE : 0U) ^ scoreBoard[i][j];
-        }
-    }
-
-    if(threat != RESIGNMOVE){
-        // find shortest path from T to opposite color stone.
-        std::bitset<boardSize> marked;
-
-
-    }
-
-    else{
-
-    }
-
-    std::bitset<outputSize> candidateLegal = getLegalMoves();
-    // can only pass if it's beneficial
-    candidateLegal[outputSize - 1] = (scoreWinner() == currentTurn);
-
-    std::vector<Game> nextGames(boardSize + 1); // +1 for pass
-    // update scores & remove useless moves
-    for(int idx = 0; idx < boardSize + 1; ++idx){
-        if(candidateLegal[idx]){
-            uint8_t r = idx / colSize;
-            uint8_t c = idx % colSize;
-            nextGames[idx] = *this;
-            auto [clr, wintype] = nextGames[idx].makeMove({r, c});
-
-            if(clr == currentTurn){ // there is immediate win by score. win in 1.
-                forcedState = 2;
-                winmove = {r, c};
-                return;
-            }
-
-            // there is immediate capture next move, or the move is self-suicidal.
-            else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
-                candidateLegal[idx] = false;
-            }
-
-            else{
-                candidateLegal &= nextGames[idx].getLegalMoves();
-                candidateLegal[idx] = true; // keep itself
-            }
-        }
-    }
-
-    if(candidateLegal.none()){ // if there are no moves, mark it as loss.
-        forcedState = -1;
-        return;
-    }
-    
-    // finally add child
-    int cntr = 0;
-    for(uint8_t idx = 0; idx < outputSize; ++idx){
-        if(candidateLegal[idx]){
-            //addChild(idx/colSize, idx%colSize, nextGames[idx]);
-            const auto acquired = (getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
-            // if any points of territory is acquired
-            if(acquired.count() > 1){
-                std::vector<uint8_t> acquiredV;
-                acquiredV.reserve(acquired.count() + 1);
-                // acquiredV : {which move it indicates, terr 1, terr 2, ...}
-                acquiredV.push_back(cntr++);
-                for (size_t i = acquired._Find_first(); i < boardSize; i = acquired._Find_next(i)) {
-                    acquiredV.push_back(i);
-                }
-                transferTable.push_back(std::move(acquiredV));
-            }
-        }
-    }
-
-    //std::cerr << "expand finished" << std::endl;
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-    #endif
-}
-
-// Color Game::makeMoveNoScoreUpdate(Move move){
-//     lastTwoMoves[0] = lastTwoMoves[1];
-//     lastTwoMoves[1] = move;
-
-//     if(move == RESIGNMOVE){ // resign
-//         switchTurn();
-//         return currentTurn;
-//     }
-
-//     if(move == PASSMOVE){ // pass
-//         switchTurn();
-//         moveCount++;
-//         return EMPTY;
-//     }
-
-//     uint8_t r = move.first;
-//     uint8_t c = move.second;
-//     // update board & scoreBoard
-//     board[r][c] = currentTurn;
-//     scoreBoard[r][c] = NEUTRAL; // works as if neutral stone
-
-//     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-//         uint8_t nr = r + dr[i];
-//         uint8_t nc = c + dc[i];
-//         if(inbound(nr, nc)){
-//             scoreBoard[nr][nc] |= adjTo(currentTurn);
-//         }
-//     }
-
-//     Color clr = captureResultbyMove(r, c);
-//     if(clr != EMPTY)
-//         return clr;
-    
-//     switchTurn();
-//     moveCount++;
-//     return EMPTY;
-// }
-
-// Color Game::updateScoreAfter(Move move){
-//     if(move == PASSMOVE)
-//         return EMPTY;
-        
-//     if(moveCount >= 2)
-//         updateScore(move.first, move.second);
-
-//     if(getLegalMoveCount() == 0 || moveCount > boardSize){
-//         return gameEnd();
-//     }
-//     return EMPTY;
-// }
-
-void Game::onGameEnd(Color winner){
-    std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
 }

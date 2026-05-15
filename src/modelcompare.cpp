@@ -315,10 +315,10 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
 
             if(showScore){
                 switch(game.getScoreBoard({i, j})){
-                    case BLACK:
+                    case BSCORE:
                         display[i][j] = 'b';
                         break;
-                    case WHITE:
+                    case WSCORE:
                         display[i][j] = 'w';
                         break;
                     default:

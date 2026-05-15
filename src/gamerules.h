@@ -4,9 +4,6 @@
 #include <utility>
 #include <queue>
 #include <vector>
-#include <iostream>
-#include <algorithm>
-#include <cstdint>
 #include <bitset>
 #include "consts.h"
 
@@ -21,12 +18,18 @@ struct Stone {
     uint8_t head;   // Head of the chain
 };
 
+struct SegInfo{
+    std::vector<uint8_t> connectedSeg;
+    bool adjOpp;
+    std::bitset<4> adjEdge;
+};
+
 
 class Game{
 public:
     Game();
     inline bool isLegal(uint8_t r, uint8_t c) const{
-        return scoreBoard[r][c] & EMPTY;
+        return board[r][c] & EMPTY;
     }
 
     inline bool isLegal(Move m) const{ // return true if square is not occupied / nor is score of any side.
@@ -47,23 +50,20 @@ public:
 
     void onGameEnd(Color winner);
 
-    // Color makeMoveNoScoreUpdate(Move move);
-
-    // Color updateScoreAfter(Move move);
-
     std::pair<Color, Wintype> makeMove(Move move);
 
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
-    void expand();
+    // return type : winMove(resignMove if nothing), list of moves, list of nextGames, transferTable. 
+    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> expand() const;
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
-        return (score[BLACK] - score[WHITE]) * ((turn == BLACK) ? 1.0f : -1.0f);
+        return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
 
     inline Color scoreWinner() const {
-        return score[BLACK] - score[WHITE] - globalConfig.komi > 0 ? BLACK : WHITE;
+        return score[0] - score[1] - globalConfig.komi > 0 ? BLACK : WHITE;
     };
 
     inline Color getTurn() const{
@@ -75,11 +75,11 @@ public:
     };
 
     inline Color getBoard(Move m) const{
-        return board[m.first][m.second];
+        return board[m.first][m.second] & BOARDMASK;
     }
 
     inline Color getScoreBoard(Move m) const{
-        return scoreBoard[m.first][m.second];
+        return board[m.first][m.second] & SCOREMASK;
     }
 
     inline const int getChainIdx(int cord) const{
@@ -109,11 +109,9 @@ public:
 private:    
     Color currentTurn;
     Color board[rowSize][colSize];
-    Color scoreBoard[rowSize][colSize];
     Move lastTwoMoves[2];
     int moveCount;
     float score[2];
-    float finalScore;
 
     Chain chains[boardSize];   // Chain data
     Stone stones[rowSize][colSize];    // Stone linked list info
@@ -139,6 +137,7 @@ private:
         currentTurn = reverseColor(currentTurn);
     }
 
+    // capture related functions
     inline uint8_t findHead(int r, int c) { return stones[r][c].head; }
 
     void mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2);
@@ -147,15 +146,31 @@ private:
 
     std::pair<Color, std::vector<float>> captureResultWithStat(uint8_t r, uint8_t c);
 
-    bool canbeScore(uint8_t r, uint8_t c, Color clr);
-
-    uint8_t checkScore(uint8_t r, uint8_t c, Color clr);
-
-    void getScore();
-
+    // score related functions
     void updateScore(uint8_t r, uint8_t c);
 
-    Color gameEnd();
+    bool canbeScore(uint8_t r, uint8_t c, Color clr) const;
+
+    // calculates if territory is formed on given grid using BFS.
+    // Also updates game state.
+    uint8_t checkScore(uint8_t r, uint8_t c, Color clr);
+
+    /////////////////////////////////////////////////////////
+    // Functions needed for effective expansion.
+
+    // Faster version of checkScore but segTable should be provided.
+    // Calculate whether playing at {r, c} would give territory, without changing game state.
+    // Returns bitset with 1 if corresponding segment becomes territory.
+    std::bitset<boardSize> checkScore(uint8_t r, uint8_t c, Color clr, const std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>>& segTable) const;
+
+    std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segmentTable(const std::bitset<boardSize>& potScore) const;
+
+    std::vector<Move> possibleMovesWhenThreat(const Move& threat, const std::bitset<boardSize>& potScore) const;
+
+    // first value of acquired is ignored to use transferTable as an argument.
+    Color makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& acquired);
+
+    /////////////////////////////////////////////////////////////////////////
 
     uint8_t getLegalMoveCount() const;
 };

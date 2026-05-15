@@ -50,7 +50,7 @@ private:
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
     std::unordered_map<HashValue, Node*>* const transposTable;
 
-    void addChild(const int r, const int c, const Game& ng);
+    void addChild(const Move& move, const Game& ng);
 
     void expand();
 
