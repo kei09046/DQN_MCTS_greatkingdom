@@ -28,13 +28,13 @@ namespace{
         std::vector<float> n_logit(moveSize);
 
         for(int i=0; i<moveSize; ++i){
-            n_logit[i] = logit[availableMoves[i].first * colSize + availableMoves[i].second];
+            n_logit[i] = logit.at(availableMoves[i].first * colSize + availableMoves[i].second);
         }
 
         for(int i=0; i<transferTable.size(); ++i){
             const auto idx = transferTable[i][0];
             for(int j=1; j<transferTable[i].size(); ++j){
-                n_logit[idx] = std::max(n_logit[idx], logit[j]);
+                n_logit.at(idx) = std::max(n_logit.at(idx), logit[j]);
             }
         }
 
@@ -56,8 +56,7 @@ namespace{
         return exp_logit;
     }
 
-    std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game)
-    {
+    std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game){
         const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = *nnOutput;
 
         float captureV[2] = {0.0f, 0.0f};
@@ -100,27 +99,28 @@ namespace{
 
         //float capChance = std::max(captureV[0], captureV[1]) * 0.5f;
         float utility = winP * 0.5f + (captureV[0] - captureV[1]) * 0.25f + std::tanh(scoreV / 5.0f) * 0.25f;
-        if(globalConfig.detailedStat){
-            static int cntr = 0;
-            if(cntr++ % 100 == 0){
-                ModelCompare::displayBoardGUI(true, game);
-                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 5.0f) << " " << utility << std::endl;
-                for(int i=0; i<rowSize; ++i){
-                    for(int j=0; j<colSize; ++j){
-                        std::cout << scoreMap[i * colSize + j] << " ";
-                    }
-                    std::cout << std::endl;
-                }
-                std::cout << std::endl;
-                for(int i=0; i<rowSize; ++i){
-                    for(int j=0; j<colSize; ++j){
-                        std::cout << captureMap[i * colSize + j] << " ";
-                    }
-                    std::cout << std::endl;
-                }
-                std::cout << std::endl;
-            }
-        }
+    //     if(globalConfig.detailedStat){
+    //         static int cntr = 0;
+    //         if(cntr++ % 100 == 0){
+    //             ModelCompare::displayBoardGUI(true, game);
+    //             std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 5.0f) << " " << utility << std::endl;
+    //             for(int i=0; i<rowSize; ++i){
+    //                 for(int j=0; j<colSize; ++j){
+    //                     std::cout << scoreMap[i * colSize + j] << " ";
+    //                 }
+    //                 std::cout << std::endl;
+    //             }
+    //             std::cout << std::endl;
+    //             for(int i=0; i<rowSize; ++i){
+    //                 for(int j=0; j<colSize; ++j){
+    //                     std::cout << captureMap[i * colSize + j] << " ";
+    //                 }
+    //                 std::cout << std::endl;
+    //             }
+    //             std::cout << std::endl;
+    //         }
+    //     }
+
         return {utility, winP};
     }
 }
@@ -170,101 +170,107 @@ void Node::expand(){
     //     std::cerr << std::endl;
     // }
 
-    // transferTable = std::move(tranfTable);
-    // winmove = std::move(result.first);
-    // forcedState = std::move(result.second);
+    transferTable = std::move(tranfTable);
+    winmove = std::move(result.first);
+    forcedState = std::move(result.second);
 
-    // for (int i=0; i<games.size(); ++i) {
-    //     addChild(moves[i], std::move(games[i])); 
-    // }
-    // availableMoves = std::move(moves);
-
-    //std::cerr << "expanding!" << std::endl;
-    std::bitset<outputSize> candidateLegal; // mark candidate legal moves
-
-    // improve capture check performance by checking if there is any group with liberty count 1.
-    Move threat = RESIGNMOVE;
-
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            const Chain c = game.getChain({i, j});
-            if(c.size != 0 && c.liberties.count() == 1){
-                auto color = game.getBoard({i, j});
-                int onlyLib = c.liberties._Find_first();
-
-                if(game.isLegal(onlyLib / colSize, onlyLib % colSize)){
-                    // if my stone is under threat -> have to find only move unless can capture opponent's stone.
-                    if(color == game.getTurn()){
-                        threat = {onlyLib / colSize, onlyLib % colSize};
-                    }
-
-                    // if opponent stone is capturable
-                    else{
-                        winmove = {onlyLib / colSize, onlyLib % colSize};
-                        forcedState = 2;
-                        return;
-                    }
-                }
-            }
-        }
+    for (int i=0; i<games.size(); ++i) {
+        addChild(moves[i], std::move(games[i])); 
     }
+    availableMoves = std::move(moves);
 
-    candidateLegal = game.getLegalMoves();
-    // can only pass if it's beneficial
-    candidateLegal[outputSize - 1] = (game.scoreWinner() == game.getTurn());
-
-    std::vector<Game> nextGames(boardSize + 1); // +1 for pass
-    // update scores & remove useless moves
-    for(int idx = 0; idx < boardSize + 1; ++idx){
-        if(candidateLegal[idx]){
-            uint8_t r = idx / colSize;
-            uint8_t c = idx % colSize;
-            nextGames[idx] = game;
-            auto [clr, wintype] = nextGames[idx].makeMove({r, c});
-
-            if(clr == turn){ // there is immediate win by score. win in 1.
-                forcedState = 2;
-                winmove = {r, c};
-                return;
-            }
-
-            // there is immediate capture next move, or the move is self-suicidal.
-            else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
-                candidateLegal[idx] = false;
-            }
-
-            else{
-                candidateLegal &= nextGames[idx].getLegalMoves();
-                candidateLegal[idx] = true; // keep itself
-            }
-        }
-    }
-
-    if(candidateLegal.none()){ // if there are no moves, mark it as loss.
+    if(availableMoves.empty()){
+        // std::cerr << "there are no legal moves! turn : " << static_cast<int>(game.getTurn()) << " " << static_cast<int>(turn) << std::endl;
+        // ModelCompare::displayBoardGUI(true, game);
         forcedState = -1;
-        return;
     }
     
-    // finally add child
-    int cntr = 0;
-    for(uint8_t idx = 0; idx < outputSize; ++idx){
-        if(candidateLegal[idx]){
-            availableMoves.push_back({idx / colSize, idx % colSize});
-            addChild({idx/colSize, idx%colSize}, nextGames[idx]);
-            const auto acquired = (game.getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
-            // if any points of territory is acquired
-            if(acquired.count() > 1){
-                std::vector<uint8_t> acquiredV;
-                acquiredV.reserve(acquired.count() + 1);
-                // acquiredV : {which move it indicates, terr 1, terr 2, ...}
-                acquiredV.push_back(cntr++);
-                for (size_t i = acquired._Find_first(); i < boardSize; i = acquired._Find_next(i)) {
-                    acquiredV.push_back(i);
-                }
-                transferTable.push_back(std::move(acquiredV));
-            }
-        }
-    }
+    // // //std::cerr << "expanding!" << std::endl;
+    // std::bitset<outputSize> candidateLegal; // mark candidate legal moves
+
+    // // improve capture check performance by checking if there is any group with liberty count 1.
+    // Move threat = RESIGNMOVE;
+
+    // for(int i=0; i<rowSize; ++i){
+    //     for(int j=0; j<colSize; ++j){
+    //         const Chain c = game.getChain({i, j});
+    //         if(c.size != 0 && c.liberties.count() == 1){
+    //             auto color = game.getBoard({i, j});
+    //             int onlyLib = c.liberties._Find_first();
+
+    //             if(game.isLegal(onlyLib / colSize, onlyLib % colSize)){
+    //                 // if my stone is under threat -> have to find only move unless can capture opponent's stone.
+    //                 if(color == game.getTurn()){
+    //                     threat = {onlyLib / colSize, onlyLib % colSize};
+    //                 }
+
+    //                 // if opponent stone is capturable
+    //                 else{
+    //                     winmove = {onlyLib / colSize, onlyLib % colSize};
+    //                     forcedState = 2;
+    //                     return;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // candidateLegal = game.getLegalMoves();
+    // // can only pass if it's beneficial
+    // candidateLegal[outputSize - 1] = (game.scoreWinner() == game.getTurn());
+
+    // std::vector<Game> nextGames(boardSize + 1); // +1 for pass
+    // // update scores & remove useless moves
+    // for(int idx = 0; idx < boardSize + 1; ++idx){
+    //     if(candidateLegal[idx]){
+    //         uint8_t r = idx / colSize;
+    //         uint8_t c = idx % colSize;
+    //         nextGames[idx] = game;
+    //         auto [clr, wintype] = nextGames[idx].makeMove({r, c});
+
+    //         if(clr == turn){ // there is immediate win by score. win in 1.
+    //             forcedState = 2;
+    //             winmove = {r, c};
+    //             return;
+    //         }
+
+    //         // there is immediate capture next move, or the move is self-suicidal.
+    //         else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
+    //             candidateLegal[idx] = false;
+    //         }
+
+    //         else{
+    //             candidateLegal &= nextGames[idx].getLegalMoves();
+    //             candidateLegal[idx] = true; // keep itself
+    //         }
+    //     }
+    // }
+
+    // if(candidateLegal.none()){ // if there are no moves, mark it as loss.
+    //     forcedState = -1;
+    //     return;
+    // }
+    
+    // // finally add child
+    // int cntr = 0;
+    // for(uint8_t idx = 0; idx < outputSize; ++idx){
+    //     if(candidateLegal[idx]){
+    //         availableMoves.push_back({idx / colSize, idx % colSize});
+    //         addChild({idx/colSize, idx%colSize}, nextGames[idx]);
+    //         const auto acquired = (game.getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
+    //         // if any points of territory is acquired
+    //         if(acquired.count() > 1){
+    //             std::vector<uint8_t> acquiredV;
+    //             acquiredV.reserve(acquired.count() + 1);
+    //             // acquiredV : {which move it indicates, terr 1, terr 2, ...}
+    //             acquiredV.push_back(cntr++);
+    //             for (size_t i = acquired._Find_first(); i < boardSize; i = acquired._Find_next(i)) {
+    //                 acquiredV.push_back(i);
+    //             }
+    //             transferTable.push_back(std::move(acquiredV));
+    //         }
+    //     }
+    // }
+
 
     // assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
     //std::cerr << "expand finished" << std::endl;
@@ -431,8 +437,14 @@ Node* Node::jump(Move move){
 
     std::cerr << "node's state : " << std::endl;
     ModelCompare::displayBoardGUI(false, game);
-    std::cerr << std::endl;
-    std::cerr << static_cast<int>(turn) << " " << static_cast<int>(game.getTurn()) << " " << static_cast<int>(game.getScoreBoard(move)) << std::endl;
+    
+    std::cerr << "transfer table" << std::endl;
+    for(const auto& v : transferTable){
+        for(const auto& move : v){
+            std::cerr << static_cast<int>(move) / colSize << static_cast<int>(move) % colSize << " ";
+        }
+        std::cerr << std::endl;
+    }
 
     return nullptr;
 }
@@ -568,12 +580,13 @@ void MCTS::printVariation(){
             m = node->availableMoves[maxi];
         }
         else if(node->forcedState > 0){
+            m = node->winmove;
+            assert(m != RESIGNMOVE);
+            std::cerr << "winmove : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
+
             if(node->forcedState == 2)
                 break;
 
-            m = node->winmove;
-            assert(m != RESIGNMOVE);
-            // std::cerr << "winmove : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
             for(int i=0; i<node->availableMoves.size(); ++i){
                 if(node->availableMoves[i] == m){
                     maxi = i;

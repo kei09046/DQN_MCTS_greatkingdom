@@ -520,7 +520,7 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E"){
+	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -545,7 +545,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		else if(model_type == "C"){
 			net = std::make_shared<Net>(18, 12);
 		}
-		else if(model_type == "E"){
+		else if((model_type == "E") || (model_type == "F")){
 			net = std::make_shared<Net>(18, 15);
 		}
 		else{

@@ -149,7 +149,7 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
 
                     // if opponent stone is capturable
                     else{
-                        return {{{onlyLib / colSize, onlyLib % colSize}, 2}, {}, {}, {}};
+                        return {{{onlyLib / colSize, onlyLib % colSize}, 2}, {{onlyLib / colSize, onlyLib % colSize}}, {}, {}};
                     }
                 }
             }
@@ -303,10 +303,10 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
                 if(!buffer[i].none()){
                     transferTable.push_back({cntr});
                     for(int j=0; j<boardSize; ++j){
-                        if(buffer[i][j])
-                            transferTable[cntr].push_back(j);
+                        if(buffer[i][segTable.second[j]])
+                            transferTable.back().push_back(j);
                     }
-                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, transferTable[cntr]);
+                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, transferTable.back());
                 }
                 // no territory difference
                 else{
@@ -510,14 +510,14 @@ uint8_t Game::checkScore(uint8_t r, uint8_t c, Color clr) {
     // Mark valid territory
     Color scoreMarker = (clr == BLACK) ? BSCORE : WSCORE;
     for (auto [tr, tc] : emptyCells) {
-        board[tr][tc] |= scoreMarker;
+        board[tr][tc] = scoreMarker;
     }
 
     return areaCount;
 }
 
 std::bitset<boardSize> Game::checkScore(uint8_t r, uint8_t c, Color clr, const std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>>& segTable) const{
-    if (!(inbound(r, c) && (board[r][c] & EMPTY)))
+    if (!(inbound(r, c) && (board[r][c] & EMPTY) && canbeScore(r, c, currentTurn)))
         return {};
 
     const auto& segInfos = segTable.first;
@@ -540,17 +540,19 @@ std::bitset<boardSize> Game::checkScore(uint8_t r, uint8_t c, Color clr, const s
         bool isScore = true;
 
         const auto startSeg = segIdx[nr * colSize + nc];
+        assert(blockedSeg != startSeg);
+
         // if segment was checked by previous iterations.
         if(globalVisitMark[startSeg])
             continue;
 
         segQ.push(startSeg);
+        localVisitMark[blockedSeg] = true;
         localVisitMark[startSeg] = true;
 
         // perform BFS on segment
         while (!segQ.empty()) {
-            localVisitMark[segQ.front()] = true;
-            const auto& sInfo = segInfos[segQ.front()];
+            const SegInfo sInfo = segInfos[segQ.front()];
             segQ.pop();
 
             // if segment is adjacent to opposite color
@@ -564,25 +566,31 @@ std::bitset<boardSize> Game::checkScore(uint8_t r, uint8_t c, Color clr, const s
                 break;
             }
 
-            for(const auto& adjSegs : sInfo.connectedSeg){
+            for(const uint8_t adjSegs : sInfo.connectedSeg){
+                if(localVisitMark[adjSegs])
+                    continue;
+
                 if(globalVisitMark[adjSegs]){
                     // if flow reaches here, it basically means that startSeg hasn't been visited yet reachable segment has been visited.
                     // This indicates BFS quitted in previous iteration, which means this is not territory.
                     isScore = false;
                     break;
                 }
-                else if(!localVisitMark[adjSegs]){
+                else{
                     segQ.push(adjSegs);
                     localVisitMark[adjSegs] = true;
                 }
             }
         }
 
-        if(isScore)
+        if(isScore){
+            // std::cerr << "Territory gained " << localVisitMark << std::endl;
             terrMark |= localVisitMark;
+        }
         globalVisitMark |= localVisitMark;
     }
 
+    terrMark[blockedSeg] = false;
     return terrMark;
 }
 
@@ -799,10 +807,14 @@ Color Game::makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& 
     if(clr != EMPTY)
         return clr;
     
-    // update territory without BFS. 
+    // update territory without BFS.
+    const Color scoreBit = (currentTurn == BLACK) ? BSCORE : WSCORE;
+    const int scoreIdx = (currentTurn == BLACK) ? 0 : 1;
+
     for(int i=1; i<acquired.size(); ++i){
         auto idx = acquired[i];
-        board[idx / colSize][idx % colSize] = ((currentTurn == BLACK) ? BSCORE : WSCORE);
+        board[idx / colSize][idx % colSize] = scoreBit;
+        score[scoreIdx]++;
     }
 
     switchTurn();
