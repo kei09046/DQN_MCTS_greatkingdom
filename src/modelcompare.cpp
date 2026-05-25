@@ -62,7 +62,7 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		if(game_manager.isLegal(cord)){
+		if(cord == PASSMOVE || game_manager.isLegal(cord)){
 			res = game_manager.makeMove(cord).first;
 			displayBoardGUI(true, game_manager);
 			if (res != EMPTY) {

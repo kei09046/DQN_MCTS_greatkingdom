@@ -18,6 +18,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
     if (std::regex_search(init_model, match, re)) {
         save_cnt = std::stoi(match[1]);
     }
+	setLearningRate(save_cnt);
 
 	total_game_length = 0;
 	total_score_diff = 0;
@@ -307,6 +308,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
 							return s; }); // wait until all train and self_play threads are paused
 
+					setLearningRate(games_played + save_cnt);
 					model_file = model_prefix + std::to_string(games_played + save_cnt) + ".pt";
 					const std::string save_path = globalConfig.modelPath + model_file;
 					train_model.save_model(save_path); // save model to file
@@ -347,6 +349,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
 							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + "B.pt"); // best models are saved
+						}
+						else if(win_rate < 0.35f){
+							std::cout << "model fallback!" << std::endl;
+							train_model.load_model(globalConfig.modelPath + current_best_model_file);
 						}
 						
 						globalConfig = loadConfig("../configs/train_config.json");
@@ -411,4 +417,8 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 		std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
 	}
 #endif
+}
+
+void TrainPipeline::setLearningRate(const int games_played){
+	learning_rate = (games_played < 15360) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 15360) / 960);
 }

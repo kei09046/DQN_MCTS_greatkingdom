@@ -26,7 +26,7 @@
 
 class TrainPipeline {
 private:
-	float learning_rate = 0.001f;
+	float learning_rate;
 	int save_cnt; // indicate how many games have been played; used for model naming
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet prev_policy; // used for comparison
@@ -41,6 +41,8 @@ private:
 	std::string current_best_model_file;
 
 	void pin_threads_to_core(std::thread& th, int core_id);
+
+	void setLearningRate(const int games_played);
 
 public:
     std::deque<std::shared_ptr<TrainData>>* gameBuffer[2];

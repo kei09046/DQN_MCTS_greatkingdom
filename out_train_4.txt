@@ -1,7 +1,0 @@
-Model loaded: ./models/i3360.pt
-Model loaded: ./models/i3360.pt
-Model loaded: ./models/i3360.pt
-save model
-model properly saved 96
-train_iter : 514
-total time: 694998[ms]
