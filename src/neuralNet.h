@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 #include "gamerules.h"
 
+using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 
 struct ResidualBlockImpl : torch::nn::Module {
     torch::nn::Conv2d conv1{nullptr}, conv2{nullptr};
@@ -34,7 +35,7 @@ TORCH_MODULE(ResidualBlock);
 
 class NetBase : public torch::nn::Module {
 public:
-    virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) = 0;
+    virtual NNOutput forward(const torch::Tensor& state) = 0;
     virtual ~NetBase() = default;
 };
 
@@ -44,7 +45,7 @@ public:
 	Net(int channelSize, int blockSize);
 	int channelSize;
 
-	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> forward(const torch::Tensor& state) override;
+	NNOutput forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
@@ -74,6 +75,12 @@ public:
 	// capture
 	torch::nn::Conv2d cap_cv3;
 	torch::nn::Conv2d cap_cv4;
+
+	//cap/score
+	torch::nn::Conv2d cap_sc_cv3;
+	torch::nn::BatchNorm2d cap_sc_bn3;
+	torch::nn::Linear cap_sc_fc1;
+	torch::nn::Linear cap_sc_fc2;
 };
 
 class PolicyValueNet {

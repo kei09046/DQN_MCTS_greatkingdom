@@ -117,8 +117,9 @@ private:
     Stone stones[rowSize][colSize];    // Stone linked list info
 
 
-    inline static bool inbound(int r, int c){
-        return (r >= 0) && (r < rowSize) && (c >= 0) && (c < colSize);
+    // overflow is managed.
+    inline static bool inbound(uint8_t r, uint8_t c){
+        return (r < rowSize) && (c < colSize);
     }
 
     inline static bool oppstate(Color x, Color y){

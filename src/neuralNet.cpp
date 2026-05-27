@@ -31,7 +31,13 @@ sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false)),
 
 // capture head
 cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
+cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false)),
+
+// cap/sc distinguisher
+cap_sc_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
+cap_sc_bn3(torch::nn::BatchNorm2d(1)),
+cap_sc_fc1(inputSize, 256),
+cap_sc_fc2(256, 1)
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 
@@ -61,9 +67,14 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
 	register_module("cap_cv3", cap_cv3);
 	register_module("cap_cv4", cap_cv4);
+
+	register_module("cap_sc_cv3", cap_sc_cv3);
+	register_module("cap_sc_bn3", cap_sc_bn3);
+	register_module("cap_sc_fc1", cap_sc_fc1);
+	register_module("cap_sc_fc2", cap_sc_fc2);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> Net::forward(const torch::Tensor& state)
+NNOutput Net::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& block : *blocks) {
@@ -89,8 +100,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_cv3(x));
 	cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
 
+	torch::Tensor cap_chance = torch::nn::functional::relu(cap_sc_bn3(cap_sc_cv3(x)));
+	cap_chance = cap_chance.view({-1, inputSize});
+	cap_chance = torch::nn::functional::relu(cap_sc_fc1(cap_chance));
+	cap_chance = cap_sc_fc2(cap_chance).sigmoid();
+
 	//std::cerr << log_act << " " << val << " " << exp_score_diff << " " << exp_score_map << " " << cap_prob_map << std::endl;
-	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, cap_prob_map);
+	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, cap_prob_map, cap_chance);
 }
 
 std::vector<float> PolicyValueNet::getData(const Game& game){
@@ -216,7 +232,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	std::vector<float> batchData = getData(gameBatch);
 
-	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch;
+	torch::Tensor batch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch, capChanceBatch;
 
 	batch = torch::from_blob(batchData.data(), // [B, 18, 9, 9]
 		{B, globalConfig.inputChannel, rowSize, colSize},
@@ -232,6 +248,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
 		scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
 		captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
+		capChanceBatch = std::get<5>(r).to(torch::kCPU); // [B, 1]
 	} else {
 		auto r = policy_value_net->forward(batch);
 		policyBatch = std::get<0>(r);   // already CPU
@@ -239,6 +256,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		scoreBatch = std::get<2>(r);
 		scoreMapBatch = std::get<3>(r);
 		captureMapBatch = std::get<4>(r) * stones;
+		capChanceBatch = std::get<5>(r);
 	}
 
 	//std::cerr << policyBatch.dtype() << " " << policyBatch.device() << " " << policyBatch.sizes() << std::endl;
@@ -248,6 +266,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	float* pS = scoreBatch.data_ptr<float>();
 	float* pSm = scoreMapBatch.data_ptr<float>();
 	float* pCm = captureMapBatch.data_ptr<float>();
+	float* pCc = capChanceBatch.data_ptr<float>();
 
 	for(int b = 0; b < B; ++b) {
 		// policy head: copy whole row
@@ -263,7 +282,9 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		src = pCm + b * boardSize;
 		std::vector<float> capMap(src, src + boardSize);
 
-		outputs.emplace_back(std::move(policy), value, s, std::move(scMap), std::move(capMap));
+		float capProb = pCc[b];
+
+		outputs.emplace_back(std::move(policy), value, s, std::move(scMap), std::move(capMap), capProb);
 	}
 	return outputs;
 }
@@ -298,7 +319,7 @@ PolicyValueNet::backupEvaluate(const std::vector<const Game*>& gameBatch){
 		std::vector<float> policy(0.0f, outputSize);
 		std::vector<float> scMap(0.0f, boardSize);
 		std::vector<float> capMap(0.0f, boardSize);
-		outputs.emplace_back(std::move(policy), 0.0f, 0.0f, std::move(scMap), std::move(capMap));
+		outputs.emplace_back(std::move(policy), 0.0f, 0.0f, std::move(scMap), std::move(capMap), 0.0f);
 	}
 	return outputs;
 }
@@ -307,7 +328,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto data = getData(game);
 	torch::Tensor current_state = torch::tensor(data, options).view({ 1, globalConfig.inputChannel, rowSize, colSize }).to(device);
-	std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> res;
+	NNOutput res;
 	torch::NoGradGuard no_grad;
 	if (use_gpu) {
 		auto r = policy_value_net->forward(current_state);
@@ -316,6 +337,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		get<2>(res) = get<2>(r).to(torch::kCPU); // score differential (scalar)
 		get<3>(res) = get<3>(r).to(torch::kCPU); // score map
 		get<4>(res) = get<4>(r).to(torch::kCPU); // capture map
+		get<5>(res) = get<5>(r).to(torch::kCPU); // capture chance
 	}
 	else {
 		res = policy_value_net->forward(current_state);
@@ -346,7 +368,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		capturemap.push_back(pt[i]);
 	}
 
-	return { policy, get<1>(res).index({0, 0}).item<float>(), get<2>(res).index({0, 0}).item<float>(), scoremap, capturemap };
+	return { policy, get<1>(res).index({0, 0}).item<float>(), get<2>(res).index({0, 0}).item<float>(), scoremap, capturemap, get<5>(res).index({0, 0}).item<float>()};
 }
 
 std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 
@@ -401,12 +423,15 @@ std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& sta
 		{B, 1, outputRow, outputCol},
 		options).to(device);
 
-	float pLoss = 0.0f, vLoss = 0.0f, cLoss = 0.0f;
+	auto cap_chanceb = torch::ones({B, 1}, options).to(device);
+
+
+	float pLoss = 0.0f, vLoss = 0.0f, cLoss = 0.0f, cpLoss = 0.0f;
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb); 
+		auto [r1, r2, r3, r4, r5, r6] = policy_value_net->forward(sb); 
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
 		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
@@ -417,10 +442,14 @@ std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& sta
 		torch::Tensor loss_tensor = -(cb * torch::log(r5 + 1e-9) * pos_weight + (1 - cb) * torch::log(1 - r5 + 1e-9));
 		torch::Tensor capture_loss = loss_tensor.mean();
 
-		torch::Tensor loss = value_loss + policy_loss + capture_loss;
+		torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, wb);
+
+
+		torch::Tensor loss = value_loss + policy_loss + capture_loss + cap_prob_loss;
 		pLoss += policy_loss.item().to<float>();
 		vLoss += value_loss.item().to<float>();
 		cLoss += capture_loss.item().to<float>();
+		cpLoss += cap_prob_loss.item().to<float>();
 		// std::cout << "loss epoch " << i << " " << value_loss.item() << " " << policy_loss.item() << std::endl;
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
@@ -486,15 +515,17 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 		{B, 1, outputRow, outputCol},
 		options).to(device);
 
+	auto cap_chanceb = torch::zeros({B, 1}, options).to(device);
+
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
-	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f;
+	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cpLoss = 0.0f;
 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kMean));
 
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb); 
+		auto [r1, r2, r3, r4, r5, r6] = policy_value_net->forward(sb); 
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
 		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
@@ -505,11 +536,14 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 
 		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(r4, smap);
 
-		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss;
+		torch::Tensor cap_chance_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
+
+		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss + cap_chance_loss;
 		pLoss += policy_loss.item().to<float>();
 		vLoss += value_loss.item().to<float>();
 		sLoss += score_loss.item().to<float>();
 		smLoss += score_map_loss.item().to<float>();
+		cpLoss += cap_chance_loss.item().to<float>();
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
 		optimizer->step();
@@ -520,7 +554,7 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F"){
+	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -548,6 +582,9 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		else if((model_type == "E") || (model_type == "F")){
 			net = std::make_shared<Net>(18, 15);
 		}
+		else if(model_type == "G"){
+			net = std::make_shared<Net>(18, 18);
+		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
 		}
@@ -555,7 +592,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(18, 15);
+		policy_value_net = std::make_shared<Net>(18, 18);
 	}
 
 	policy_value_net->to(device);

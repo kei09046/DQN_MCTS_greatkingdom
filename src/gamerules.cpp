@@ -51,6 +51,7 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+    assert(board[r][c] & EMPTY);
     // turn off the empty bit, turn on the color bit.
     board[r][c] ^= currentTurn | EMPTY;
     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
@@ -99,6 +100,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+    assert(board[r][c] & EMPTY);
     // turn off empty bit, turn on color bit.
     board[r][c] ^= currentTurn | EMPTY;
     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
@@ -165,14 +167,7 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
 
     if(threat != RESIGNMOVE){
         // first find list of possible moves.
-        // for(int i=0; i<rowSize; ++i){
-        //     for(int j=0; j<colSize; ++j){
-        //         std::cerr << static_cast<int>(board[i][j]) << " ";
-        //     }
-        //     std::cerr << std::endl;
-        // }
 
-        //std::cerr << "threat move search called!" << std::endl;
         std::vector<Move> possibleMoves = possibleMovesWhenThreat(threat, potScore);
 
         // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
@@ -230,24 +225,6 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
     }
 
     else{
-        // if(!potScore.none()){
-        //     std::cerr << "printing board" << std::endl;
-        //     for(int i=0; i<rowSize; ++i){
-        //         for(int j=0; j<colSize; ++j){
-        //             std::cerr << static_cast<int>(board[i][j]) << " ";
-        //         }
-        //         std::cerr << std::endl;
-        //     }
-
-        //     std::cerr << "printing potScore" << std::endl;
-        //     for(int i=0; i<rowSize; ++i){
-        //         for(int j=0; j<colSize; ++j){
-        //             std::cerr << potScore[i * colSize + j] << " ";
-        //         }
-        //         std::cerr << std::endl;
-        //     }
-        // }
-
         const auto segTable = segmentTable(potScore);
         std::bitset<outputSize> candidates = getLegalMoves();
         std::bitset<boardSize> acquiredSeg;
@@ -255,24 +232,6 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
         std::array<std::bitset<boardSize>, boardSize> buffer;
 
         //first check potential score gaining moves
-
-        // if(!potScore.none()){
-        //     std::cerr << "printing segIdx" << std::endl;
-        //     for(int i=0; i<rowSize; ++i){
-        //         for(int j=0; j<colSize; ++j){
-        //             std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
-        //         }
-        //         std::cerr << std::endl;
-        //     }
-
-        //     std::cerr << "printing connectionInfo" << std::endl;
-        //     for(const auto& seginfo : segTable.first){
-        //         for(uint8_t connected : seginfo.connectedSeg)
-        //             std::cerr << static_cast<int>(connected) << " ";
-        //         std::cerr << std::endl;
-        //         std::cerr << seginfo.adjEdge << " " << seginfo.adjOpp << std::endl;
-        //     }
-        // }
 
         for(int i=0; i<boardSize; ++i){
             if(potScore[i] && !acquiredSeg[segTable.second[i]]){
@@ -283,13 +242,8 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
                 buffer[i] = acquired;
             }
         }
-        //Check non-score gaining moves
-        // for(int i=0; i<boardSize; ++i){
-        //     if(candidates[i] && !potScore[i] && !acquiredSeg[segTable.second[i]]){
-        //         acquiredSeg |= checkScore(i/colSize, i%colSize, currentTurn, segTable);
-        //     }
-        // }
 
+        //Check non-score gaining moves
         std::vector<Move> possibleMoves;
         std::vector<Game> children;
         // push back possible moves
@@ -636,15 +590,6 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segmentTab
         }
     }
 
-    // if(!potScore.none()){
-    //     for(int i=0; i<rowSize; ++i){
-    //         for(int j=0; j<colSize; ++j){
-    //             std::cerr << static_cast<int>(segMap[i * colSize + j]) << " ";
-    //         }
-    //         std::cerr << std::endl;
-    //     }
-    // }
-
     for(const Move& cand : terrCandidate){
         SegInfo& currentSeg = segInfos.at(segMap[cand.first * colSize + cand.second]);
         for(int i=0; i<4; ++i){
@@ -704,15 +649,6 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segmentTab
                 segN++;
             }
         }
-
-        // if(!potScore.none()){
-        //     for(int i=0; i<rowSize; ++i){
-        //         for(int j=0; j<colSize; ++j){
-        //             std::cerr << static_cast<int>(segMap[i * colSize + j]) << " ";
-        //         }
-        //         std::cerr << std::endl;
-        //     }
-        // }
     }
 
     return {segInfos, segMap};
@@ -793,6 +729,8 @@ Color Game::makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& 
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+
+    assert(board[r][c] & EMPTY);
     // turn off the empty bit, turn on the color bit.
     board[r][c] ^= currentTurn | EMPTY;
     for(int i=0; i<4; ++i){ // make sure it can't be used for opponent

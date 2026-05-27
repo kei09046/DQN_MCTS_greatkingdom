@@ -202,6 +202,7 @@ void ModelCompare::playHuman() {
 				break;
 
 		displayBoardGUI(true, game_manager);
+		std::cout << std::endl;
 		displayBoardGUI(true, games[idx]);
 		experiment = games[idx];
 		

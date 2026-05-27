@@ -12,7 +12,7 @@
 
 // for hash
 using HashValue = uint64_t;
-using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vector<float>, std::vector<float>>; // policy, winP, score diff, score map, capture map
+using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vector<float>, std::vector<float>, float>; // policy, winP, score diff, score map, capture map, sc/cap chance
 
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
