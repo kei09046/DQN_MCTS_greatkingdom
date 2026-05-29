@@ -98,13 +98,13 @@ namespace{
             }
         }
 
-        float capChanceClip = std::max(std::min(capChance, 0.25f), 0.75f);
+        float capChanceClip = std::min(std::max(capChance, 0.1f), 0.9f);
         float utility = winP * 0.5f + ((captureV[0] - captureV[1]) * capChanceClip + std::tanh(scoreV / 10.0f) * (1.0f - capChanceClip)) * 0.5f;
         if(globalConfig.detailedStat){
             static int cntr = 0;
             if(cntr++ % 100 == 0){
                 ModelCompare::displayBoardGUI(true, game);
-                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 5.0f) << " " << capChance << " " << utility << std::endl;
+                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 10.0f) << " " << capChance << " " << utility << std::endl;
                 for(int i=0; i<rowSize; ++i){
                     for(int j=0; j<colSize; ++j){
                         std::cout << scoreMap[i * colSize + j] << " ";
@@ -283,33 +283,39 @@ void Node::expand(){
 
 int Node::selectChildInSearch(){
     int maxi = -1;
-    float pref, maxval = -5.0f; // pref may be less than -1.(due to score head)
+    float pref, maxval = -1000.0f; // pref may be less than -1.(due to score head)
+    bool lost = true;
 
+    assert(!availableMoves.empty());
     for(int i=0; i<availableMoves.size(); ++i){
         int forced = child[i]->forcedState;
         
         // if winning continuation found.
         if(forced < 0){
-            forcedState = -forced + (forced > 0 ? -1 : 1);
+            forcedState = -forced + 1;
             winmove = availableMoves[i];
             return i;
         }
         // only select non-losing move.
-        else if(forced == 0){
+        if(forced == 0){
             pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
             + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+            lost = false;
+        }
+        // losing move can be selected. Just mark as loss.
+        else{ 
+            pref = -1.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        }
             
-            if(maxval < pref){
-                maxval = pref; 
-                maxi = i;
-            }
+        if(maxval < pref){
+            maxval = pref; 
+            maxi = i;
         }
     }
     
-    // if every move is lost, first move would be returned by default.
-    if(maxi == -1){
-        forcedState = -child[0]->forcedState - 1;
-        return 0;
+    // if every move is lost, update forcedState. Move with highest P value would be selected.
+    if(lost){
+        forcedState = -child[maxi]->forcedState - 1;
     }
     return maxi;
 }
