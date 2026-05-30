@@ -442,7 +442,7 @@ std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& sta
 		torch::Tensor loss_tensor = -(cb * torch::log(r5 + 1e-9) * pos_weight + (1 - cb) * torch::log(1 - r5 + 1e-9));
 		torch::Tensor capture_loss = loss_tensor.mean();
 
-		torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, wb);
+		torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
 
 
 		torch::Tensor loss = value_loss + policy_loss + capture_loss + cap_prob_loss;
@@ -536,14 +536,14 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 
 		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(r4, smap);
 
-		torch::Tensor cap_chance_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
+		torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
 
-		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss + cap_chance_loss;
+		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss + cap_prob_loss;
 		pLoss += policy_loss.item().to<float>();
 		vLoss += value_loss.item().to<float>();
 		sLoss += score_loss.item().to<float>();
 		smLoss += score_map_loss.item().to<float>();
-		cpLoss += cap_chance_loss.item().to<float>();
+		cpLoss += cap_prob_loss.item().to<float>();
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
 		optimizer->step();
