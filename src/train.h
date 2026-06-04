@@ -36,7 +36,7 @@ private:
 	std::atomic<int> wintype_counter[4];
 	std::atomic<int> total_score_diff;
 	std::atomic<int> total_game_length;
-	std::vector<float> train_losses[7];
+	std::vector<float> train_losses[9];
 	
 	std::string current_best_model_file;
 

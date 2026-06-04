@@ -57,7 +57,7 @@ namespace{
     }
 
     std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game){
-        const auto& [logAct, winP, scoreEXP, scoreMap, captureMap, capChance] = *nnOutput;
+        const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = *nnOutput;
 
         float captureV[2] = {0.0f, 0.0f};
         const Color turn = game.getTurn();
@@ -98,13 +98,14 @@ namespace{
             }
         }
 
-        float capChanceClip = std::min(std::max(capChance, 0.1f), 0.9f);
-        float utility = winP * 0.5f + ((captureV[0] - captureV[1]) * capChanceClip + std::tanh(scoreV / 10.0f) * (1.0f - capChanceClip)) * 0.5f;
+        // float capChance = std::max(captureV[0], captureV[1]);
+        // float capChanceClip = std::min(std::max(capChance, 0.25f), 0.75f);
+        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.03f;
         if(globalConfig.detailedStat){
             static int cntr = 0;
             if(cntr++ % 100 == 0){
                 ModelCompare::displayBoardGUI(true, game);
-                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << std::tanh(scoreV / 10.0f) << " " << capChance << " " << utility << std::endl;
+                std::cout << winP << " " << captureV[0] - captureV[1] << " " << scoreV << " " << utility << std::endl;
                 for(int i=0; i<rowSize; ++i){
                     for(int j=0; j<colSize; ++j){
                         std::cout << scoreMap[i * colSize + j] << " ";
@@ -298,7 +299,7 @@ int Node::selectChildInSearch(){
         }
         // only select non-losing move.
         if(forced == 0){
-            pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -initQ-globalConfig.fpu) : child[i]->W / child[i]->N) 
+            pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) : child[i]->W / child[i]->N) 
             + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
             lost = false;
         }

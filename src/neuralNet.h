@@ -4,7 +4,7 @@
 #include <torch/torch.h>
 #include "gamerules.h"
 
-using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
+using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 
 struct ResidualBlockImpl : torch::nn::Module {
     torch::nn::Conv2d conv1{nullptr}, conv2{nullptr};
@@ -76,11 +76,11 @@ public:
 	torch::nn::Conv2d cap_cv3;
 	torch::nn::Conv2d cap_cv4;
 
-	//cap/score
-	torch::nn::Conv2d cap_sc_cv3;
-	torch::nn::BatchNorm2d cap_sc_bn3;
-	torch::nn::Linear cap_sc_fc1;
-	torch::nn::Linear cap_sc_fc2;
+	//cap/score -> doesn't seem to work. Always collapse to 0 or 1, not being trained properly.
+	// torch::nn::Conv2d cap_sc_cv3;
+	// torch::nn::BatchNorm2d cap_sc_bn3;
+	// torch::nn::Linear cap_sc_fc1;
+	// torch::nn::Linear cap_sc_fc2;
 };
 
 class PolicyValueNet {

@@ -24,7 +24,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	total_score_diff = 0;
 	for(int i=0; i<4; ++i)
 		wintype_counter[i] = 0;
-	for(int i=0; i<7; ++i)
+	for(int i=0; i<9; ++i)
 		train_losses[i].reserve(globalConfig.compare_game_cnt);
 }
 
@@ -246,7 +246,7 @@ void TrainPipeline::train(){
 			train_losses[3].push_back(pLoss);
 			train_losses[4].push_back(vLoss);
 			train_losses[5].push_back(sLoss);
-			train_losses[6].push_back(smLoss);
+			train_losses[6].push_back(smLoss); 
 		}
 	}
 }
@@ -316,7 +316,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
 					std::cout << "train losses : " << std::endl;
-					for(int i=0; i<7; ++i){
+					for(int i=0; i<9; ++i){
 						for(float l : train_losses[i])
 							std::cout << l << " ";
 						std::cout << std::endl;
@@ -326,7 +326,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					total_score_diff = 0;
 					for(int i=0; i<4; ++i)
 						wintype_counter[i] = 0;
-					for(int i=0; i<7; ++i)
+					for(int i=0; i<9; ++i)
 						train_losses[i].clear();
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
@@ -412,5 +412,5 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	learning_rate = (games_played < 15360) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 15360) / 960);
+	learning_rate = (games_played < 100000) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 100000) / 960);
 }

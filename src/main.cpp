@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
         bool is_shown = static_cast<bool>(std::stoi(argv[5]));
 
         TrainPipeline line(model_file, model_file, true); // use gpu
-        line.run(game_num, num_thread, is_shown, 0.5f, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, temp, model_prefix
+        line.run(game_num, num_thread, is_shown, globalConfig.temp, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, 1/temp, model_prefix
     }
     else if(mod == "human_play"){
         globalConfig = loadConfig("../configs/play_config.json");
