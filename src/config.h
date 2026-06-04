@@ -34,6 +34,7 @@ struct Config {
     int time;
     int nPlayout;
     float cPuct;
+    float temp;
 
     //cache
     int tableSize;

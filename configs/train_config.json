@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "E",
+     "model_prefix": "G",
      "drive_path": "../drive/MyDrive"
   },
 
@@ -32,7 +32,8 @@
     "mode": "playout",
     "time": 10,
     "nPlayout": 400,
-    "cPuct": 2.0
+    "cPuct": 1.5,
+    "temp": 1.0
   },
 
   "nn": {
@@ -51,7 +52,7 @@
     "compare_game_cnt": 96,
     "compare_thread_num": 12,
     "search_thread_num": 4,
-    "train_wait_time": 200000,
+    "train_wait_time": 80000,
     "save_freq": 96,
     "capacity": 10000
   }

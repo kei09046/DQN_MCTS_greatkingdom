@@ -3,13 +3,13 @@
     "transTable": false,
     "dirichletNoise": false,
     "googleDrive": false,
-    "FPU": 0.15,
+    "FPU": -1.0,
     "detailedStat": true
   },
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "E",
+     "model_prefix": "G",
      "drive_path": "../drive/MyDrive"
   },
 
@@ -32,7 +32,8 @@
     "mode": "playout",
     "time": 10,
     "nPlayout": 4000,
-    "cPuct": 2.0
+    "cPuct": 1.5,
+    "temp": 1.0
   },
 
   "nn": {

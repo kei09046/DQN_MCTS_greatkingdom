@@ -46,6 +46,7 @@ Config loadConfig(const std::string& path) {
     c.time = M.at("time");
     c.nPlayout = M.at("nPlayout");
     c.cPuct     = M.at("cPuct");
+    c.temp = M.at("temp");
 
     // nn
     auto& N = j.at("nn");
