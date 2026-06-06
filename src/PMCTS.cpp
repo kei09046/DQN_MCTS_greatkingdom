@@ -100,7 +100,7 @@ namespace{
 
         // float capChance = std::max(captureV[0], captureV[1]);
         // float capChanceClip = std::min(std::max(capChance, 0.25f), 0.75f);
-        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.03f;
+        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.1f + scoreV * 0.01f;
         if(globalConfig.detailedStat){
             static int cntr = 0;
             if(cntr++ % 100 == 0){

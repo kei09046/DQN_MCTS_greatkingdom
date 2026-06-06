@@ -11,4 +11,6 @@ extern std::mt19937 gen;
 
 std::vector<int> select_indices(int range, int many);
 
+int pick0or1(float zeroProb);
+
 #endif

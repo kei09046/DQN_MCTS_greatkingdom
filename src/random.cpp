@@ -1,8 +1,10 @@
 #include "random.h"
 #include <iostream>
 
+
 std::random_device rd;
 std::mt19937 gen(rd());
+
 
 std::vector<int> select_indices(int range, int many) {
     std::vector<int> indices(range);
@@ -12,4 +14,11 @@ std::vector<int> select_indices(int range, int many) {
     std::vector<int> selected_cols(indices.begin(), indices.begin() + many);
     // std::cout << indices[0] << std::endl;
     return selected_cols;
+}
+
+int pick0or1(float zeroProb){
+    static std::bernoulli_distribution dist;
+
+    dist.param(std::bernoulli_distribution::param_type(1.0f - zeroProb));
+    return dist(gen);
 }

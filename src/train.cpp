@@ -189,7 +189,10 @@ void TrainPipeline::insertData(const TrainData& data, uint8_t wintype) {
 }
 
 void TrainPipeline::train(){
-	for(int bufferIdx = 0; bufferIdx < 2; ++bufferIdx){
+	float captureRatio = (wintype_counter[1] + wintype_counter[3]) / (wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3]);
+
+	for(int iter = 0; iter < 2; ++iter){
+		int bufferIdx = pick0or1(captureRatio);
 		int B = std::min((int)(gameBuffer[bufferIdx]->size()), globalConfig.batchSize);
 		if(B == 0)
 			continue;
