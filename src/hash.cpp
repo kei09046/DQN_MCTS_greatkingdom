@@ -14,14 +14,17 @@ int Hash::colorToIndex(Color c){
 }
 
 Hash::Hash() {
-        std::mt19937_64 rng(42); // fixed seed for reproducibility
-        std::uniform_int_distribution<HashValue> dist;
-        for (int r = 0; r < rowSize; ++r)
-            for (int c = 0; c < colSize; ++c)
-                for (int Color = 0; Color < 3; ++Color)
-                    zobristTable[r][c][Color] = dist(rng);
-        zobristToPlay = dist(rng);
-    }
+    std::mt19937_64 rng(42); // fixed seed for reproducibility
+    std::uniform_int_distribution<HashValue> dist;
+    for (int r = 0; r < rowSize; ++r)
+        for (int c = 0; c < colSize; ++c)
+            for (int color = 0; color < 3; ++color){
+                zobristTable[r][c][color] = dist(rng);
+                //std::cerr << color << " " << r << " " << c << " " << zobristTable[r][c][color] << std::endl;
+            }
+    zobristToPlay = dist(rng);
+    //std::cerr << zobristToPlay << std::endl;
+}
 
 HashValue Hash::baseHash() const{
     static HashValue h = 0;

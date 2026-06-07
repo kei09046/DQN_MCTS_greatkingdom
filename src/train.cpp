@@ -2,7 +2,7 @@
 
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
-	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu){
+	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
@@ -189,8 +189,6 @@ void TrainPipeline::insertData(const TrainData& data, uint8_t wintype) {
 }
 
 void TrainPipeline::train(){
-	float captureRatio = (wintype_counter[1] + wintype_counter[3]) / (wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3]);
-
 	for(int iter = 0; iter < 2; ++iter){
 		int bufferIdx = pick0or1(captureRatio);
 		int B = std::min((int)(gameBuffer[bufferIdx]->size()), globalConfig.batchSize);
@@ -315,7 +313,9 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
 					std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
 					int game_played = wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3];
-					std::cout << "games played " << game_played << std::endl;
+					captureRatio = static_cast<float>((wintype_counter[1] + wintype_counter[3])) / game_played;
+					std::cout << "games played : " << game_played << std::endl;
+					std::cout << "capture ratio : " << captureRatio << std::endl;
 					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
 					std::cout << "train losses : " << std::endl;

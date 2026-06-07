@@ -10,3 +10,4 @@
 /detect_cuda_version.cc
 /gmon.out
 /singlethread
+/models

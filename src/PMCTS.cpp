@@ -100,7 +100,7 @@ namespace{
 
         // float capChance = std::max(captureV[0], captureV[1]);
         // float capChanceClip = std::min(std::max(capChance, 0.25f), 0.75f);
-        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.1f + scoreV * 0.01f;
+        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.03f;
         if(globalConfig.detailedStat){
             static int cntr = 0;
             if(cntr++ % 100 == 0){
@@ -128,21 +128,31 @@ namespace{
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
-Node::Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const transposTable):
+Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), transposTable(transposTable){}
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), transposTable(transposTable){
+    // if(hashValue == (HashValue)12122450572009219436){
+    //     std::cerr << "12122450572009219436 : " << std::endl;
+    //     ModelCompare::displayBoardGUI(false, g);
+    // }
+}
 
 void Node::addChild(const Move& move, const Game& ng){
     HashValue newHash = hash.computeHashAfterMove(game, move, hashValue);
     Node* childNode;
 
     if(globalConfig.transTable){
-        if(transposTable->count(newHash) == 0){
+        auto it = transposTable->find(newHash);
+
+        if(it == transposTable->end()){
             childNode = new Node(ng, newHash, transposTable);
-            (*transposTable)[newHash] = childNode;
+            transposTable->emplace(newHash, std::make_pair(childNode, 1));
         }
         else{
-            childNode = (*transposTable)[newHash];
+            //std::cerr << "duplicate hashValue : " << newHash << " move : " << static_cast<int>(move.first) << " " << static_cast<int>(move.second) << std::endl;
+            //ModelCompare::displayBoardGUI(false, ng); 
+            childNode = it->second.first;
+            (it->second.second)++;
         }
     }
     else{
@@ -410,6 +420,7 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
+        //printMove(availableMoves[index]);
         return {availableMoves[index], visitPortion};
     }
 
@@ -458,18 +469,59 @@ Node* Node::jump(Move move){
 }
 
 void Node::deleteTree(){
-    for(Node* c : child){
-        c->deleteTree();
+    if(!globalConfig.transTable){
+        for(Node* c : child){
+            c->deleteTree();
+        }
+        delete this;
+        return;
     }
-    delete this;
+
+    auto it = transposTable->find(hashValue);
+    if(it == transposTable->end()){
+        std::cerr << "hash : " << hashValue << std::endl;
+        ModelCompare::displayBoardGUI(false, this->game);
+    }
+    assert(it != transposTable->end());
+
+    if (--(it->second.second) == 0) {
+        for(Node* c : child){
+            c->deleteTree();
+        }
+        // std::cerr << "deleted : " << hashValue << std::endl;
+        transposTable->erase(it);
+        delete this;
+        return;
+    }
 }
 
 void Node::deleteTree(Node* exception){
-    for(Node* c : child){
-        if(c != exception)
-            c->deleteTree();
+    if(!globalConfig.transTable){
+        for(Node* c : child){
+            if(c != exception)
+                c->deleteTree();
+        }
+        delete this;
+        return;
     }
-    delete this;
+
+    auto it = transposTable->find(hashValue);
+    if(it == transposTable->end()){ // should never enter here.
+        std::cerr << "hash : " << hashValue << std::endl;
+        ModelCompare::displayBoardGUI(false, this->game);
+    }
+    assert(it != transposTable->end());
+
+    if (--(it->second.second) == 0) {
+        for(Node* c : child){
+            if(c != exception)
+                c->deleteTree();
+        }
+        // std::cerr << "deleted : " << hashValue << std::endl;
+        transposTable->erase(it);
+        delete this;
+        return;
+    }
 }
 
 void Node::addDirichletNoise(Evaluator* evaluator){
@@ -492,10 +544,10 @@ void Node::addDirichletNoise(Evaluator* evaluator){
 }
 
 MCTS::MCTS(Evaluator* evaluator) : 
-evaluator(evaluator), transposTable(new std::unordered_map<HashValue, Node*>()){
+evaluator(evaluator), transposTable(new TransTable()){
     root = new Node(Game(), hash.baseHash(), transposTable);
     if(globalConfig.transTable){
-        (*transposTable)[hash.baseHash()] = root;
+        transposTable->emplace(hash.baseHash(), std::make_pair(root, 1));
     }
 }
 
@@ -630,26 +682,18 @@ void MCTS::printVariation(){
 bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
-    if(!globalConfig.transTable)
-        old_root->deleteTree(root);
+    old_root->deleteTree(root);
     return root != nullptr;
 }
 
 void MCTS::reset(){
-    if(globalConfig.transTable){ // if transposition table is used, then all node is deleted when reset.
-        for (auto& [hash, node] : *transposTable) {
-            delete node;
-        }
-        transposTable->clear();
-    }
-    else{ // otherwise, parent nodes are deleted after each move is made.
-        root->deleteTree();
-    }
 
+    root->deleteTree();
     root = new Node(Game(), hash.baseHash(), transposTable);
 
     if(globalConfig.transTable){
-        (*transposTable)[hash.baseHash()] = root;
+        transposTable->clear();
+        transposTable->emplace(hash.baseHash(), std::make_pair(root, 1));
     }
 }
 

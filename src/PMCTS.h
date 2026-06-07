@@ -8,9 +8,12 @@
 #include <utility>
 #include <unordered_map>
 
+class Node;
+using TransTable = std::unordered_map<HashValue, std::pair<Node*, unsigned int>>;
+
 class alignas(64) Node{
 public:
-    Node(const Game& g, const HashValue hashValue, std::unordered_map<HashValue, Node*>* const transposTable);
+    Node(const Game& g, const HashValue hashValue, TransTable* const transposTable);
 
     Move selectMove(float temperature);
 
@@ -48,7 +51,7 @@ private:
     std::vector<Move> availableMoves; // among game.isLegal() moves, consider actually useful moves.
     Move winmove; // if RESIGNMOVE : there is no winning move.
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
-    std::unordered_map<HashValue, Node*>* const transposTable;
+    TransTable* const transposTable;
 
     void addChild(const Move& move, const Game& ng);
 
@@ -87,7 +90,7 @@ public:
 private:
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
-    std::unordered_map<HashValue, Node*>* transposTable;
+    TransTable* transposTable;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,

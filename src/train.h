@@ -27,6 +27,7 @@
 class TrainPipeline {
 private:
 	float learning_rate;
+	float captureRatio;
 	int save_cnt; // indicate how many games have been played; used for model naming
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet prev_policy; // used for comparison
