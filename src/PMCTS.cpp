@@ -309,13 +309,13 @@ int Node::selectChildInSearch(){
         }
         // only select non-losing move.
         if(forced == 0){
-            pref = ((edgeN[i] == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) : child[i]->W / child[i]->N) 
+            pref = ((child[i]->N == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) : child[i]->W / child[i]->N) 
             + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
             lost = false;
         }
-        // losing move can be selected. Just mark as loss.
+        // losing move will almost not be selected if there is a non-losing move.
         else{ 
-            pref = -1.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+            pref = -2.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
         }
             
         if(maxval < pref){
@@ -359,30 +359,32 @@ Move Node::selectMove(float temp){
         }
     }
 
-    std::vector<float> weights(availableMoves.size());
-    std::vector<float> cumulative(availableMoves.size());
-
     int maxi, maxn = -1, index;
     for(int i=0; i<availableMoves.size(); ++i){
         if(edgeN[i] > maxn){
             maxn = edgeN[i];
             maxi = i;
         }
+    }
+
+    if(temp >= 5.0f || game.getMoveCount() >= 10){
+        return availableMoves[maxi];
+    }
+
+    std::vector<float> weights(availableMoves.size());
+    std::vector<float> cumulative(availableMoves.size());
+    for(int i=0; i<availableMoves.size(); ++i){
         weights[i] = std::pow(edgeN[i], temp);
     }
-
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
-    if(temp < 5.0f){
-        std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-        float rnd = dist(gen);
+    std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
+    float rnd = dist(gen);
 
-        auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-        index = std::distance(cumulative.begin(), it);
-        return availableMoves[index];
-    }
+    auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
+    index = std::distance(cumulative.begin(), it);
+    return availableMoves[index];
 
-    return availableMoves[maxi];
 }
 
 
@@ -396,15 +398,18 @@ MoveData Node::selectMoveProb(float temp){
     if(availableMoves.empty()){
         return {RESIGNMOVE, visitPortion};
     }
-    std::vector<float> cumulative(availableMoves.size()), weights(availableMoves.size());
+    
     int maxi, maxn = -1;
     for(int i=0; i<availableMoves.size(); ++i){
         if(edgeN[i] > maxn){
             maxn = edgeN[i];
             maxi = i;
         }
-        weights[i] = std::pow(edgeN[i], temp);
         visitPortion[availableMoves[i].first * colSize + availableMoves[i].second] = edgeN[i]/N;
+    }
+
+    if(temp >= 5.0f || game.getMoveCount() >= 10){
+        return {availableMoves[maxi], visitPortion};
     }
 
     // std::cout << "visit portion" << std::endl;
@@ -412,19 +417,19 @@ MoveData Node::selectMoveProb(float temp){
     //     std::cout << visitPortion[i] << " ";
     // std::cout << std::endl;
 
-    if(temp < 5.0f){
-        std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
-
-        std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-        float rnd = dist(gen);
-
-        auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-        int index = std::distance(cumulative.begin(), it);
-        //printMove(availableMoves[index]);
-        return {availableMoves[index], visitPortion};
+    std::vector<float> cumulative(availableMoves.size()), weights(availableMoves.size());
+    for(int i=0; i<availableMoves.size(); ++i){
+        weights[i] = std::pow(edgeN[i], temp);
     }
+    std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
-    return {availableMoves[maxi], visitPortion};
+    std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
+    float rnd = dist(gen);
+
+    auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
+    int index = std::distance(cumulative.begin(), it);
+    //printMove(availableMoves[index]);
+    return {availableMoves[index], visitPortion};
 }
 
 Node* Node::jump(Move move){

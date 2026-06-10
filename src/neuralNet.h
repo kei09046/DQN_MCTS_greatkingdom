@@ -110,14 +110,17 @@ public:
 
 	PolicyValueOutput evaluate(const Game& game);
 
-	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& mcts_probs,
+	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& nextmove_batch,
 	// 	std::array<float, batchSize>& result_batch, float lr);
 
-	std::tuple<float, float, float> trainCap(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+	std::tuple<float, float, float> trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
 		std::vector<float>& result_batch, std::vector<float>& capture_batch, float lr);
 
-	std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& mcts_probs,
+	std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
 		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
+	
+	std::tuple<float, float, float, float, float> train(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Wintype>& type_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
 

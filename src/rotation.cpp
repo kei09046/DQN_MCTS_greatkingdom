@@ -217,9 +217,10 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
     auto value = std::get<2>(data);
     auto scoreDiff = std::get<3>(data);
     auto rotatedMap = generateTransformed(std::get<4>(data), 1, false); // score map/capture map rotation
+    auto type = std::get<5>(data);
 
     for(int i=0; i<8; ++i){
-        transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i], rotatedMoves[i], value, scoreDiff, rotatedMap[i]));
+        transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i], rotatedMoves[i], value, scoreDiff, rotatedMap[i], type));
     }
 
     return transformed_data;

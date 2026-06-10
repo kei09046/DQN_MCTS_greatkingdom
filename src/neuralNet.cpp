@@ -552,6 +552,93 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 }
 
+std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Wintype>& type_batch, float lr){
+
+	int B = result_batch.size();
+	auto options = torch::TensorOptions().dtype(torch::kFloat32);
+
+	auto sb = torch::from_blob(state_batch.data(),
+		{B, globalConfig.inputChannel, inputRow, inputCol},
+		options).to(device);
+
+	auto mp = torch::from_blob(nextmove_batch.data(),
+		{B, outputSize},
+		options).to(device);
+
+	auto wb = torch::from_blob(result_batch.data(),
+		{B, 1},
+		options).to(device);
+
+	auto sd = torch::from_blob(score_batch.data(),
+		{B, 1},
+		options).to(device);
+
+	auto map = torch::from_blob(map_batch.data(),
+		{B, 1, outputRow, outputCol},
+		options).to(device);
+
+	auto mask = torch::from_blob(type_batch.data(), {B, 1}, torch::kUInt8).to(device);
+	auto smask = (mask == SCORE);
+	auto sm_mask = (mask == SCORE).unsqueeze(-1).unsqueeze(-1);
+	auto cap_mask = (mask == CAPTURE).unsqueeze(-1).unsqueeze(-1);
+
+	auto score_active_elements = smask.sum().item<float>() + 1e-8f;
+	auto smap_active_elements = score_active_elements * outputRow * outputCol;
+	auto cap_active_elements = (mask == CAPTURE).sum().item<float>() * outputRow * outputCol + 1e-8f;
+
+	sd *= smask;
+	auto smap = map * sm_mask;
+	auto cmap = map * cap_mask;
+
+	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
+	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
+	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f;
+
+	for(int i=0; i<globalConfig.epochs; ++i){
+		optimizer->zero_grad();
+
+		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb); 
+
+		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
+		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
+
+		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
+
+		auto masked_r3 = r3 * smask;
+		torch::Tensor score_loss = huber_loss(masked_r3, sd);
+		score_loss = score_loss / score_active_elements;
+
+		auto masked_r4 = r4 * sm_mask;
+		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(masked_r4, smap, torch::nn::MSELossOptions().reduction(torch::kSum));
+		score_map_loss = score_map_loss / smap_active_elements;
+
+		float pos_weight = 1.0f;
+		auto masked_r5 = r5 * cap_mask;
+		torch::Tensor loss_tensor = -(cmap * torch::log(masked_r5 + 1e-9) * pos_weight + (1 - cmap) * torch::log(1 - masked_r5 + 1e-9));
+		
+		// Mask the loss tensor explicitly to zero out non-capture samples
+		loss_tensor = loss_tensor * cap_mask; 
+		torch::Tensor capture_loss = loss_tensor.sum() / cap_active_elements;
+		/////////////////////////
+
+		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss + capture_loss;
+		
+		// FIX: Correct type fetching syntax (.item<float>())
+		pLoss += policy_loss.item<float>();
+		vLoss += value_loss.item<float>();
+		sLoss += score_loss.item<float>();
+		smLoss += score_map_loss.item<float>();
+		cmLoss += capture_loss.item<float>();
+
+		loss.backward();
+		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
+		optimizer->step();
+	}
+
+	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, cmLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
+}
+
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
 	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G" || model_type == "H"){

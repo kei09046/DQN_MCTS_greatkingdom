@@ -20,7 +20,7 @@ using MoveData = std::tuple<Move, std::vector<float> >; // move + move probabili
 
 using Color = uint8_t;
 using Wintype = uint8_t;
-using TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>>; // board, moveprob, outcome, score diff, (score map/capture map)
+using TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Wintype>; // board, moveprob, outcome, score diff, (score map/capture map), wintype
 
 
 constexpr int rowSize = 9;
