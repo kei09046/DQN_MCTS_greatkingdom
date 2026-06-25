@@ -622,7 +622,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		torch::Tensor capture_loss = loss_tensor.sum() / cap_active_elements;
 		/////////////////////////
 
-		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss + capture_loss;
+		torch::Tensor loss = policy_loss + value_loss*0.25f + score_loss*0.02f + score_map_loss*0.1f + capture_loss*0.25f;
 		
 		// FIX: Correct type fetching syntax (.item<float>())
 		pLoss += policy_loss.item<float>();

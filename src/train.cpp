@@ -30,7 +30,6 @@ TrainPipeline::TrainPipeline(std::string init_model,
 
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
-	int moveCnt = 0;
 	MoveData moveProb;
 	InputMatrix state;
 
@@ -44,16 +43,14 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	while (true) {
 		state = PolicyValueNet::getData(game_manager);
 
-		if(moveCnt < 4)
-			moveProb = player->getMoveProb(temp); // temp : actually 1/temp high temp -> less random
-		else
-			moveProb = player->getMoveProb(temp * 5); // infinitesimal temp
-		
+		moveProb = player->getMoveProb(temp);
 		auto m = std::get<0>(moveProb);
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
 
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
+			// add placeHolder value to buffer
+			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
 		}
 		else{ // Agent only resigns when capture is unavoidable.
 			wintype = CAPTURE;
@@ -61,7 +58,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 		if (winner == EMPTY) {
 			// add placeHolder value to buffer
-			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
+			// buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
 
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl;
@@ -77,7 +74,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				#endif
 				return;
 			}
-			moveCnt++;
 		}
 
 		else {
@@ -121,7 +117,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			#endif
 
 			if(wintype == CAPTURE){
-				// TODO : use positions before capture map appear to train policy & value head.
 				std::vector<float> maskedMap(boardSize, 0.0f);
 				int idx = 0;
 				for(const auto& move : sequence){
@@ -415,5 +410,5 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	learning_rate = (games_played < 100000) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 100000) / 960);
+	learning_rate = (games_played < 26880) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 26880) / 960);
 }

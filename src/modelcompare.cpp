@@ -6,6 +6,8 @@
 
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
+	if(is_shown)
+		std::cout << "start play" << std::endl;
 	//std::cerr << "start play" << std::endl;
 	Game game_manager = Game();
 	int diff, idx = 0;
@@ -15,7 +17,9 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 
 	while (true) {
 		move = player_list[idx]->getMove(temp);
-		//std::cerr << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
+		if(is_shown){
+			std::cout << static_cast<int>(move.first) << static_cast<int>(move.second) << " " << std::flush;
+		}
 		seq.push_back(move);
         res = game_manager.makeMove(move).first;
 
@@ -30,10 +34,10 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
         player_list[1]->reset();
 		//std::cerr << std::endl;
 
-		if (is_shown) {
-			for (auto& moves : seq)
-				part_res << static_cast<int>(moves.first) << static_cast<int>(moves.second) << " ";
-		}
+		// if (is_shown) {
+		// 	for (auto& moves : seq)
+		// 		part_res << static_cast<int>(moves.first) << static_cast<int>(moves.second) << " ";
+		// }
 
         if(is_shown)
             part_res << static_cast<int>(res) << std::endl;
@@ -245,7 +249,7 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 	std::atomic<int> total_win = 0;
 	for(int i=0; i<n_thread; ++i){
 		evaluate_threads.emplace_back([&, i]{
-			std::vector<bool> b = play_match(base_players[i], oppo_players[i], total_res, is_shown, temp, n_games / n_thread);
+			std::vector<bool> b = play_match(base_players[i], oppo_players[i], total_res, (i == 0) && is_shown, temp, n_games / n_thread);
 			total_win += std::count(b.begin(), b.end(), true);
 		}
 		);

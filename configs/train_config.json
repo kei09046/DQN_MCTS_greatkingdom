@@ -1,6 +1,6 @@
 {
   "features": {
-    "transTable": false,
+    "transTable": true,
     "dirichletNoise": true,
     "googleDrive": false,
     "FPU": -1.0,
@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "G",
+     "model_prefix": "H",
      "drive_path": "../drive/MyDrive"
   },
 

@@ -75,6 +75,8 @@ namespace{
             }
         }
 
+        // float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
+
         std::bitset<boardSize> mark;
         for(int i=0; i<inputSize; ++i){
             int cidx = game.getChainIdx(i);

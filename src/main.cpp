@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
         float temp = std::stof(argv[4]); // < 1.0f
         int n_games = std::stoi(argv[5]);
         int n_threads = std::stoi(argv[6]);
-        float winRate = ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, false, true, temp, n_games, n_threads);
+        float winRate = ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, true, true, temp, n_games, n_threads);
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){

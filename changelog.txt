@@ -45,3 +45,5 @@ Added time based move making instead of only playout.
 4/16/2026 :
 Modified CalculateQ so that score factor is now bounded. Unlike Go, player should be more conservative in GreatKingdom.
 Also score mean / score distribution training part has changed.
+
+G11520.pt~ : cpuct 2.0 -> 1.0  FPU : false -> 0.0

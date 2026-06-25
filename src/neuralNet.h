@@ -51,7 +51,7 @@ public:
 
 	torch::nn::ModuleList blocks;
 	
-	// action
+	// action(policy)
 	torch::nn::Conv2d at_cv3;
 	torch::nn::BatchNorm2d at_bn3;
 	torch::nn::Linear at_fc1;
