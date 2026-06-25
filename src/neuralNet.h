@@ -55,6 +55,7 @@ public:
 	torch::nn::Conv2d at_cv3;
 	torch::nn::BatchNorm2d at_bn3;
 	torch::nn::Linear at_fc1;
+	torch::nn::Linear at_fc2; // added
 
 	// value
 	torch::nn::Conv2d v_cv3;
@@ -75,12 +76,6 @@ public:
 	// capture
 	torch::nn::Conv2d cap_cv3;
 	torch::nn::Conv2d cap_cv4;
-
-	//cap/score -> doesn't seem to work. Always collapse to 0 or 1, not being trained properly.
-	// torch::nn::Conv2d cap_sc_cv3;
-	// torch::nn::BatchNorm2d cap_sc_bn3;
-	// torch::nn::Linear cap_sc_fc1;
-	// torch::nn::Linear cap_sc_fc2;
 };
 
 class PolicyValueNet {

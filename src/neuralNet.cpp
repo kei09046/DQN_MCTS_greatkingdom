@@ -11,7 +11,8 @@ bn1(torch::nn::BatchNorm2d(128)),
 // Policy head
 at_cv3(torch::nn::Conv2dOptions(128, 2, 1).bias(false)),
 at_bn3(torch::nn::BatchNorm2d(2)),
-at_fc1(2 * inputSize, outputSize),
+at_fc1(2 * inputSize, 256),
+at_fc2(256, outputSize),
 
 // Value head
 v_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
@@ -33,11 +34,6 @@ sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false)),
 cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
 cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
-// cap/sc distinguisher
-// cap_sc_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
-// cap_sc_bn3(torch::nn::BatchNorm2d(1)),
-// cap_sc_fc1(inputSize, 256),
-// cap_sc_fc2(256, 1)
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 
@@ -51,6 +47,7 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("at_cv3", at_cv3);
 	register_module("at_bn3", at_bn3);
 	register_module("at_fc1", at_fc1);
+	register_module("at_fc2", at_fc2);
 
 	register_module("v_cv3", v_cv3);
 	register_module("v_bn3", v_bn3);
@@ -67,11 +64,6 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
 	register_module("cap_cv3", cap_cv3);
 	register_module("cap_cv4", cap_cv4);
-
-	// register_module("cap_sc_cv3", cap_sc_cv3);
-	// register_module("cap_sc_bn3", cap_sc_bn3);
-	// register_module("cap_sc_fc1", cap_sc_fc1);
-	// register_module("cap_sc_fc2", cap_sc_fc2);
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
@@ -82,7 +74,8 @@ NNOutput Net::forward(const torch::Tensor& state)
 	}
 	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
 	log_act = log_act.view({ -1, 2 * inputSize });
-	log_act = at_fc1(log_act);
+	log_act = torch::nn::functional::relu(at_fc1(log_act));
+	log_act = at_fc2(log_act);
 
 	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
 	val = val.view({-1, inputSize});
@@ -99,11 +92,6 @@ NNOutput Net::forward(const torch::Tensor& state)
 	
 	torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_cv3(x));
 	cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
-
-	// torch::Tensor cap_chance = torch::nn::functional::relu(cap_sc_bn3(cap_sc_cv3(x)));
-	// cap_chance = cap_chance.view({-1, inputSize});
-	// cap_chance = torch::nn::functional::relu(cap_sc_fc1(cap_chance));
-	// cap_chance = cap_sc_fc2(cap_chance).sigmoid();
 
 	//std::cerr << log_act << " " << val << " " << exp_score_diff << " " << exp_score_map << " " << cap_prob_map << std::endl;
 	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, cap_prob_map);

@@ -720,6 +720,14 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         while (true) {
             path.push_back(cur);
 
+            // One can save memory and CPU expansion by delaying expansion until second visit. However, that would also
+            // mean forcedState would not be computed in first visit thus NN evaluation request would happen for terminal nodes.
+            // TODO : Is it possible to separate expand() logic to legal move computation + actual expansion?
+            // Also, is it possible to expand each child separately while maintaining speed advantage?
+            // if(cur->N == 0.0f){
+
+            // }
+
             if (cur->N == 0.0f && (cur != root || !globalConfig.dirichletNoise)) { // first time visit
                 cur->expand();
                 forced = cur->forcedState;
@@ -829,45 +837,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         searchStuck = false;
     }
 }
-
-// void MCTS::propagate(const std::vector<Node*>& path, const std::vector<int>& childIdx, int forced){
-//     assert(forced != 0);
-
-//     Node* n;
-//     // std::cerr << path.size() << " " << childIdx.size() << std::endl;
-//     // std::cerr << "found forced sequence : " << forced << " ";
-//     // for(int i=0; i<childIdx.size(); ++i)
-//     //     std::cerr << static_cast<int>(path[i]->availableMoves[childIdx[i]].first) << 
-//     //     static_cast<int>(path[i]->availableMoves[childIdx[i]].second) << " ";
-//     // std::cerr << std::endl;
-
-//     for(int i=childIdx.size() - 1; i >= 0; --i){
-//         // on Node n, made move nextMove.
-//         n = path[i];
-
-//         if(forced < 0){ // child node is forced loss.
-//             forced = -forced + (forced > 0 ? -1 : 1); // loss in 1 -> win in 2.
-//             n->forcedState = forced;
-//             n->winmove = (n->availableMoves)[childIdx[i]]; // check winning move as only move
-//         }
-//         else{ // child node is forced win.
-//             n->losingMoveCount++;
-
-//             // every option is lost.
-//             if(n->losingMoveCount == n->availableMoves.size()){
-//                 forced = -forced + (forced > 0 ? -1 : 1);
-//                 n->forcedState = forced;
-//             }
-//             else{
-//                 break;
-//             }
-//         }
-//     }
-
-//     // for(const Node* n : path){
-//     //     std::cerr << n << " " << n->forcedState << std::endl;
-//     // }
-// }
 
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
     if(globalConfig.detailedStat){ // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
