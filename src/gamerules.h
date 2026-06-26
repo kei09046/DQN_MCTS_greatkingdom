@@ -55,8 +55,10 @@ public:
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
+    std::pair<Move, int> threatCheck() const;
+
     // return type : winMove(resignMove if nothing), list of moves, list of nextGames, transferTable. 
-    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> expand() const;
+    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
@@ -139,7 +141,7 @@ private:
     }
 
     // capture related functions
-    inline uint8_t findHead(int r, int c) { return stones[r][c].head; }
+    inline uint8_t findHead(int r, int c) const { return stones[r][c].head; }
 
     void mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2);
 

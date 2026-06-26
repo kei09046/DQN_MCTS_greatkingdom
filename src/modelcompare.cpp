@@ -188,7 +188,7 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 
 void ModelCompare::playHuman() {
 	Game game_manager = Game();
-	Game experiment = Game();
+	//Game experiment = Game();
 
 	Move cord;
 	Color res;
@@ -198,17 +198,20 @@ void ModelCompare::playHuman() {
 		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
 		res = game_manager.makeMove(cord).first;
-		auto [win, moves, games, transtable] = experiment.expand();
-
-		int idx;
-		for(idx = 0; idx < moves.size(); ++idx)
-			if(moves[idx] == Move{r, c})
-				break;
-
 		displayBoardGUI(true, game_manager);
 		std::cout << std::endl;
-		displayBoardGUI(true, games[idx]);
-		experiment = games[idx];
+
+		// auto [win, moves, games, transtable] = experiment.expand();
+
+		// int idx;
+		// for(idx = 0; idx < moves.size(); ++idx)
+		// 	if(moves[idx] == Move{r, c})
+		// 		break;
+
+		// displayBoardGUI(true, games[idx]);
+		// std::cout << std::endl;
+		// experiment = games[idx];
+
 		
 		if (res != EMPTY) {
 			game_manager.onGameEnd(res);

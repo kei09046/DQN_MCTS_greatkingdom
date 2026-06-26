@@ -130,7 +130,7 @@ namespace{
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), evaluation(nullptr), transposTable(transposTable){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), onlyMove(RESIGNMOVE), hashValue(hashValue), evaluation(nullptr), transposTable(transposTable){
 }
 
 void Node::addChild(const Move& move, const Game& ng){
@@ -160,10 +160,21 @@ void Node::addChild(const Move& move, const Game& ng){
     //std::cerr << "adding done!" << std::endl;
 }
 
+void Node::threatCheck(){
+    auto [threat, forced] = game.threatCheck();
+    forcedState = forced;
+    onlyMove = threat;
+}
+
 void Node::expand(){
     //ModelCompare::displayBoardGUI(true, game);
     //std::cerr << "Expand called" << std::endl;
-    auto [result, moves, games, tranfTable] = game.expand();
+
+    // if forcedState != 0, then there is either a winning move or there will be no available moves anyway. Don't expand.
+    if(forcedState != 0)
+        return;
+
+    auto [result, moves, games, tranfTable] = game.expand(onlyMove);
 
     // printMove(result.first);
     // for(int i=0; i<moves.size(); ++i){
@@ -179,7 +190,7 @@ void Node::expand(){
     // }
 
     transferTable = std::move(tranfTable);
-    winmove = std::move(result.first);
+    onlyMove = std::move(result.first);
     forcedState = std::move(result.second);
 
     for (int i=0; i<games.size(); ++i) {
@@ -215,7 +226,7 @@ int Node::selectChildInSearch(){
         // if winning continuation found.
         if(forced < 0){
             forcedState = -forced + 1;
-            winmove = availableMoves[i];
+            onlyMove = availableMoves[i];
             return i;
         }
         // only select non-losing move.
@@ -247,9 +258,9 @@ Move Node::selectMove(float temp){
 
     if(forcedState > 0){
         if(globalConfig.detailedStat)
-            std::cout << "status: " << static_cast<int>(winmove.first) << " " << static_cast<int>(winmove.second)
+            std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
             << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
-        return winmove;
+        return onlyMove;
     }
     else if(availableMoves.empty()){
         return RESIGNMOVE;
@@ -303,8 +314,8 @@ MoveData Node::selectMoveProb(float temp){
     std::vector<float> visitPortion(outputSize, 0.0f);
 
     if(forcedState > 0){
-        visitPortion[winmove.first * colSize + winmove.second] = 1.0f;
-        return {winmove, visitPortion};
+        visitPortion[onlyMove.first * colSize + onlyMove.second] = 1.0f;
+        return {onlyMove, visitPortion};
     }
     if(availableMoves.empty()){
         return {RESIGNMOVE, visitPortion};
@@ -441,6 +452,9 @@ void Node::deleteTree(Node* exception){
 }
 
 void Node::addDirichletNoise(Evaluator* evaluator){
+    if(N == 0){
+        threatCheck();
+    }
     if (N <= 1) {
         expand();
         if(forcedState == 0){
@@ -452,7 +466,8 @@ void Node::addDirichletNoise(Evaluator* evaluator){
         }
     }
 
-    if(winmove == RESIGNMOVE && availableMoves.size() > 0){
+    // Dirichlet noise is only applied when position is undetermined or lost.
+    if(forcedState <= 0 && availableMoves.size() > 0){
         std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
         for(int i=0; i<edgeP.size(); ++i)
             edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
@@ -556,9 +571,9 @@ void MCTS::printVariation(){
             m = node->availableMoves[maxi];
         }
         else if(node->forcedState > 0){
-            m = node->winmove;
+            m = node->onlyMove;
             assert(m != RESIGNMOVE);
-            std::cerr << "winmove : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
+            std::cerr << "onlyMove : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 
             if(node->forcedState == 2)
                 break;
@@ -635,9 +650,14 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
             // step 1 done. Expansion is only done on second visit.
             
-            // TODO step 2. Split expand logic so that terminal state is determined as much as possible on first visit without actual expansion.
-            // on first visit, just quit
+            // step 2 done. Split expand logic so that terminal state is determined as much as possible on first visit without actual expansion.
+
+            // TODO step 3. When expand called, only expand the nodes which gives more score. Other nodes should be expanded only when they are actually visited.
+            
+            // on first visit, check easy capture then just quit.
             if(cur->N == 0.0f){
+                cur->threatCheck();
+                forced = cur->forcedState;
                 break;
             }
 

@@ -1,4 +1,5 @@
 #include "gamerules.h"
+#include "modelcompare.h"
 #include <utility>
 #include <queue>
 #include <vector>
@@ -132,10 +133,9 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
     return {EMPTY, NONE, {}};
 }
 
-std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> Game::expand() const{
-    // improve capture check performance by checking if there is any group with liberty count 1.
-
+std::pair<Move, int> Game::threatCheck() const{
     Move threat = RESIGNMOVE;
+    Chain threatened;
 
     for(int i=0; i<rowSize; ++i){
         for(int j=0; j<colSize; ++j){
@@ -147,17 +147,44 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
                     // if my stone is under threat -> have to find only move unless can capture opponent's stone.
                     if(board[i][j] & currentTurn){
                         threat = {onlyLib / colSize, onlyLib % colSize};
+                        threatened = c;
                     }
 
                     // if opponent stone is capturable
                     else{
-                        return {{{onlyLib / colSize, onlyLib % colSize}, 2}, {{onlyLib / colSize, onlyLib % colSize}}, {}, {}};
+                        return {{onlyLib / colSize, onlyLib % colSize}, 2};
                     }
                 }
             }
         }
     }
 
+    if(threat == RESIGNMOVE)
+        return {RESIGNMOVE, 0};
+
+    // check if playing at threat would extend it's liberties
+    std::bitset<boardSize> liberties;
+    for(int i=0; i<4; ++i){
+        uint8_t r = threat.first + dr[i];
+        uint8_t c = threat.second + dc[i];
+        if(inbound(r, c)){
+            if(board[r][c] & EMPTY){
+                return {threat, 0};    
+            }
+            else if(board[r][c] & currentTurn){
+                liberties |= chains[findHead(r, c)].liberties;
+            }
+        }
+    }
+    liberties[threat.first * colSize + threat.second] = false;
+
+    if(liberties.none())
+        return {threat, -1};
+
+    return {threat, 0};
+}
+
+std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> Game::expand(const Move threat) const{
     std::bitset<boardSize> potScore;
     for(int i=0; i<rowSize; ++i){
         for(int j=0; j<colSize; ++j){
@@ -212,16 +239,23 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
         else
             winner = ng.makeMoveNoScoreUpdate(bestMove, {});
 
-        if(winner == EMPTY){
-            // game goes on.
-            // std::cerr << "game goes on" << std::endl;
-            return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
-        }
-        else{
-            // lost
-            // std::cerr << "game lost" << std::endl;
-            return {{RESIGNMOVE, -1}, {}, {}, {}};
-        }
+        // Call threatCheck before expand to make sure that there is at least 1 move that saves the game.
+        if(winner != EMPTY){
+            ModelCompare::displayBoardGUI(true, *this);
+        } 
+        assert(winner == EMPTY);
+        return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
+
+        // if(winner == EMPTY){
+        //     // game goes on.
+        //     // std::cerr << "game goes on" << std::endl;
+        //     return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
+        // }
+        // else{
+        //     // lost
+        //     // std::cerr << "game lost" << std::endl;
+        //     return {{RESIGNMOVE, -1}, {}, {}, {}};
+        // }
     }
 
     else{
@@ -296,8 +330,6 @@ void Game::onGameEnd(Color winner){
 void Game::mergeChains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
     //std::cout << "merging chain :" << (int)r1 << (int)c1 << " " << (int)r2 << (int)c2 << std::endl;
     uint8_t h1 = findHead(r1, c1), h2 = findHead(r2, c2);
-    //std::cout << "head :" << (int)h1 << " " << (int)h2 << std::endl;
-    //std::cout << "liberties :\n " << chains[h1].liberties << "\n" << chains[h2].liberties << std::endl;
     if (h1 == h2) return;
     
     chains[h1].liberties.set(r2 * colSize + c2, false);

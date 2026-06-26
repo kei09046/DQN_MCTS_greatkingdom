@@ -49,13 +49,15 @@ private:
 
     std::vector<Node*> child;
     std::vector<Move> availableMoves; // among game.isLegal() moves, consider actually useful moves.
-    Move winmove; // if RESIGNMOVE : there is no winning move.
+    Move onlyMove; // One, critical move. if forcedState > 0 -> winmove, if forcedState = 0 -> only move that does not lose by capture immediately. 
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
 
     std::shared_ptr<PolicyValueOutput> evaluation; // stores evaluation for this node. Used to temporarily hold evaluation.
     TransTable* const transposTable;
 
     void addChild(const Move& move, const Game& ng);
+
+    void threatCheck();
 
     void expand();
 
