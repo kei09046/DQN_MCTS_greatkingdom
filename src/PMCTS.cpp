@@ -356,9 +356,12 @@ MoveData Node::selectMoveProb(float temp){
 
 Node* Node::jump(Move move){
     if(N == 0){
-        expand();
-        N++;
+        threatCheck();
     }
+    if(N <= 1){
+        expand();
+    }
+    N++;
 
     int idx = -1;
     for(int i=0; i<availableMoves.size(); ++i){
@@ -653,7 +656,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             // step 2 done. Split expand logic so that terminal state is determined as much as possible on first visit without actual expansion.
 
             // TODO step 3. When expand called, only expand the nodes which gives more score. Other nodes should be expanded only when they are actually visited.
-            
+
             // on first visit, check easy capture then just quit.
             if(cur->N == 0.0f){
                 cur->threatCheck();
