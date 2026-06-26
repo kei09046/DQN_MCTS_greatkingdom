@@ -32,11 +32,6 @@ namespace{
 
         for(int i=0; i<moveSize; ++i){
             for(int j=0; j<transferTable[i].size(); ++j){
-                if(std::isinf(n_logit[i])){
-                    std::cerr << "Warning! Logit value is infinite " << i << " " << j << " " <<
-                     transferTable.size() << " " << moveSize << " " << transferTable[i].size() << std::endl;
-                    ModelCompare::displayBoardGUI(true, node->game_());
-                }
                 n_logit.at(i) = std::max(n_logit.at(i), logit[j]);
             }
         }
@@ -390,12 +385,12 @@ Node* Node::jump(Move move){
     }
     N++;
 
-    // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
-    // std::cerr << "available options : " << std::endl;
-    // for(auto p : availableMoves)
-    //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
-    // std::cerr << "node's state : " << std::endl;
-    // ModelCompare::displayBoardGUI(true, game);
+    std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
+    std::cerr << "available options : " << std::endl;
+    for(auto p : availableMoves)
+        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    std::cerr << "node's state : " << std::endl;
+    ModelCompare::displayBoardGUI(true, game);
 
     int idx = -1;
     for(int i=0; i<availableMoves.size(); ++i){

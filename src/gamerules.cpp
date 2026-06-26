@@ -145,6 +145,10 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+    if(!(board[r][c] & EMPTY)){
+        ModelCompare::displayBoardGUI(true, *this);
+        printMove(move);
+    }
     assert(board[r][c] & EMPTY);
     // turn off empty bit, turn on color bit.
     board[r][c] ^= currentTurn | EMPTY;
@@ -240,9 +244,19 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint
         // first find list of possible moves.
 
         std::vector<Move> possibleMoves = possibleMovesWhenThreat(threat, potScore);
+        // std::cerr << "possible moves : " << std::endl;
+        // for(const auto& m : possibleMoves)
+        //     printMove(m);
 
         // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
         const auto segTable = segmentTable(potScore);
+        // for(int i=0; i<rowSize; ++i){
+        //     for(int j=0; j<colSize; ++j){
+        //         std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
+        //     }
+        //     std::cerr << std::endl;
+        // }
+
         const auto threatSeg = segTable.second[threat.first * colSize + threat.second];
         std::bitset<boardSize> acquiredSeg, threatAcquireSeg;
 
@@ -264,7 +278,7 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint
         transferTable.push_back({});
         if(!threatAcquireSeg.none()){
             for(uint8_t i=0U; i<boardSize; ++i){
-                if(threatAcquireSeg[segTable.second[i]])
+                if(segTable.second[i] != 255U && threatAcquireSeg[segTable.second[i]])
                     transferTable[0].push_back(i);
             }
         }
@@ -275,30 +289,12 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint
         // printMove(bestMove); 
         assert(transferTable.size() == 1);
 
-        // Game ng = (*this);
-        // Color winner;
-        // if(!transferTable.empty())
-        //     winner = ng.makeMoveNoScoreUpdate(bestMove, transferTable[0]);
-        // else
-        //     winner = ng.makeMoveNoScoreUpdate(bestMove, {});
-
         // // Call threatCheck before expand to make sure that there is at least 1 move that saves the game.
         // if(winner != EMPTY){
         //     ModelCompare::displayBoardGUI(true, *this);
         // } 
         // assert(winner == EMPTY);
         return {{RESIGNMOVE, 0}, {bestMove}, transferTable};
-
-        // if(winner == EMPTY){
-        //     // game goes on.
-        //     // std::cerr << "game goes on" << std::endl;
-        //     return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
-        // }
-        // else{
-        //     // lost
-        //     // std::cerr << "game lost" << std::endl;
-        //     return {{RESIGNMOVE, -1}, {}, {}, {}};
-        // }
     }
 
     else{
@@ -310,8 +306,9 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint
 
         //first check potential score gaining moves
 
+        // Note that acquriedSeg can have values 0~80 + 255(For occupied squares). However, potScore[i] == true or candidates[i] == true guarantees segTable.second[i] != 255.
         for(int i=0; i<boardSize; ++i){
-            if(potScore[i] && !acquiredSeg[segTable.second[i]]){
+            if(potScore[i] && (!acquiredSeg[segTable.second[i]])){
                 //std::cerr << "checkScore called" << std::endl;
                 auto acquired = checkScore(i/colSize, i%colSize, currentTurn, segTable);
                 //std::cerr << acquired << std::endl;
