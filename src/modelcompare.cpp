@@ -189,7 +189,6 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 void ModelCompare::playHuman() {
 	Game game_manager = Game();
 	//Game experiment = Game();
-
 	Move cord;
 	Color res;
 	while (true) {

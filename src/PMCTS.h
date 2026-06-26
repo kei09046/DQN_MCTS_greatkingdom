@@ -35,6 +35,10 @@ public:
         return availableMoves;
     }
 
+    inline const Game& game_() const{
+        return game;
+    }
+
 private:
     friend class MCTS;
 
@@ -55,7 +59,7 @@ private:
     std::shared_ptr<PolicyValueOutput> evaluation; // stores evaluation for this node. Used to temporarily hold evaluation.
     TransTable* const transposTable;
 
-    void addChild(const Move& move, const Game& ng);
+    void addChild(const Move& move, int idx = -1); // add child to the node. Will be added at the end by default.
 
     void threatCheck();
 

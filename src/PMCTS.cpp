@@ -30,10 +30,14 @@ namespace{
             n_logit[i] = logit.at(availableMoves[i].first * colSize + availableMoves[i].second);
         }
 
-        for(int i=0; i<transferTable.size(); ++i){
-            const auto idx = transferTable[i][0];
-            for(int j=1; j<transferTable[i].size(); ++j){
-                n_logit.at(idx) = std::max(n_logit.at(idx), logit[j]);
+        for(int i=0; i<moveSize; ++i){
+            for(int j=0; j<transferTable[i].size(); ++j){
+                if(std::isinf(n_logit[i])){
+                    std::cerr << "Warning! Logit value is infinite " << i << " " << j << " " <<
+                     transferTable.size() << " " << moveSize << " " << transferTable[i].size() << std::endl;
+                    ModelCompare::displayBoardGUI(true, node->game_());
+                }
+                n_logit.at(i) = std::max(n_logit.at(i), logit[j]);
             }
         }
 
@@ -133,31 +137,46 @@ game(g), turn(g.getTurn()),
 N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), onlyMove(RESIGNMOVE), hashValue(hashValue), evaluation(nullptr), transposTable(transposTable){
 }
 
-void Node::addChild(const Move& move, const Game& ng){
+void Node::addChild(const Move& move, int idx){
     HashValue newHash = hash.computeHashAfterMove(game, move, hashValue);
-    Node* childNode;
 
+    Node* childNode;
     if(globalConfig.transTable){
         auto it = transposTable->find(newHash);
 
         if(it == transposTable->end()){
+            Game ng = this->game;
+            // if idx = -1, move is not in the list. -> Add completely new child.
+            if(idx == -1){
+                ng.makeMove(move);
+            }
+            // else, compute child based on stats calculated on expand() call.
+            else{
+                ng.makeMoveGivenScore(move, transferTable[idx]);
+            }
             childNode = new Node(ng, newHash, transposTable);
             transposTable->emplace(newHash, std::make_pair(childNode, 1));
         }
         else{
-            //std::cerr << "duplicate hashValue : " << newHash << " move : " << static_cast<int>(move.first) << " " << static_cast<int>(move.second) << std::endl;
-            //ModelCompare::displayBoardGUI(false, ng); 
             childNode = it->second.first;
             (it->second.second)++;
         }
     }
     else{
+        Game ng = this->game;
+        if(idx == -1){
+            ng.makeMove(move);
+        }
+        else{
+            ng.makeMoveGivenScore(move, transferTable[idx]);
+        }
         childNode = new Node(ng, newHash, transposTable);
     }
 
-    child.push_back(childNode);
-    //std::cerr << "adding! " << r << " " << c << std::endl;
-    //std::cerr << "adding done!" << std::endl;
+    if(idx == -1)
+        child.push_back(childNode);
+    else
+        child[idx] = childNode;
 }
 
 void Node::threatCheck(){
@@ -174,7 +193,7 @@ void Node::expand(){
     if(forcedState != 0)
         return;
 
-    auto [result, moves, games, tranfTable] = game.expand(onlyMove);
+    auto [result, moves, tranfTable] = game.expand(onlyMove);
 
     // printMove(result.first);
     // for(int i=0; i<moves.size(); ++i){
@@ -193,14 +212,10 @@ void Node::expand(){
     onlyMove = std::move(result.first);
     forcedState = std::move(result.second);
 
-    for (int i=0; i<games.size(); ++i) {
-        addChild(moves[i], std::move(games[i])); 
-    }
+    child = std::vector<Node*>(moves.size(), nullptr);
     availableMoves = std::move(moves);
 
     if(availableMoves.empty()){
-        // std::cerr << "there are no legal moves! turn : " << static_cast<int>(game.getTurn()) << " " << static_cast<int>(turn) << std::endl;
-        // ModelCompare::displayBoardGUI(true, game);
         forcedState = -1;
     }
     
@@ -220,24 +235,31 @@ int Node::selectChildInSearch(){
         ModelCompare::displayBoardGUI(true, game);
     }
     assert(!availableMoves.empty());
+
     for(int i=0; i<availableMoves.size(); ++i){
-        int forced = child[i]->forcedState;
-        
-        // if winning continuation found.
-        if(forced < 0){
-            forcedState = -forced + 1;
-            onlyMove = availableMoves[i];
-            return i;
-        }
-        // only select non-losing move.
-        if(forced == 0){
-            pref = ((child[i]->N == 0.0f) ? ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) : child[i]->W / child[i]->N) 
-            + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+        if(child[i] == nullptr){
+            pref = ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
             lost = false;
         }
-        // losing move will almost not be selected if there is a non-losing move.
-        else{ 
-            pref = -2.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+
+        else{
+            int forced = child[i]->forcedState;
+            
+            // if winning continuation found.
+            if(forced < 0){
+                forcedState = -forced + 1;
+                onlyMove = availableMoves[i];
+                return i;
+            }
+            // only select non-losing move.
+            if(forced == 0){
+                pref = child[i]->W / child[i]->N + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+                lost = false;
+            }
+            // losing move will almost not be selected if there is a non-losing move.
+            else{ 
+                pref = -2.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+            }
         }
             
         if(maxval < pref){
@@ -250,6 +272,10 @@ int Node::selectChildInSearch(){
     if(lost){
         forcedState = -child[maxi]->forcedState - 1;
     }
+
+    // Allocate child only when child gets selected; Delay memory allocation as much as possible.
+    if(child[maxi] == nullptr)
+        addChild(availableMoves[maxi], maxi);
     return maxi;
 }
 
@@ -269,15 +295,16 @@ Move Node::selectMove(float temp){
         std::vector<int> v(availableMoves.size());
         std::iota(v.begin(), v.end(), 0);
         std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
-            return child[a]->N > child[b]->N;
+            return edgeN[a] > edgeN[b];
         });
 
         for(int i=0; i<std::min(static_cast<int>(availableMoves.size()), 3); ++i){
             int idx = v[i];
-            std::cout << "status: " << static_cast<int>(availableMoves[idx].first) << " " << static_cast<int>(availableMoves[idx].second)
-            << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
-            << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
-            << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
+            if(child[idx] != nullptr)
+                std::cout << "status: " << static_cast<int>(availableMoves[idx].first) << " " << static_cast<int>(availableMoves[idx].second)
+                << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
+                << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
+                << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
         }
     }
 
@@ -363,20 +390,29 @@ Node* Node::jump(Move move){
     }
     N++;
 
+    // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
+    // std::cerr << "available options : " << std::endl;
+    // for(auto p : availableMoves)
+    //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    // std::cerr << "node's state : " << std::endl;
+    // ModelCompare::displayBoardGUI(true, game);
+
     int idx = -1;
     for(int i=0; i<availableMoves.size(); ++i){
         if(availableMoves[i] == move){
             idx = i;
+            // delay child allocation as much as possible. Happens when agent is forced to jump to a move that it hasn't considered at all.
+            if(child[idx] == nullptr){
+                addChild(move, idx);
+            }
             return child[idx];
         }
     }
 
     // if no child matches the move, add one. Only happens when human opponent makes suboptimal move.
     // std::cerr << "unexpected move!" << std::endl;
-    // Game nGame = game;
-    // nGame.makeMove(move);
     // addChild(move.first, move.second, nGame);
-    // return child[child.size() - 1];
+    // return child.back();
 
     std::cerr << "warning! jump to illegal location!" << std::endl;
     std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
@@ -385,9 +421,9 @@ Node* Node::jump(Move move){
         std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
 
     std::cerr << "node's state : " << std::endl;
-    ModelCompare::displayBoardGUI(false, game);
+    ModelCompare::displayBoardGUI(true, game);
     
-    std::cerr << "transfer table" << std::endl;
+    std::cerr << "transfer table : " << std::endl;
     for(const auto& v : transferTable){
         for(const auto& move : v){
             std::cerr << static_cast<int>(move) / colSize << static_cast<int>(move) % colSize << " ";
@@ -401,22 +437,24 @@ Node* Node::jump(Move move){
 void Node::deleteTree(){
     if(!globalConfig.transTable){
         for(Node* c : child){
-            c->deleteTree();
+            if(c != nullptr)
+                c->deleteTree();
         }
         delete this;
         return;
     }
 
     auto it = transposTable->find(hashValue);
-    if(it == transposTable->end()){
-        std::cerr << "hash : " << hashValue << std::endl;
-        ModelCompare::displayBoardGUI(false, this->game);
-    }
+    // if(it == transposTable->end()){
+    //     std::cerr << "hash : " << hashValue << std::endl;
+    //     ModelCompare::displayBoardGUI(false, this->game);
+    // }
     assert(it != transposTable->end());
 
     if (--(it->second.second) == 0) {
         for(Node* c : child){
-            c->deleteTree();
+            if(c != nullptr)
+                c->deleteTree();
         }
         // std::cerr << "deleted : " << hashValue << std::endl;
         transposTable->erase(it);
@@ -428,7 +466,7 @@ void Node::deleteTree(){
 void Node::deleteTree(Node* exception){
     if(!globalConfig.transTable){
         for(Node* c : child){
-            if(c != exception)
+            if(c != exception && c != nullptr)
                 c->deleteTree();
         }
         delete this;
@@ -444,7 +482,7 @@ void Node::deleteTree(Node* exception){
 
     if (--(it->second.second) == 0) {
         for(Node* c : child){
-            if(c != exception)
+            if(c != exception && c != nullptr)
                 c->deleteTree();
         }
         // std::cerr << "deleted : " << hashValue << std::endl;
@@ -543,8 +581,7 @@ MoveData MCTS::getMoveProb(float temp){
 }
 
 float MCTS::getEval(){
-    if(root->N = 0)
-        return 0.0f;
+    assert(root->N > 0);
     return static_cast<float>(root->W) / root->N;
 }
 
@@ -576,7 +613,7 @@ void MCTS::printVariation(){
         else if(node->forcedState > 0){
             m = node->onlyMove;
             assert(m != RESIGNMOVE);
-            std::cerr << "onlyMove : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
+            std::cerr << "only move : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 
             if(node->forcedState == 2)
                 break;
@@ -675,6 +712,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 cur->expand();
                 forced = cur->forcedState;
                 if(forced == 0){
+                    assert(cur->evaluation != nullptr);
                     cur->edgeP = softmax(std::get<0>(*(cur->evaluation)), cur);
                     cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
                     // no longer needs to store evaluation. Evaluation may be freed.
@@ -758,8 +796,6 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
 
     // instead updating edgeP and edgeN right away, store the evaluation and only update edgeP and edgeN after expansion.
     cur->evaluation = buf->result;
-    // cur->edgeP = softmax(evalP, cur);
-    // cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
 
     if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
         std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);

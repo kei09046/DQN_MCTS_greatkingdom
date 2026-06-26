@@ -1,6 +1,7 @@
 #include "train.h"
 #include "modelcompare.h"
 #include "config.h"
+#include "hash.h"
 #include <iostream>
 #include <tuple>
 #include <string>
@@ -71,6 +72,24 @@ int main(int argc, char** argv) {
         int n_games = std::stoi(argv[2 + n_models]);
         float temp = std::stof(argv[3 + n_models]); // < 1.0f
         ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games);
+    }
+    else if(mod == "test_hash"){
+        Hash hash;
+        HashValue h = hash.baseHash();
+        Game g = Game();
+        while(true){
+            int r, c;
+            std::cout << "Enter move (row col): ";
+            std::cin >> r >> c;
+            if(r == -1 && c == -1) break;
+            if(!g.isLegal(r, c)){
+                std::cout << "Illegal move. Try again." << std::endl;
+                continue;
+            }
+            h = hash.computeHashAfterMove(g, {r, c}, h);
+            g.makeMove({r, c});
+            std::cout << "New hash: " << h << std::endl;
+        }
     }
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();

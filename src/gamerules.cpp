@@ -78,6 +78,50 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
     return {EMPTY, NONE};
 }
 
+Color Game::makeMoveGivenScore(const Move& move, const std::vector<uint8_t>& acquired){
+    lastTwoMoves[0] = lastTwoMoves[1];
+    lastTwoMoves[1] = move;
+
+    if(move == PASSMOVE){ // pass
+        switchTurn();
+        moveCount++;
+        return EMPTY;
+    }
+
+    uint8_t r = move.first;
+    uint8_t c = move.second;
+
+    assert(board[r][c] & EMPTY);
+    // turn off the empty bit, turn on the color bit.
+    board[r][c] ^= currentTurn | EMPTY;
+    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
+        uint8_t nr = r + dr[i];
+        uint8_t nc = c + dc[i];
+        if(inbound(nr, nc)){
+            board[nr][nc] |= adjTo(currentTurn);
+        }
+    }
+
+    Color clr = captureResultbyMove(r, c);
+    if(clr != EMPTY)
+        return clr;
+    
+    // update territory without BFS.
+    const Color scoreBit = (currentTurn == BLACK) ? BSCORE : WSCORE;
+    const int scoreIdx = (currentTurn == BLACK) ? 0 : 1;
+
+    for(int i=0; i<acquired.size(); ++i){
+        auto idx = acquired[i];
+        board[idx / colSize][idx % colSize] = scoreBit;
+        score[scoreIdx]++;
+    }
+
+    switchTurn();
+    moveCount++;
+
+    return EMPTY;
+}
+
 std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
@@ -184,7 +228,7 @@ std::pair<Move, int> Game::threatCheck() const{
     return {threat, 0};
 }
 
-std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> Game::expand(const Move threat) const{
+std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> Game::expand(const Move threat) const{
     std::bitset<boardSize> potScore;
     for(int i=0; i<rowSize; ++i){
         for(int j=0; j<colSize; ++j){
@@ -217,8 +261,8 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
             }
         }
 
+        transferTable.push_back({});
         if(!threatAcquireSeg.none()){
-            transferTable.push_back({0U});
             for(uint8_t i=0U; i<boardSize; ++i){
                 if(threatAcquireSeg[segTable.second[i]])
                     transferTable[0].push_back(i);
@@ -229,22 +273,21 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
         // printMove(threat);
         // std::cerr << "response : " << std::endl;
         // printMove(bestMove); 
+        assert(transferTable.size() == 1);
 
-        Game ng = (*this);
-        assert(transferTable.size() <= 1);
+        // Game ng = (*this);
+        // Color winner;
+        // if(!transferTable.empty())
+        //     winner = ng.makeMoveNoScoreUpdate(bestMove, transferTable[0]);
+        // else
+        //     winner = ng.makeMoveNoScoreUpdate(bestMove, {});
 
-        Color winner;
-        if(!transferTable.empty())
-            winner = ng.makeMoveNoScoreUpdate(bestMove, transferTable[0]);
-        else
-            winner = ng.makeMoveNoScoreUpdate(bestMove, {});
-
-        // Call threatCheck before expand to make sure that there is at least 1 move that saves the game.
-        if(winner != EMPTY){
-            ModelCompare::displayBoardGUI(true, *this);
-        } 
-        assert(winner == EMPTY);
-        return {{RESIGNMOVE, 0}, {bestMove}, {ng}, transferTable};
+        // // Call threatCheck before expand to make sure that there is at least 1 move that saves the game.
+        // if(winner != EMPTY){
+        //     ModelCompare::displayBoardGUI(true, *this);
+        // } 
+        // assert(winner == EMPTY);
+        return {{RESIGNMOVE, 0}, {bestMove}, transferTable};
 
         // if(winner == EMPTY){
         //     // game goes on.
@@ -279,40 +322,39 @@ std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vect
 
         //Check non-score gaining moves
         std::vector<Move> possibleMoves;
-        std::vector<Game> children;
+        //std::vector<Game> children;
         // push back possible moves
-        uint8_t cntr = 0U;
         for(int i=0; i<boardSize; ++i){
             if(candidates[i] && !acquiredSeg[segTable.second[i]]){
                 possibleMoves.push_back({i / colSize, i % colSize});
-                Game ng = *this;
+                //Game ng = *this;
                 
+                transferTable.push_back({});
                 // if territory is gained.
                 if(!buffer[i].none()){
-                    transferTable.push_back({cntr});
                     for(int j=0; j<boardSize; ++j){
                         if(buffer[i][segTable.second[j]])
                             transferTable.back().push_back(j);
                     }
-                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, transferTable.back());
+                    //ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, transferTable.back());
                 }
                 // no territory difference
                 else{
-                    ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, {});
+                    //ng.makeMoveNoScoreUpdate({i / colSize, i % colSize}, {});
                 }
 
-                children.push_back(ng);
-                cntr++;
+                //children.push_back(ng);
             }
         }
         if(scoreWinner() == currentTurn){
             possibleMoves.push_back(PASSMOVE);
+            transferTable.push_back({});
             Game ng = *this;
             ng.makeMove(PASSMOVE);
-            children.push_back(ng);
+            //children.push_back(ng);
         }
         
-        return {{RESIGNMOVE, 0}, possibleMoves, children, transferTable};
+        return {{RESIGNMOVE, 0}, possibleMoves, transferTable};
     }
 
     //std::cerr << "expand finished" << std::endl;
@@ -747,50 +789,6 @@ std::vector<Move> Game::possibleMovesWhenThreat(const Move& threat, const std::b
     }
 
     return possibleMoves;
-}
-
-Color Game::makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& acquired){
-    lastTwoMoves[0] = lastTwoMoves[1];
-    lastTwoMoves[1] = move;
-
-    if(move == PASSMOVE){ // pass
-        switchTurn();
-        moveCount++;
-        return EMPTY;
-    }
-
-    uint8_t r = move.first;
-    uint8_t c = move.second;
-
-    assert(board[r][c] & EMPTY);
-    // turn off the empty bit, turn on the color bit.
-    board[r][c] ^= currentTurn | EMPTY;
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            board[nr][nc] |= adjTo(currentTurn);
-        }
-    }
-
-    Color clr = captureResultbyMove(r, c);
-    if(clr != EMPTY)
-        return clr;
-    
-    // update territory without BFS.
-    const Color scoreBit = (currentTurn == BLACK) ? BSCORE : WSCORE;
-    const int scoreIdx = (currentTurn == BLACK) ? 0 : 1;
-
-    for(int i=1; i<acquired.size(); ++i){
-        auto idx = acquired[i];
-        board[idx / colSize][idx % colSize] = scoreBit;
-        score[scoreIdx]++;
-    }
-
-    switchTurn();
-    moveCount++;
-
-    return EMPTY;
 }
 
 uint8_t Game::getLegalMoveCount() const{

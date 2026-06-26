@@ -52,13 +52,15 @@ public:
 
     std::pair<Color, Wintype> makeMove(Move move);
 
+    Color makeMoveGivenScore(const Move& move, const std::vector<uint8_t>& acquired);
+
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
     std::pair<Move, int> threatCheck() const;
 
-    // return type : winMove(resignMove if nothing), list of moves, list of nextGames, transferTable. 
-    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<Game>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
+    // return type : winMove(resignMove if nothing), list of possible moves, transferTable. 
+    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
@@ -169,10 +171,6 @@ private:
     std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segmentTable(const std::bitset<boardSize>& potScore) const;
 
     std::vector<Move> possibleMovesWhenThreat(const Move& threat, const std::bitset<boardSize>& potScore) const;
-
-    // first value of acquired is ignored to use transferTable as an argument.
-    Color makeMoveNoScoreUpdate(const Move& move, const std::vector<uint8_t>& acquired);
-
     /////////////////////////////////////////////////////////////////////////
 
     uint8_t getLegalMoveCount() const;
