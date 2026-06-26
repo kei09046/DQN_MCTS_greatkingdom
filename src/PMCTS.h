@@ -51,6 +51,8 @@ private:
     std::vector<Move> availableMoves; // among game.isLegal() moves, consider actually useful moves.
     Move winmove; // if RESIGNMOVE : there is no winning move.
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
+
+    std::shared_ptr<PolicyValueOutput> evaluation; // stores evaluation for this node. Used to temporarily hold evaluation.
     TransTable* const transposTable;
 
     void addChild(const Move& move, const Game& ng);
@@ -96,8 +98,8 @@ private:
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
     const int playMode, const int nPlayout, const int timeLimit);
 
-    void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
+    void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
 
-    // void propagate(const std::vector<Node*>& path, const std::vector<int>& childIdx, int forced);
+    void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
 };
 #endif

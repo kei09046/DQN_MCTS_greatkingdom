@@ -20,7 +20,6 @@ namespace{
     const Hash hash;
 
     std::vector<float> softmax(const std::vector<float>& logit, const Node* node){
-        //std::cerr << "softmax start" << std::endl;
         const auto& availableMoves = node->availableMoves_();
         const auto& transferTable = node->TransferTable_();
 
@@ -52,7 +51,6 @@ namespace{
         for (float& val : exp_logit) {
             val /= sum_exp;
         }
-        //std::cerr << "softmax done" << std::endl;
         return exp_logit;
     }
 
@@ -132,11 +130,7 @@ namespace{
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), transposTable(transposTable){
-    // if(hashValue == (HashValue)12122450572009219436){
-    //     std::cerr << "12122450572009219436 : " << std::endl;
-    //     ModelCompare::displayBoardGUI(false, g);
-    // }
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), winmove(RESIGNMOVE), hashValue(hashValue), evaluation(nullptr), transposTable(transposTable){
 }
 
 void Node::addChild(const Move& move, const Game& ng){
@@ -199,95 +193,6 @@ void Node::expand(){
         forcedState = -1;
     }
     
-    // // //std::cerr << "expanding!" << std::endl;
-    // std::bitset<outputSize> candidateLegal; // mark candidate legal moves
-
-    // // improve capture check performance by checking if there is any group with liberty count 1.
-    // Move threat = RESIGNMOVE;
-
-    // for(int i=0; i<rowSize; ++i){
-    //     for(int j=0; j<colSize; ++j){
-    //         const Chain c = game.getChain({i, j});
-    //         if(c.size != 0 && c.liberties.count() == 1){
-    //             auto color = game.getBoard({i, j});
-    //             int onlyLib = c.liberties._Find_first();
-
-    //             if(game.isLegal(onlyLib / colSize, onlyLib % colSize)){
-    //                 // if my stone is under threat -> have to find only move unless can capture opponent's stone.
-    //                 if(color == game.getTurn()){
-    //                     threat = {onlyLib / colSize, onlyLib % colSize};
-    //                 }
-
-    //                 // if opponent stone is capturable
-    //                 else{
-    //                     winmove = {onlyLib / colSize, onlyLib % colSize};
-    //                     forcedState = 2;
-    //                     return;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-    // candidateLegal = game.getLegalMoves();
-    // // can only pass if it's beneficial
-    // candidateLegal[outputSize - 1] = (game.scoreWinner() == game.getTurn());
-
-    // std::vector<Game> nextGames(boardSize + 1); // +1 for pass
-    // // update scores & remove useless moves
-    // for(int idx = 0; idx < boardSize + 1; ++idx){
-    //     if(candidateLegal[idx]){
-    //         uint8_t r = idx / colSize;
-    //         uint8_t c = idx % colSize;
-    //         nextGames[idx] = game;
-    //         auto [clr, wintype] = nextGames[idx].makeMove({r, c});
-
-    //         if(clr == turn){ // there is immediate win by score. win in 1.
-    //             forcedState = 2;
-    //             winmove = {r, c};
-    //             return;
-    //         }
-
-    //         // there is immediate capture next move, or the move is self-suicidal.
-    //         else if((threat != RESIGNMOVE && (nextGames[idx].isLegal(threat) || wintype == CAPTURE))){
-    //             candidateLegal[idx] = false;
-    //         }
-
-    //         else{
-    //             candidateLegal &= nextGames[idx].getLegalMoves();
-    //             candidateLegal[idx] = true; // keep itself
-    //         }
-    //     }
-    // }
-
-    // if(candidateLegal.none()){ // if there are no moves, mark it as loss.
-    //     forcedState = -1;
-    //     return;
-    // }
-    
-    // // finally add child
-    // int cntr = 0;
-    // for(uint8_t idx = 0; idx < outputSize; ++idx){
-    //     if(candidateLegal[idx]){
-    //         availableMoves.push_back({idx / colSize, idx % colSize});
-    //         addChild({idx/colSize, idx%colSize}, nextGames[idx]);
-    //         const auto acquired = (game.getLegalMoves() ^ nextGames[idx].getLegalMoves()).set(boardSize, false);
-    //         // if any points of territory is acquired
-    //         if(acquired.count() > 1){
-    //             std::vector<uint8_t> acquiredV;
-    //             acquiredV.reserve(acquired.count() + 1);
-    //             // acquiredV : {which move it indicates, terr 1, terr 2, ...}
-    //             acquiredV.push_back(cntr++);
-    //             for (size_t i = acquired._Find_first(); i < boardSize; i = acquired._Find_next(i)) {
-    //                 acquiredV.push_back(i);
-    //             }
-    //             transferTable.push_back(std::move(acquiredV));
-    //         }
-    //     }
-    // }
-
-
-    // assert(threat == RESIGNMOVE || candidateLegal.count() == 1);
-    //std::cerr << "expand finished" << std::endl;
     #ifdef measureTime
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
@@ -299,6 +204,10 @@ int Node::selectChildInSearch(){
     float pref, maxval = -1000.0f; // pref may be less than -1.(due to score head)
     bool lost = true;
 
+    if(availableMoves.empty()){
+        std::cerr << N << " " << W << " " << initQ << " " << S << " " << Wp << std::endl;
+        ModelCompare::displayBoardGUI(true, game);
+    }
     assert(!availableMoves.empty());
     for(int i=0; i<availableMoves.size(); ++i){
         int forced = child[i]->forcedState;
@@ -532,7 +441,7 @@ void Node::deleteTree(Node* exception){
 }
 
 void Node::addDirichletNoise(Evaluator* evaluator){
-    if (N == 0) {
+    if (N <= 1) {
         expand();
         if(forcedState == 0){
             auto buf = std::make_shared<NNResultBuf>();
@@ -694,7 +603,6 @@ bool MCTS::jump(Move move){
 }
 
 void MCTS::reset(){
-
     root->deleteTree();
     root = new Node(Game(), hash.baseHash(), transposTable);
 
@@ -724,24 +632,37 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             // mean forcedState would not be computed in first visit thus NN evaluation request would happen for terminal nodes.
             // TODO : Is it possible to separate expand() logic to legal move computation + actual expansion?
             // Also, is it possible to expand each child separately while maintaining speed advantage?
-            // if(cur->N == 0.0f){
 
-            // }
+            // step 1 done. Expansion is only done on second visit.
+            
+            // TODO step 2. Split expand logic so that terminal state is determined as much as possible on first visit without actual expansion.
+            // on first visit, just quit
+            if(cur->N == 0.0f){
+                break;
+            }
 
-            if (cur->N == 0.0f && (cur != root || !globalConfig.dirichletNoise)) { // first time visit
+            // if node is evaluating, return
+            if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){
+                searchStuck = true;
+                return;
+            }
+
+            // on second visit, do expansion
+            if (cur->N == 1.0f && (cur != root || !globalConfig.dirichletNoise)) {
                 cur->expand();
                 forced = cur->forcedState;
+                if(forced == 0){
+                    cur->edgeP = softmax(std::get<0>(*(cur->evaluation)), cur);
+                    cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+                    // no longer needs to store evaluation. Evaluation may be freed.
+                    cur->evaluation.reset();
+                }
                 break;
             }
 
             forced = cur->forcedState;
             if(forced != 0)
                 break;
-
-            if(std::find(inEvaluation.begin(), inEvaluation.end(), cur) != inEvaluation.end()){ // if node is evaluating, return
-                searchStuck = true;
-                return;
-            }
 
             int a = cur->selectChildInSearch(); // assume node is evaluated
             childIdx.push_back(a);
@@ -778,22 +699,9 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 updateQueue.push_back(path);
             }
             else{
-                std::vector<float> evalP = std::get<0>(*(buf->result));
-                cur->edgeP = softmax(evalP, cur);
-                cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
-
-                if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                    std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
-                    evalS = std::get<2>(*(buf->result));
-                    evalQ = cur->initQ;
-                }
-                else{
-                    evalQ = calculateQ(buf->result, cur->game).first;
-                }
-
-                // if eval is available right now, do param update right away.
+                // if eval is cached, do param update right away.
+                updateEval(buf, path, cur);
                 evaluateCounter++;
-                propagate(path, evalQ, evalW, evalS);
             }
         }
     }
@@ -811,23 +719,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             std::vector<Node*> path = updateQueue.at(i);
             Node* cur = inEvaluation.at(i); 
 
-            std::vector<float> evalP = std::get<0>(*(buf->result));
-            cur->edgeP = softmax(evalP, cur);
-            cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
-
-            float evalQ = 0.0f, evalW = 0.0f, evalS = 0.0f;
-            if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-                std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
-                //(cur->turn == BLACK ? globalConfig.komi : -globalConfig.komi)
-                evalS = std::get<2>(*(buf->result));
-                evalQ = cur->initQ;
-            }
-            else{
-                evalQ = calculateQ(buf->result, cur->game).first;
-            }
-
-            // BACKUP (revert VL + add value)
-            propagate(path, evalQ, evalW, evalS);
+            updateEval(buf, path, cur);
         }
 
         evaluateCounter += inEvaluation.size();
@@ -837,6 +729,27 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         searchStuck = false;
     }
 }
+
+void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur){
+    float evalS, evalW, evalQ;
+
+    // instead updating edgeP and edgeN right away, store the evaluation and only update edgeP and edgeN after expansion.
+    cur->evaluation = buf->result;
+    // cur->edgeP = softmax(evalP, cur);
+    // cur->edgeN = std::vector<float>(cur->edgeP.size(), 0.0f);
+
+    if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
+        std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
+        evalS = std::get<2>(*(buf->result));
+        evalQ = cur->initQ;
+    }
+    else{
+        evalQ = calculateQ(buf->result, cur->game).first;
+    }
+
+    propagate(path, evalQ, evalW, evalS);
+}
+
 
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
     if(globalConfig.detailedStat){ // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
