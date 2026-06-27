@@ -385,12 +385,12 @@ Node* Node::jump(Move move){
     }
     N++;
 
-    std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
-    std::cerr << "available options : " << std::endl;
-    for(auto p : availableMoves)
-        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
-    std::cerr << "node's state : " << std::endl;
-    ModelCompare::displayBoardGUI(true, game);
+    // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
+    // std::cerr << "available options : " << std::endl;
+    // for(auto p : availableMoves)
+    //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    // std::cerr << "node's state : " << std::endl;
+    // ModelCompare::displayBoardGUI(true, game);
 
     int idx = -1;
     for(int i=0; i<availableMoves.size(); ++i){
@@ -626,7 +626,7 @@ void MCTS::printVariation(){
         }
         else{ // losing. Delay losing as much as possible.
             for(int i=0; i<node->availableMoves.size(); ++i){
-                if(node->child[i]->forcedState > maxv){
+                if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
                     maxv = node->child[i]->forcedState;
                     maxi = i;
                 }
@@ -639,6 +639,8 @@ void MCTS::printVariation(){
 
         int visit = node->edgeN[maxi];
         node = node->child[maxi];
+        if(node == nullptr)
+            return;
         std::cout << (int)m.first << " " << (int)m.second << " " << visit << " forced " << node->forcedState << " Q: " << 
             node->W/node->N << " initQ : " << node->initQ << " Wp : " << node->Wp/node->N 
             << " S : " << node->S / node->N << std::endl;  
