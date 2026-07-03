@@ -42,15 +42,15 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 	while (true) {
 		state = PolicyValueNet::getData(game_manager);
-
 		moveProb = player->getMoveProb(temp);
-		auto m = std::get<0>(moveProb);
+		Move m = std::get<0>(moveProb);
+		//printMove(m);
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
 
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
 			// add placeHolder value to buffer
-			buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
+			buffer.emplace_back(state, std::get<1>(moveProb), 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
 		}
 		else{ // Agent only resigns when capture is unavoidable.
 			wintype = CAPTURE;
@@ -120,33 +120,49 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				std::vector<float> maskedMap(boardSize, 0.0f);
 				int idx = 0;
 				for(const auto& move : sequence){
-					if(move != PASSMOVE && map[move.first * colSize + move.second] != 0.0f){
-						maskedMap[move.first * colSize + move.second] = 1.0f;
-						break;
-					}
 					std::get<2>(buffer[idx]) = result;
 					std::get<3>(buffer[idx]) = score_diff;
 					std::get<5>(buffer[idx]) = NONE;
 					insertData(buffer[idx]);
+
+					// set up data after move.
+					idx++;
 					result = -result; // switch color
 					score_diff = -score_diff;
-					idx++;
+					if(move != PASSMOVE){
+						int mv = move.first * colSize + move.second;
+						maskedMap[mv] = map[mv];
+						if(map[mv] != 0.0f)
+							break;
+					}
+
+					// std::cerr << idx << " ";
+					// printMove(move);
 				}
 
 				// if(idx % 2 != 0){
 				// 	result = -result;
 				// 	score_diff = -score_diff;
 				// }
-				for(; idx<buffer.size(); ++idx){
+				while(true){
+					// std::cerr << idx << " ";
+					// printMove(sequence[idx]);
+
 					std::get<2>(buffer[idx]) = result;
 					std::get<3>(buffer[idx]) = score_diff;
 					std::get<4>(buffer[idx]) = maskedMap;
 					std::get<5>(buffer[idx]) = CAPTURE;
 					insertData(buffer[idx]);
+
+					// set up data after move. Terminal state is not included.
 					result = -result; // switch color
 					score_diff = -score_diff;
-					int m = sequence[idx].first * colSize + sequence[idx].second;
-					maskedMap[m] = map[m];
+					if(sequence[idx] != PASSMOVE){
+						int mv = sequence[idx].first * colSize + sequence[idx].second;
+						maskedMap[mv] = map[mv];
+					}
+					if(++idx >= buffer.size())
+						break;
 				}
 			}
 
@@ -156,7 +172,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				maps[1].reserve(boardSize);
 				for(auto v : maps[0])
 					maps[1].push_back(-v);
-				std::vector<float> capMap(boardSize, 0.0f);
 
 				int idx = 0;
 				for(TrainData& data : buffer){
@@ -208,6 +223,16 @@ void TrainPipeline::train(){
 		}
 		buffer_mutex.unlock();
 
+		// static int cntr = 0;
+		// if(cntr++ % 1 == 0){
+		// 	for(int i=0; i<B; ++i){
+		// 		if(std::get<5>(*batch_data[i]) != NONE){
+		// 			displayTrainData(batch_data[i]);
+		// 			break;
+		// 		}
+		// 	}
+		// }
+
 		// copy data from gameBuffer to batch
 		for (int i = 0; i < B; ++i) {
 			const auto& data = *batch_data[i];
@@ -227,17 +252,7 @@ void TrainPipeline::train(){
 			std::copy(map.begin(), map.end(), map_batch->begin() + map_offset);
 			(*type_batch)[i] = std::get<5>(data);
 		}
-		// std::cout << "state batch : " << std::endl;
-		// for(int i=0; i<inputChannel * inputSize; ++i)
-		// 	std::cout << (*state_batch)[i] << " ";
-		// std::cout << "\n nextmove batch : ";
-
-		// for(int i=0; i<outputSize; ++i)
-		// 	std::cout << (*nextmove_batch)[i] << " ";
-		// std::cout << "\n evaluation batch : " << std::endl;
 		
-		// std::cout << (*result_batch)[0] << std::endl;
-		// if game ended by capture, score data is not used.
 		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		train_losses[0].push_back(pLoss);
 		train_losses[1].push_back(vLoss);
@@ -331,7 +346,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						globalConfig = loadConfig("../configs/compare_config.json");
 
 						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
-							std::cout, std::cout, false, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
+							std::cout, std::cout, true, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
 						std::cout << "model " << model_file << " vs " << current_best_model_file << 
 						" winrate " << win_rate << std::endl;
 
@@ -411,4 +426,71 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 
 void TrainPipeline::setLearningRate(const int games_played){
 	learning_rate = (games_played < 26880) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 26880) / 960);
+}
+
+void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
+	// TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Wintype>
+	const auto& [boardState, policy, value, score, map, wintype] = *data;
+
+	char display[rowSize][colSize];
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+			int idx = i * colSize + j;
+			if(boardState[idx] == 1.0f){
+				display[i][j] = 'o';
+			}
+			else if(boardState[boardSize + idx] == 1.0f){
+				display[i][j] = 'x';
+			}
+			else if(boardState[2 * boardSize + idx] == 1.0f){
+				display[i][j] = '+';
+			}
+			else if(boardState[3 * boardSize + idx] == 1.0f){
+				display[i][j] = 'm';
+			}
+			else if(boardState[4 * boardSize + idx] == 1.0f){
+				display[i][j] = 'e';
+			}
+			else{
+				display[i][j] = '-';
+			}            
+        }
+    }
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            std::cout << display[i][j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+	std::cout << "policy : " << std::endl;
+	for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+			std::printf("%8.4f ", policy[i * colSize + j]);
+        }
+        std::cout << "\n";
+    }
+
+	std::cout << "value : " << value << std::endl;
+
+	std::cout << "score : " << score << std::endl;
+
+	switch (wintype) {
+		case CAPTURE: std::cout << "type : CAPTURE" << std::endl; break;
+		case SCORE:   std::cout << "type : SCORE" << std::endl; break;
+		case NONE:    std::cout << "type : NONE" << std::endl; break;
+		case RESIGN:  std::cout << "type : RESIGN" << std::endl; break;
+		default:      std::cout << "type : ERROR" << std::endl; break;
+	}
+
+	if(wintype == CAPTURE || wintype == SCORE){
+		std::cout << "map : " << std::endl;
+		for(int i=0; i<rowSize; ++i){
+			for(int j=0; j<colSize; ++j){
+				std::printf("%8.4f ", map[i * colSize + j]);
+			}
+			std::cout << "\n";
+		}
+	}
 }

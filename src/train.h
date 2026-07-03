@@ -45,6 +45,8 @@ private:
 
 	void setLearningRate(const int games_played);
 
+	void displayTrainData(const std::shared_ptr<const TrainData> data) const;
+
 public:
     std::deque<std::shared_ptr<TrainData>>* gameBuffer;
 	std::vector<float>* state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch;

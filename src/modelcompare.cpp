@@ -6,8 +6,8 @@
 
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
-	if(is_shown)
-		std::cout << "start play" << std::endl;
+	// if(is_shown)
+	// 	std::cout << "start play" << std::endl;
 	//std::cerr << "start play" << std::endl;
 	Game game_manager = Game();
 	int diff, idx = 0;
@@ -18,7 +18,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 	while (true) {
 		move = player_list[idx]->getMove(temp);
 		if(is_shown){
-			std::cout << static_cast<int>(move.first) << static_cast<int>(move.second) << " " << std::flush;
+			std::cout << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
 		}
 		seq.push_back(move);
         res = game_manager.makeMove(move).first;
@@ -40,7 +40,7 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 		// }
 
         if(is_shown)
-            part_res << static_cast<int>(res) << std::endl;
+            part_res << static_cast<int>(res) << "\n";
         return res == BLACK ? 1.0f : 0.0f;
 	}
 }
@@ -201,13 +201,28 @@ void ModelCompare::playHuman() {
 		std::cout << std::endl;
 
 		auto [onlymove, forcedState] = experiment.threatCheck();
+		if(onlymove != RESIGNMOVE){
+			std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
+			<< " " << static_cast<int>(onlymove.second) << std::endl;
+		}
 		auto [win, moves, transtable] = experiment.expand(onlymove);
+		
+		if(moves.size() == 1){
+			std::cout << "only one possible move! " << static_cast<int>(moves[0].first) 
+			<< " " << static_cast<int>(moves[0].second) << std::endl;
+		}
 
 		int idx;
 		for(idx = 0; idx < moves.size(); ++idx)
 			if(moves[idx] == Move{r, c})
 				break;
 
+		std::cout << "move idx : " << idx << std::endl;
+		std::cout << "trans table : ";
+		for(const auto& m : transtable[idx])
+			std::cout << static_cast<int>(m / colSize) << static_cast<int>(m % colSize) << " ";
+		std::cout << std::endl;
+		 
 		experiment.makeMoveGivenScore(cord, transtable[idx]);
 		displayBoardGUI(true, experiment);
 		std::cout << std::endl;

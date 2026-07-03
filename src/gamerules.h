@@ -90,6 +90,10 @@ public:
         return stones[cord/colSize][cord%colSize].head;
     }
 
+    inline const int getChainIdx(Move m) const{
+        return stones[m.first][m.second].head;
+    }
+
     inline const Chain& getChain(int cord) const{
         return chains[stones[cord/colSize][cord%colSize].head];
     }
@@ -170,6 +174,7 @@ private:
 
     std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segmentTable(const std::bitset<boardSize>& potScore) const;
 
+    // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
     std::vector<Move> possibleMovesWhenThreat(const Move& threat, const std::bitset<boardSize>& potScore) const;
     /////////////////////////////////////////////////////////////////////////
 
