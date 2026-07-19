@@ -136,6 +136,7 @@ namespace{
             }
         }
 
+        // float utility = winP * 0.9f;
         float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
@@ -790,10 +791,18 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             evaluateCounter++;
             //propagate(path, childIdx, forced);
 
-            if(forced > 0)
-                propagate(path, -1.0f);
-            else
-                propagate(path, 1.0f);
+            if(globalConfig.detailedStat){
+                if(forced > 0)
+                    propagate(path, -1.0f, -1.0f, -cur->game.scoreDiff(cur->turn));
+                else
+                    propagate(path, 1.0f, 1.0f, -cur->game.scoreDiff(cur->turn));
+            }
+            else{
+                if(forced > 0)
+                    propagate(path, -1.0f);
+                else
+                    propagate(path, 1.0f);
+            }
         }
         else{ // if final search node is non-determined node, ask for evaluation
             // enqueue evaluation
