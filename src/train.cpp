@@ -200,8 +200,9 @@ void TrainPipeline::insertData(const TrainData& data) {
 		gameBuffer->push_back(data);
 	}
 
-	while(gameBuffer->size() > globalConfig.capacity){ // if full, remove data from front
-		gameBuffer->pop_front();
+	if (gameBuffer->size() > globalConfig.capacity) {
+		auto excess = gameBuffer->size() - globalConfig.capacity;
+		gameBuffer->erase(gameBuffer->begin(), gameBuffer->begin() + excess);
 	}
 	buffer_mutex.unlock();
 }
