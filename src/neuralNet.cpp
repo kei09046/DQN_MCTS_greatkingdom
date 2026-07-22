@@ -9,20 +9,27 @@ Net::Net(int channelSize, int blockSize): channelSize(channelSize), cv1(torch::n
 bn1(torch::nn::BatchNorm2d(128)),
 
 // Policy head
-at_cv3(torch::nn::Conv2dOptions(128, 2, 1).bias(false)),
-at_bn3(torch::nn::BatchNorm2d(2)),
-at_fc1(2 * inputSize, outputSize),
+at_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+at_bn3(torch::nn::BatchNorm2d(32)),
+at_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
+at_bn4(torch::nn::BatchNorm2d(2)),
+at_fc1(2 * inputSize, 256),
+at_fc2(256, outputSize),
 
 // Value head
-v_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
-v_bn3(torch::nn::BatchNorm2d(1)),
-v_fc1(inputSize, 256),
+v_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+v_bn3(torch::nn::BatchNorm2d(32)),
+v_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
+v_bn4(torch::nn::BatchNorm2d(2)),
+v_fc1(2 * inputSize, 256),
 v_fc2(256, 1),
 
 // Score diff head
-sc_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
-sc_bn3(torch::nn::BatchNorm2d(1)),
-sc_fc1(inputSize, 256),
+sc_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+sc_bn3(torch::nn::BatchNorm2d(32)),
+sc_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
+sc_bn4(torch::nn::BatchNorm2d(2)),
+sc_fc1(2 * inputSize, 256),
 sc_fc2(256, 1),
 
 // score map head
@@ -50,15 +57,22 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
 	register_module("at_cv3", at_cv3);
 	register_module("at_bn3", at_bn3);
+	register_module("at_cv4", at_cv4);
+	register_module("at_bn4", at_bn4);
 	register_module("at_fc1", at_fc1);
+	register_module("at_fc2", at_fc2);
 
 	register_module("v_cv3", v_cv3);
 	register_module("v_bn3", v_bn3);
+	register_module("v_cv4", v_cv4);
+	register_module("v_bn4", v_bn4);
 	register_module("v_fc1", v_fc1);
 	register_module("v_fc2", v_fc2);
 
 	register_module("sc_cv3", sc_cv3);
 	register_module("sc_bn3", sc_bn3);
+	register_module("sc_cv4", sc_cv4);
+	register_module("sc_bn4", sc_bn4);
 	register_module("sc_fc1", sc_fc1);
 	register_module("sc_fc2", sc_fc2);
 
@@ -80,17 +94,21 @@ NNOutput Net::forward(const torch::Tensor& state)
 	for (auto& block : *blocks) {
 		x = block->as<ResidualBlock>()->forward(x);
 	}
-	torch::Tensor log_act = at_bn3(at_cv3(x));
+	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
+	log_act = at_bn4(at_cv4(log_act));
 	log_act = log_act.view({ -1, 2 * inputSize });
-	log_act = at_fc1(log_act);
+	log_act = torch::nn::functional::relu(at_fc1(log_act));
+	log_act = at_fc2(log_act);
 
-	torch::Tensor val = v_bn3(v_cv3(x));
-	val = val.view({-1, inputSize});
+	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
+	val = v_bn4(v_cv4(val));
+	val = val.view({-1, 2 * inputSize});
 	val = torch::nn::functional::relu(v_fc1(val));
 	val = v_fc2(val).tanh();
 
-	torch::Tensor score = sc_bn3(sc_cv3(x));
-	score = score.view({-1, inputSize});
+	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
+	score = sc_bn4(sc_cv4(score));
+	score = score.view({-1, 2 * inputSize});
 	score = torch::nn::functional::relu(sc_fc1(score));
 	torch::Tensor exp_score_diff = sc_fc2(score);
 
@@ -628,8 +646,8 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		/////////////////////////
 
 		// TODO : find best ratio
-		// torch::Tensor loss = policy_loss + value_loss*0.25f + score_loss*0.02f + score_map_loss*0.1f + capture_loss*0.25f;
-		torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss + capture_loss;
+		torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
+		// torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss + capture_loss;
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();

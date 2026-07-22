@@ -63,12 +63,13 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 			cord = player.getMove(temp);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+			std::cout << "move : " << static_cast<int>(cord.first) << " " << static_cast<int>(cord.second) << std::endl;
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
 		if(cord == PASSMOVE || game_manager.isLegal(cord)){
 			res = game_manager.makeMove(cord).first;
-			displayBoardGUI(true, game_manager);
+			//displayBoardGUI(true, game_manager);
 			if (res != EMPTY) {
 				game_manager.onGameEnd(res);
 				break;
@@ -136,7 +137,7 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 		lk.unlock();
 		while (evaluating) {
 			player.runSimulation(PLAYOUT, 400, 0);
-			float eval = player.getEval();
+			float eval = player.getEval().first;
 			ok(std::to_string(eval));
 		}
 		lk.lock();

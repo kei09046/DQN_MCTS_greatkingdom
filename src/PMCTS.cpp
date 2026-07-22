@@ -309,30 +309,30 @@ Move Node::selectMove(float temp){
     //std::cout << "available move size : " << availableMoves.size() << std::endl;
 
     if(forcedState > 0){
-        if(globalConfig.detailedStat)
-            std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
-            << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
+        // if(globalConfig.detailedStat)
+        //     std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
+        //     << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
         return onlyMove;
     }
     else if(availableMoves.empty()){
         return RESIGNMOVE;
     }
-    else if(globalConfig.detailedStat){
-        std::vector<int> v(availableMoves.size());
-        std::iota(v.begin(), v.end(), 0);
-        std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
-            return edgeN[a] > edgeN[b];
-        });
+    // else if(globalConfig.detailedStat){
+    //     std::vector<int> v(availableMoves.size());
+    //     std::iota(v.begin(), v.end(), 0);
+    //     std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
+    //         return edgeN[a] > edgeN[b];
+    //     });
 
-        for(int i=0; i<std::min(static_cast<int>(availableMoves.size()), 3); ++i){
-            int idx = v[i];
-            if(child[idx] != nullptr)
-                std::cout << "status: " << static_cast<int>(availableMoves[idx].first) << " " << static_cast<int>(availableMoves[idx].second)
-                << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
-                << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
-                << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
-        }
-    }
+    //     for(int i=0; i<std::min(static_cast<int>(availableMoves.size()), 3); ++i){
+    //         int idx = v[i];
+    //         if(child[idx] != nullptr)
+    //             std::cout << "status: " << static_cast<int>(availableMoves[idx].first) << " " << static_cast<int>(availableMoves[idx].second)
+    //             << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
+    //             << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
+    //             << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
+    //     }
+    // }
 
     int maxi, maxn = -1, index;
     for(int i=0; i<availableMoves.size(); ++i){
@@ -611,12 +611,17 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
-    if(globalConfig.detailedStat)
-        printVariation();
+    // if(globalConfig.detailedStat)
+    //     printVariation();
 }
 
 Move MCTS::getMove(float temp){
-    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time);
+    for(int i=0; i<10; ++i){
+        runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10);
+        printVariation();
+        const auto& [winProb, scoreEXP] = getEval();
+        std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
+    }
     return root->selectMove(temp);
 }
 
@@ -625,9 +630,14 @@ MoveData MCTS::getMoveProb(float temp){
     return root->selectMoveProb(temp);
 }
 
-float MCTS::getEval(){
+std::pair<float, float> MCTS::getEval(){
     assert(root->N > 0);
-    return static_cast<float>(root->W) / root->N;
+    if(root->forcedState == 0)
+        return {static_cast<float>(-root->W) / root->N, static_cast<float>(-root->S) / root->N};
+    else if(root->forcedState > 0)
+        return {1.0f, 0.0f};
+    else
+        return {-1.0f, 0.0f};
 }
 
 void MCTS::printVariation(){
@@ -658,7 +668,7 @@ void MCTS::printVariation(){
         else if(node->forcedState > 0){
             m = node->onlyMove;
             assert(m != RESIGNMOVE);
-            std::cerr << "only move : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
+            // std::cerr << "only move : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 
             if(node->forcedState == 2)
                 break;

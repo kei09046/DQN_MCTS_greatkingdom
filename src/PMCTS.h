@@ -82,7 +82,8 @@ public:
 
     MoveData getMoveProb(float temperature);
 
-    float getEval();
+    // getEval returns evaluation from player's perspective, which is opposite from internally stored value.
+    std::pair<float, float> getEval();
 
     void printVariation();
 

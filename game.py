@@ -317,10 +317,135 @@ class RuleManager:
             return no // RuleManager.boardSize, no % RuleManager.boardSize
 
 
+import os
+import re
+import subprocess
+import threading
+import queue
+
 from tkinter import *
 from PIL import Image, ImageTk
 
 # 실제 게임이 실행되는 파일 GUI 담당이기도 함
+
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+BUILD_DIR = os.path.join(REPO_ROOT, "build")
+MODELS_DIR = os.path.join(REPO_ROOT, "models")
+
+# engine Color enum (src/consts.h): BLACK = 1, WHITE = 2
+ENGINE_BLACK = 1
+ENGINE_WHITE = 2
+
+_FLOAT = r"(-?\d+\.?\d*(?:[eE][+-]?\d+)?)"
+
+# "move : <r> <c>" -- the engine's chosen move
+_MOVE_RE = re.compile(r"^move\s*:\s*(-?\d+)\s+(-?\d+)")
+# "move time : <microseconds>[µs]"
+_MOVETIME_RE = re.compile(r"^move time\s*:\s*(\d+)")
+# one line of MCTS::printVariation(): "<r> <c> <visit> forced <fs> Q: ..."
+_VARIATION_RE = re.compile(r"^(-?\d+) (-?\d+) (\d+) forced (-?\d+) Q:")
+# "winprob : <float>" (-1 = 0%, 1 = 100%, from the engine's perspective)
+_WINPROB_RE = re.compile(r"^winprob\s*:\s*" + _FLOAT)
+# "scoreEXP : <float>" expected score difference
+_SCOREEXP_RE = re.compile(r"^scoreEXP\s*:\s*" + _FLOAT)
+
+
+def list_models(models_dir=MODELS_DIR):
+    if not os.path.isdir(models_dir):
+        return []
+    return sorted(f for f in os.listdir(models_dir) if f.endswith(".pt"))
+
+
+class EngineProcess:
+    """Wraps `./play play <model> <humanColor>` and talks to it over stdin/stdout.
+
+    The engine blocks on stdin only while it's the human's turn; once it becomes
+    the engine's turn it computes and prints "move : r c" on its own, so moves
+    coming back from the engine are picked up asynchronously via a reader thread.
+    """
+
+    def __init__(self, model, human_color, build_dir=BUILD_DIR):
+        self.proc = subprocess.Popen(
+            ["./play", "play", model, str(human_color)],
+            cwd=build_dir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        # moves: (x, y, move_time_us) tuples for engine-chosen moves
+        self.moves = queue.Queue()
+        # stats: dicts {"variation": [(r,c), ...], "winprob": float, "score": float},
+        # pushed progressively as the engine deepens its search for the current move
+        self.stats = queue.Queue()
+        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader_thread.start()
+
+    def _read_loop(self):
+        variation_buf = []
+        pending_winprob = None
+        pending_move = None
+
+        for line in self.proc.stdout:
+            line = line.rstrip("\n")
+
+            m = _VARIATION_RE.match(line)
+            if m:
+                variation_buf.append((int(m.group(1)), int(m.group(2))))
+                continue
+
+            m = _WINPROB_RE.match(line)
+            if m:
+                pending_winprob = float(m.group(1))
+                continue
+
+            m = _SCOREEXP_RE.match(line)
+            if m:
+                self.stats.put({
+                    "variation": variation_buf,
+                    "winprob": pending_winprob,
+                    "score": float(m.group(1)),
+                })
+                variation_buf = []
+                pending_winprob = None
+                continue
+
+            m = _MOVETIME_RE.match(line)
+            if m and pending_move is not None:
+                self.moves.put(pending_move + (int(m.group(1)),))
+                pending_move = None
+                continue
+
+            m = _MOVE_RE.match(line)
+            if m:
+                pending_move = (int(m.group(1)), int(m.group(2)))
+                continue
+
+    def send_move(self, x, y):
+        if self.proc.poll() is not None or self.proc.stdin.closed:
+            return
+        try:
+            self.proc.stdin.write(f"{x} {y}\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def get_move_nowait(self):
+        try:
+            return self.moves.get_nowait()
+        except queue.Empty:
+            return None
+
+    def get_stats_nowait(self):
+        try:
+            return self.stats.get_nowait()
+        except queue.Empty:
+            return None
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
 
 
 class Game:
@@ -335,9 +460,26 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        self.root.geometry("1200x1200")
-        self.canvas = Canvas(self.root, width=900, height=900, bg="yellow")
-        self.passButton = Button(self.root, text="pass")
+        self.root.geometry("1300x1000")
+
+        self.boardFrame = Frame(self.root)
+        self.canvas = Canvas(self.boardFrame, width=900, height=900, bg="#DCB35C", highlightthickness=0)
+        self.passButton = Button(self.boardFrame, text="pass")
+        self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
+
+        self.sideFrame = Frame(self.root, width=300)
+        Label(self.sideFrame, text="Engine Analysis", font=("Helvetica", 16, "bold")) \
+            .pack(anchor="w", pady=(0, 15))
+        self.variationLabel = Label(self.sideFrame, text="Top line: -", font=("Helvetica", 11),
+                                     wraplength=260, justify=LEFT, anchor="w")
+        self.variationLabel.pack(fill=X, pady=5, anchor="w")
+        self.winProbLabel = Label(self.sideFrame, text="Win probability: -", font=("Helvetica", 12), anchor="w")
+        self.winProbLabel.pack(fill=X, pady=5, anchor="w")
+        self.scoreLabel = Label(self.sideFrame, text="Expected score diff: -", font=("Helvetica", 12), anchor="w")
+        self.scoreLabel.pack(fill=X, pady=5, anchor="w")
+        self.moveTimeLabel = Label(self.sideFrame, text="Move time: -", font=("Helvetica", 12), anchor="w")
+        self.moveTimeLabel.pack(fill=X, pady=5, anchor="w")
+
         self.stones = []
         self.stones.append(
             ImageTk.PhotoImage(Image.open("images/b_stone.png").resize((self.stone_size, self.stone_size))))
@@ -348,19 +490,59 @@ class Game:
         self.turn = 0
         self.on_stone = [[False for i in range(self.boardSize)] for j in range(self.boardSize)]
         self.against_ai = False
-        self.ai = None
+        self.engine = None
         self.human_color = 0
+        self.game_over = False
+        self.setupFrame = None
+
+    def show_setup_screen(self):
+        models = list_models()
+
+        frame = Frame(self.root)
+        frame.pack(expand=True)
+        self.setupFrame = frame
+
+        Label(frame, text="Great Kingdom", font=("Helvetica", 20)).pack(pady=(30, 15))
+
+        Label(frame, text="Model:").pack()
+        model_var = StringVar(value=models[0] if models else "")
+        if models:
+            OptionMenu(frame, model_var, *models).pack(pady=(0, 15))
+        else:
+            Label(frame, text=f"(no .pt files found in {MODELS_DIR})", fg="red").pack(pady=(0, 15))
+
+        Label(frame, text="Play as:").pack()
+        color_var = StringVar(value="black")
+        Radiobutton(frame, text="Black", variable=color_var, value="black").pack()
+        Radiobutton(frame, text="White", variable=color_var, value="white").pack()
+
+        def start():
+            model = model_var.get()
+            if not model:
+                return
+            frame.destroy()
+            self.setupFrame = None
+            self.play_ai(human_color=(0 if color_var.get() == "black" else 1), model=model)
+
+        start_button = Button(frame, text="Start Game", command=start)
+        start_button.pack(pady=25)
+        if not models:
+            start_button.configure(state=DISABLED)
 
     def create_board(self, ag_ai=False):
+        self.boardFrame.grid(row=0, column=0, sticky="n")
         self.canvas.pack()
         self.passButton.pack()
         self.passButton.configure(command=self.on_pass)
+        self.statusLabel.pack()
 
         for i in range(self.boardSize):
             self.canvas.create_line(i * self.delta + self.m, self.m, i * self.delta + self.m,
                                (self.boardSize - 1) * self.delta + self.m)
             self.canvas.create_line(self.m, i * self.delta + self.m, (self.boardSize - 1) * self.delta + self.m,
                                i * self.delta + self.m)
+
+        self._draw_star_points()
 
         for i in self.neutral:
             self.canvas.create_image(self.m + i[0] * self.delta - self.stone_size / 2,
@@ -374,11 +556,48 @@ class Game:
 
         self.against_ai = ag_ai
         self.canvas.bind("<Button-1>", self.on_click)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
         if self.against_ai:
-            self.canvas.bind("<ButtonRelease-1>", self.ai_make_move)
-        self.root.mainloop()
+            self.sideFrame.grid(row=0, column=1, sticky="n", padx=20, pady=20)
+            self._update_status()
+            self.root.after(100, self.poll_engine)
+            self.root.after(100, self.poll_stats)
+
+    def _draw_star_points(self):
+        if self.boardSize < 7:
+            return
+        offsets = sorted({2, self.boardSize - 3})
+        points = {(x, y) for x in offsets for y in offsets}
+        if self.boardSize % 2 == 1:
+            points.add((self.boardSize // 2, self.boardSize // 2))
+
+        r = max(3, int(self.delta * 0.08))
+        for x, y in points:
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="black", outline="black")
+
+    def _place_stone(self, x, y, color_idx):
+        x_loc = self.m + x * self.delta
+        y_loc = self.m + y * self.delta
+        self.canvas.create_image(x_loc - self.stone_size / 2, y_loc - self.stone_size / 2,
+                                 anchor=NW, image=self.stones[color_idx])
+        self.on_stone[x][y] = True
+
+    def _update_status(self):
+        if self.game_over:
+            return
+        if not self.against_ai:
+            self.statusLabel.configure(text="")
+        elif self.human_color == self.turn:
+            self.statusLabel.configure(text="your turn")
+        else:
+            self.statusLabel.configure(text="engine is thinking ...")
 
     def on_click(self, event):
+        if self.game_over:
+            return
         if not self.against_ai or (self.human_color == self.turn):
             x_cord = int((event.x - self.m) / self.delta + 0.5)
             y_cord = int((event.y - self.m) / self.delta + 0.5)
@@ -388,69 +607,136 @@ class Game:
             if x_cord < 0 or x_cord >= self.boardSize or y_cord < 0 or y_cord >= self.boardSize:
                 return
 
-            if abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl and not self.on_stone[x_cord][y_cord]:
-                self.canvas.create_image(x_loc - self.stone_size / 2, y_loc - self.stone_size / 2,
-                                         anchor=NW, image=self.stones[self.turn])
+            if not (abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl):
+                return
+            if self.on_stone[x_cord][y_cord]:
+                return
+            # playing into the opponent's already-settled territory is illegal
+            if self.rule.terr_board[x_cord + 1][y_cord + 1] * self.rule.turn == -1:
+                return
 
-                self.turn = 1 - self.turn
-                self.on_stone[x_cord][y_cord] = True
+            self._place_stone(x_cord, y_cord, self.turn)
+            self.turn = 1 - self.turn
 
-                res = self.rule.make_move(x_cord, y_cord)
-                if res == 1 or res == -1 or res == -2:
-                    self.on_end(res * self.rule.turn)
+            res = self.rule.make_move(x_cord, y_cord)
+            if self.against_ai:
+                self.engine.send_move(x_cord, y_cord)
+            if res == 1 or res == -1 or res == -2:
+                self.on_end(res * self.rule.turn)
+            else:
+                self._update_status()
         return
 
     def on_pass(self):
+        if self.game_over:
+            return
         if not self.against_ai or (self.human_color == self.turn):
-            if self.rule.make_move(-1, 0) == -2:
+            result = self.rule.make_move(-1, 0)
+            if self.against_ai:
+                self.engine.send_move(self.boardSize, 0)
+
+            if result == -2:
                 self.on_end(-2)
                 return
 
             self.turn = 1 - self.turn
+            self._update_status()
             return
 
-    # 0이면 흑 1이면 백
-    def play_ai(self, Color=0, init_model='./weights/model249.pt', level=1000):
-        self.ai = MCTSPlayer(PolicyValueNet(model_file=init_model, use_gpu=True).policy_value_fn, c_puct=5,
-                             n_playout=level)
-        self.human_color = Color
+    # human_color: 0 for black, 1 for white
+    def play_ai(self, human_color=0, model='H96000B.pt', build_dir=BUILD_DIR):
+        self.human_color = human_color
+        engine_color = ENGINE_BLACK if human_color == 0 else ENGINE_WHITE
+        self.engine = EngineProcess(model, engine_color, build_dir=build_dir)
         self.create_board(ag_ai=True)
 
-    def ai_make_move(self, event):
-        if self.against_ai and self.human_color != self.turn:
-            move, prob = self.ai.get_action(self.rule, return_prob=True)
-            print(prob)
-            if move == -1:
-                print("pass")
+    def poll_engine(self):
+        if not self.against_ai or self.game_over:
+            return
+        move = self.engine.get_move_nowait()
+        if move is not None:
+            self.apply_engine_move(move)
+        if not self.game_over:
+            self.root.after(100, self.poll_engine)
 
-            move = RuleManager.convert(move, is_pair=False)
+    def poll_stats(self):
+        if not self.against_ai or self.game_over:
+            return
+        latest = None
+        while True:
+            s = self.engine.get_stats_nowait()
+            if s is None:
+                break
+            latest = s
+        if latest is not None:
+            self._update_stats_panel(latest)
+        if not self.game_over:
+            self.root.after(100, self.poll_stats)
 
-            x_loc = self.m + move[0] * self.delta
-            y_loc = self.m + move[1] * self.delta
-            self.canvas.create_image(x_loc - self.stone_size / 2, y_loc - self.stone_size / 2,
-                                     anchor=NW, image=self.stones[self.turn])
+    def _update_stats_panel(self, stats, move_time_us=None):
+        variation = stats.get("variation") or []
+        if variation:
+            var_text = " → ".join(f"({r},{c})" for r, c in variation[:6])
+        else:
+            var_text = "-"
+        self.variationLabel.configure(text=f"Top line: {var_text}")
+
+        winprob = stats.get("winprob")
+        if winprob is not None:
+            pct = (winprob + 1) / 2 * 100
+            self.winProbLabel.configure(text=f"Win probability: {pct:.1f}%")
+
+        score = stats.get("score")
+        if score is not None:
+            self.scoreLabel.configure(text=f"Expected score diff: {score:+.2f}")
+
+        if move_time_us is not None:
+            self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
+
+    def apply_engine_move(self, move):
+        x, y, move_time_us = move
+        if x == self.boardSize and y == 0:  # PASSMOVE = (boardSize, 0)
+            result = self.rule.make_move(-1, 0)
             self.turn = 1 - self.turn
-            self.on_stone[move[0]][move[1]] = True
-            res = self.rule.make_move(move[0], move[1])
-            if res == 1 or res == -1 or res == -2:
-                self.on_end(res * self.rule.turn)
+            self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
+            if result == -2:
+                self.on_end(-2)
+            else:
+                self._update_status()
+            return
+
+        self._place_stone(x, y, self.turn)
+        self.turn = 1 - self.turn
+        self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
+
+        res = self.rule.make_move(x, y)
+        if res == 1 or res == -1 or res == -2:
+            self.on_end(res * self.rule.turn)
+        else:
+            self._update_status()
 
     def on_end(self, winner):
+        self.game_over = True
         if winner == 1:
-            print("winner is black")
-            return
-        if winner == -1:
-            print("winner is white")
-            return
-        result = self.rule.end_game()
-        if result[0] == 1:
-            print("winner is black", result[1])
-            return
-        if result[0] == -1:
-            print("winner is white", result[1])
-            return
-        print("draw")
-        return
+            self.statusLabel.configure(text="winner is black")
+        elif winner == -1:
+            self.statusLabel.configure(text="winner is white")
+        else:
+            result = self.rule.end_game()
+            if result[0] == 1:
+                self.statusLabel.configure(text=f"winner is black by {result[1]}")
+            elif result[0] == -1:
+                self.statusLabel.configure(text=f"winner is white by {result[1]}")
+            else:
+                self.statusLabel.configure(text="draw")
+
+        if self.engine is not None:
+            self.engine.close()
+
+    def on_close(self):
+        if self.engine is not None:
+            self.engine.close()
+        self.root.destroy()
 
     @staticmethod
     def start_self_play(player, is_shown=False, temp=1e-1):
@@ -526,6 +812,7 @@ class Game:
 # RuleManager.boardSize = 3
 # RuleManager.neutral = []
 # RuleManager.penalty = 0
-g = Game()
-# g.play_ai(Color=0, init_model='./weights/model249.pt', level=1000)
-g.create_board()
+if __name__ == "__main__":
+    g = Game()
+    g.show_setup_screen()
+    g.root.mainloop()
