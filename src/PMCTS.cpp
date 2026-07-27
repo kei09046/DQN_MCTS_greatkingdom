@@ -618,9 +618,9 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 Move MCTS::getMove(float temp){
     for(int i=0; i<10; ++i){
         runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10);
-        printVariation();
+        // printVariation();
         const auto& [winProb, scoreEXP] = getEval();
-        std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
+        // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
     }
     return root->selectMove(temp);
 }

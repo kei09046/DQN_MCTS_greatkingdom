@@ -346,17 +346,26 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
 						globalConfig = loadConfig("../configs/compare_config.json");
 
-						float win_rate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
+						float winrate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
 							std::cout, std::cout, true, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
-						std::cout << "model " << model_file << " vs " << current_best_model_file << 
-						" winrate " << win_rate << std::endl;
 
-						if(win_rate > 0.5f){
+						std::cout << "model " << model_file << " vs " << current_best_model_file << 
+						" winrate " << winrate << std::endl;
+
+						if(winrate <= 0)
+							std::cout << "rating differential : -INF\n";
+						else if(winrate >= 1)
+							std::cout << "rating differential : +INF\n";
+						else
+							std::cout << "rating differential : " << 400.0 * std::log10(winrate / (1.0 - winrate)) << "\n";
+
+						if(winrate > 0.5f){
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
-							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + "B.pt"); // best models are saved
+							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + 
+							"B" + ".pt"); // best models are saved
 						}
-						else if(win_rate < 0.35f){
+						else if(winrate < 0.35f){
 							std::cout << "model fallback!" << std::endl;
 							train_model.load_model(globalConfig.modelPath + current_best_model_file);
 						}

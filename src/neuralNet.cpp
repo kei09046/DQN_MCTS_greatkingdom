@@ -34,17 +34,14 @@ sc_fc2(256, 1),
 
 // score map head
 sc_map_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+sc_map_bn3(torch::nn::BatchNorm2d(32)),
 sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false)),
 
 // capture head
 cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+cap_bn3(torch::nn::BatchNorm2d(32)),
 cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
-// cap/sc distinguisher
-// cap_sc_cv3(torch::nn::Conv2dOptions(128, 1, 1).bias(false)),
-// cap_sc_bn3(torch::nn::BatchNorm2d(1)),
-// cap_sc_fc1(inputSize, 256),
-// cap_sc_fc2(256, 1)
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 
@@ -77,15 +74,12 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("sc_fc2", sc_fc2);
 
 	register_module("sc_map_cv3", sc_map_cv3);
+	register_module("sc_map_bn3", sc_map_bn3);
 	register_module("sc_map_cv4", sc_map_cv4);
 
 	register_module("cap_cv3", cap_cv3);
+	register_module("cap_bn3", cap_bn3);
 	register_module("cap_cv4", cap_cv4);
-
-	// register_module("cap_sc_cv3", cap_sc_cv3);
-	// register_module("cap_sc_bn3", cap_sc_bn3);
-	// register_module("cap_sc_fc1", cap_sc_fc1);
-	// register_module("cap_sc_fc2", cap_sc_fc2);
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
@@ -94,28 +88,34 @@ NNOutput Net::forward(const torch::Tensor& state)
 	for (auto& block : *blocks) {
 		x = block->as<ResidualBlock>()->forward(x);
 	}
+
+	// policy head
 	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
 	log_act = at_bn4(at_cv4(log_act));
 	log_act = log_act.view({ -1, 2 * inputSize });
 	log_act = torch::nn::functional::relu(at_fc1(log_act));
 	log_act = at_fc2(log_act);
 
+	// value head
 	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
 	val = v_bn4(v_cv4(val));
 	val = val.view({-1, 2 * inputSize});
 	val = torch::nn::functional::relu(v_fc1(val));
 	val = v_fc2(val).tanh();
 
+	// score head
 	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
 	score = sc_bn4(sc_cv4(score));
 	score = score.view({-1, 2 * inputSize});
 	score = torch::nn::functional::relu(sc_fc1(score));
 	torch::Tensor exp_score_diff = sc_fc2(score);
 
-	torch::Tensor exp_score_map = sc_map_cv3(x);
+	// score map head
+	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn3(sc_map_cv3(x)));
 	exp_score_map = sc_map_cv4(exp_score_map).tanh();
 	
-	torch::Tensor cap_prob_map = cap_cv3(x);
+	// capture map head
+	torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_bn3(cap_cv3(x)));
 	cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
 
 	//std::cerr << log_act << " " << val << " " << exp_score_diff << " " << exp_score_map << " " << cap_prob_map << std::endl;
@@ -694,8 +694,11 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		else if((model_type == "E") || (model_type == "F")){
 			net = std::make_shared<Net>(18, 15);
 		}
-		else if((model_type == "G") || (model_type == "H")){
+		else if((model_type == "G")){
 			net = std::make_shared<Net>(18, 18);
+		}
+		else if(model_type == "H"){
+			net = std::make_shared<Net>(18, 20);
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -704,7 +707,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(18, 18);
+		policy_value_net = std::make_shared<Net>(18, 20);
 	}
 
 	policy_value_net->to(device);

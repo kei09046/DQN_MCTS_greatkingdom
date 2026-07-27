@@ -77,10 +77,12 @@ public:
 	
 	// score map
 	torch::nn::Conv2d sc_map_cv3;
+	torch::nn::BatchNorm2d sc_map_bn3;
 	torch::nn::Conv2d sc_map_cv4;
 
 	// capture
 	torch::nn::Conv2d cap_cv3;
+	torch::nn::BatchNorm2d cap_bn3;
 	torch::nn::Conv2d cap_cv4;
 };
 
