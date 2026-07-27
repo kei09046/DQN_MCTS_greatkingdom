@@ -57,7 +57,7 @@ public:
 	torch::nn::Conv2d at_cv4;
 	torch::nn::BatchNorm2d at_bn4;
 	torch::nn::Linear at_fc1;
-	torch::nn::Linear at_fc2;
+	// torch::nn::Linear at_fc2;
 
 	// value
 	torch::nn::Conv2d v_cv3;
@@ -65,7 +65,7 @@ public:
 	torch::nn::Conv2d v_cv4;
 	torch::nn::BatchNorm2d v_bn4;
 	torch::nn::Linear v_fc1;
-	torch::nn::Linear v_fc2;
+	// torch::nn::Linear v_fc2;
 
 	// score scalar
 	torch::nn::Conv2d sc_cv3;
@@ -73,7 +73,7 @@ public:
 	torch::nn::Conv2d sc_cv4;
 	torch::nn::BatchNorm2d sc_bn4;
 	torch::nn::Linear sc_fc1;
-	torch::nn::Linear sc_fc2;
+	// torch::nn::Linear sc_fc2;
 	
 	// score map
 	torch::nn::Conv2d sc_map_cv3;
