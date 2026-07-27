@@ -468,17 +468,10 @@ class Game:
         self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
 
         self.sideFrame = Frame(self.root, width=300)
-        Label(self.sideFrame, text="Engine Analysis", font=("Helvetica", 16, "bold")) \
-            .pack(anchor="w", pady=(0, 15))
-        self.variationLabel = Label(self.sideFrame, text="Top line: -", font=("Helvetica", 11),
-                                     wraplength=260, justify=LEFT, anchor="w")
-        self.variationLabel.pack(fill=X, pady=5, anchor="w")
-        self.winProbLabel = Label(self.sideFrame, text="Win probability: -", font=("Helvetica", 12), anchor="w")
-        self.winProbLabel.pack(fill=X, pady=5, anchor="w")
-        self.scoreLabel = Label(self.sideFrame, text="Expected score diff: -", font=("Helvetica", 12), anchor="w")
-        self.scoreLabel.pack(fill=X, pady=5, anchor="w")
-        self.moveTimeLabel = Label(self.sideFrame, text="Move time: -", font=("Helvetica", 12), anchor="w")
-        self.moveTimeLabel.pack(fill=X, pady=5, anchor="w")
+        self.setupPanel = None
+        self.analysisPanel = None
+        self._build_setup_panel()
+        self._build_analysis_panel()
 
         self.stones = []
         self.stones.append(
@@ -493,44 +486,119 @@ class Game:
         self.engine = None
         self.human_color = 0
         self.game_over = False
-        self.setupFrame = None
 
-    def show_setup_screen(self):
+    def _build_setup_panel(self):
+        panel = Frame(self.sideFrame)
+        self.setupPanel = panel
+
+        Label(panel, text="Great Kingdom", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+
+        Label(panel, text="Play vs an engine", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+
         models = list_models()
-
-        frame = Frame(self.root)
-        frame.pack(expand=True)
-        self.setupFrame = frame
-
-        Label(frame, text="Great Kingdom", font=("Helvetica", 20)).pack(pady=(30, 15))
-
-        Label(frame, text="Model:").pack()
-        model_var = StringVar(value=models[0] if models else "")
+        Label(panel, text="Model:", anchor="w").pack(fill=X, pady=(10, 0))
+        self.setup_model_var = StringVar(value=models[0] if models else "")
         if models:
-            OptionMenu(frame, model_var, *models).pack(pady=(0, 15))
+            model_row = Frame(panel)
+            model_row.pack(fill=X, pady=(0, 10))
+            Label(model_row, textvariable=self.setup_model_var, anchor="w",
+                  relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X, expand=True)
+            Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
         else:
-            Label(frame, text=f"(no .pt files found in {MODELS_DIR})", fg="red").pack(pady=(0, 15))
+            Label(panel, text=f"(no .pt files found in {MODELS_DIR})", fg="red",
+                  wraplength=260, justify=LEFT, anchor="w").pack(fill=X, pady=(0, 10))
 
-        Label(frame, text="Play as:").pack()
-        color_var = StringVar(value="black")
-        Radiobutton(frame, text="Black", variable=color_var, value="black").pack()
-        Radiobutton(frame, text="White", variable=color_var, value="white").pack()
+        Label(panel, text="Play as:", anchor="w").pack(fill=X)
+        self.setup_color_var = StringVar(value="black")
+        Radiobutton(panel, text="Black", variable=self.setup_color_var, value="black", anchor="w") \
+            .pack(fill=X)
+        Radiobutton(panel, text="White", variable=self.setup_color_var, value="white", anchor="w") \
+            .pack(fill=X)
 
-        def start():
-            model = model_var.get()
-            if not model:
-                return
-            frame.destroy()
-            self.setupFrame = None
-            self.play_ai(human_color=(0 if color_var.get() == "black" else 1), model=model)
-
-        start_button = Button(frame, text="Start Game", command=start)
-        start_button.pack(pady=25)
+        self.start_ai_button = Button(panel, text="Start Engine Game", command=self.start_ai_game)
+        self.start_ai_button.pack(fill=X, pady=(15, 0))
         if not models:
-            start_button.configure(state=DISABLED)
+            self.start_ai_button.configure(state=DISABLED)
 
-    def create_board(self, ag_ai=False):
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
+
+        Label(panel, text="No engine selected: the board is\nfree to play locally, move by move.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
+        Button(panel, text="New Local Game", command=self.reset_board).pack(fill=X)
+
+    def _open_model_picker(self):
+        models = list_models()
+        if not models:
+            return
+
+        picker = Toplevel(self.root)
+        picker.title("Select Model")
+        picker.geometry("300x400")
+        picker.transient(self.root)
+        picker.grab_set()
+
+        Label(picker, text="Select a model:", font=("Helvetica", 12, "bold")).pack(anchor="w", padx=10, pady=(10, 5))
+
+        list_frame = Frame(picker)
+        list_frame.pack(fill=BOTH, expand=True, padx=10)
+
+        scrollbar = Scrollbar(list_frame, orient=VERTICAL)
+        listbox = Listbox(list_frame, yscrollcommand=scrollbar.set, exportselection=False)
+        scrollbar.configure(command=listbox.yview)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        listbox.pack(side=LEFT, fill=BOTH, expand=True)
+
+        for m in models:
+            listbox.insert(END, m)
+
+        current = self.setup_model_var.get()
+        if current in models:
+            idx = models.index(current)
+            listbox.selection_set(idx)
+            listbox.see(idx)
+
+        def choose(event=None):
+            sel = listbox.curselection()
+            if sel:
+                self.setup_model_var.set(models[sel[0]])
+            picker.destroy()
+
+        listbox.bind("<Double-Button-1>", choose)
+
+        btn_row = Frame(picker)
+        btn_row.pack(fill=X, padx=10, pady=10)
+        Button(btn_row, text="Select", command=choose).pack(side=RIGHT)
+        Button(btn_row, text="Cancel", command=picker.destroy).pack(side=RIGHT, padx=(0, 5))
+
+    def _build_analysis_panel(self):
+        panel = Frame(self.sideFrame)
+        self.analysisPanel = panel
+
+        Label(panel, text="Engine Analysis", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+        self.variationLabel = Label(panel, text="Top line: -", font=("Helvetica", 11),
+                                     wraplength=260, justify=LEFT, anchor="w")
+        self.variationLabel.pack(fill=X, pady=5, anchor="w")
+        self.winProbLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
+        self.winProbLabel.pack(fill=X, pady=5, anchor="w")
+        self.scoreLabel = Label(panel, text="Expected score diff: -", font=("Helvetica", 12), anchor="w")
+        self.scoreLabel.pack(fill=X, pady=5, anchor="w")
+        self.moveTimeLabel = Label(panel, text="Move time: -", font=("Helvetica", 12), anchor="w")
+        self.moveTimeLabel.pack(fill=X, pady=5, anchor="w")
+
+        Button(panel, text="End Game / Back to Setup", command=self.end_ai_game).pack(fill=X, pady=(20, 0))
+
+    def _show_setup_panel(self):
+        self.analysisPanel.pack_forget()
+        self.setupPanel.pack(fill=X)
+
+    def _show_analysis_panel(self):
+        self.setupPanel.pack_forget()
+        self.analysisPanel.pack(fill=X)
+
+    def start(self):
+        """Open the main window with a freely playable board and the setup panel."""
         self.boardFrame.grid(row=0, column=0, sticky="n")
+        self.sideFrame.grid(row=0, column=1, sticky="n", padx=20, pady=20)
         self.canvas.pack()
         self.passButton.pack()
         self.passButton.configure(command=self.on_pass)
@@ -538,31 +606,27 @@ class Game:
 
         for i in range(self.boardSize):
             self.canvas.create_line(i * self.delta + self.m, self.m, i * self.delta + self.m,
-                               (self.boardSize - 1) * self.delta + self.m)
+                               (self.boardSize - 1) * self.delta + self.m, tags="grid")
             self.canvas.create_line(self.m, i * self.delta + self.m, (self.boardSize - 1) * self.delta + self.m,
-                               i * self.delta + self.m)
+                               i * self.delta + self.m, tags="grid")
 
         self._draw_star_points()
 
         for i in self.neutral:
             self.canvas.create_image(self.m + i[0] * self.delta - self.stone_size / 2,
                                      self.m + i[1] * self.delta - self.stone_size / 2,
-                        anchor=NW, image=self.stones[2])
+                        anchor=NW, image=self.stones[2], tags="neutral")
             self.on_stone[i[0]][i[1]] = True
 
         for i in range(self.boardSize):
             for j in range(self.boardSize):
                 self.cord[i][j] = (self.m + i * self.delta, self.m + j * self.delta)
 
-        self.against_ai = ag_ai
         self.canvas.bind("<Button-1>", self.on_click)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        if self.against_ai:
-            self.sideFrame.grid(row=0, column=1, sticky="n", padx=20, pady=20)
-            self._update_status()
-            self.root.after(100, self.poll_engine)
-            self.root.after(100, self.poll_stats)
+        self._show_setup_panel()
+        self._update_status()
 
     def _draw_star_points(self):
         if self.boardSize < 7:
@@ -576,20 +640,20 @@ class Game:
         for x, y in points:
             cx = self.m + x * self.delta
             cy = self.m + y * self.delta
-            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="black", outline="black")
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="black", outline="black", tags="star")
 
     def _place_stone(self, x, y, color_idx):
         x_loc = self.m + x * self.delta
         y_loc = self.m + y * self.delta
         self.canvas.create_image(x_loc - self.stone_size / 2, y_loc - self.stone_size / 2,
-                                 anchor=NW, image=self.stones[color_idx])
+                                 anchor=NW, image=self.stones[color_idx], tags="stone")
         self.on_stone[x][y] = True
 
     def _update_status(self):
         if self.game_over:
             return
         if not self.against_ai:
-            self.statusLabel.configure(text="")
+            self.statusLabel.configure(text="Black to move" if self.turn == 0 else "White to move")
         elif self.human_color == self.turn:
             self.statusLabel.configure(text="your turn")
         else:
@@ -643,12 +707,44 @@ class Game:
             self._update_status()
             return
 
+    def reset_board(self):
+        """Clear the board and start a fresh local (no engine) game."""
+        if self.engine is not None:
+            self.engine.close()
+            self.engine = None
+        self.canvas.delete("stone")
+        self.rule = RuleManager()
+        self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
+        self.turn = 0
+        self.game_over = False
+        self.against_ai = False
+        self.human_color = 0
+        self.statusLabel.configure(text="")
+        self._show_setup_panel()
+        self._update_status()
+
     # human_color: 0 for black, 1 for white
-    def play_ai(self, human_color=0, model='H96000B.pt', build_dir=BUILD_DIR):
+    def start_ai_game(self, human_color=None, model=None, build_dir=BUILD_DIR):
+        if model is None:
+            model = self.setup_model_var.get()
+        if not model:
+            return
+        if human_color is None:
+            human_color = 0 if self.setup_color_var.get() == "black" else 1
+
+        self.reset_board()
         self.human_color = human_color
         engine_color = ENGINE_BLACK if human_color == 0 else ENGINE_WHITE
         self.engine = EngineProcess(model, engine_color, build_dir=build_dir)
-        self.create_board(ag_ai=True)
+        self.against_ai = True
+
+        self._show_analysis_panel()
+        self._update_status()
+        self.root.after(100, self.poll_engine)
+        self.root.after(100, self.poll_stats)
+
+    def end_ai_game(self):
+        self.reset_board()
 
     def poll_engine(self):
         if not self.against_ai or self.game_over:
@@ -814,5 +910,5 @@ class Game:
 # RuleManager.penalty = 0
 if __name__ == "__main__":
     g = Game()
-    g.show_setup_screen()
+    g.start()
     g.root.mainloop()
