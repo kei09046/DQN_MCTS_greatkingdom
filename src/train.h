@@ -50,13 +50,13 @@ private:
 public:
     std::deque<std::shared_ptr<TrainData>>* gameBuffer;
 	std::vector<float>* state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch;
-	std::vector<Wintype>* type_batch;
+	std::vector<Trainhead>* type_batch;
 
 	TrainPipeline(std::string init_model, std::string test_model, bool gpu = false);
 
 	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // used during training
 
-	void insertData(const TrainData& data);
+	void insertData(TrainData& data, const int& forced = 0, const bool& only = false);
 
 	void train();
 

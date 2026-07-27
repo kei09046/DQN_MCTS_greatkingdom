@@ -13,24 +13,24 @@ at_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
 at_bn3(torch::nn::BatchNorm2d(32)),
 at_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
 at_bn4(torch::nn::BatchNorm2d(2)),
-at_fc1(2 * inputSize, 256),
-at_fc2(256, outputSize),
+at_fc1(2 * inputSize, outputSize),
+//at_fc2(256, outputSize),
 
 // Value head
 v_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
 v_bn3(torch::nn::BatchNorm2d(32)),
 v_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
 v_bn4(torch::nn::BatchNorm2d(2)),
-v_fc1(2 * inputSize, 256),
-v_fc2(256, 1),
+v_fc1(2 * inputSize, 1),
+//v_fc2(256, 1),
 
 // Score diff head
 sc_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
 sc_bn3(torch::nn::BatchNorm2d(32)),
 sc_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
 sc_bn4(torch::nn::BatchNorm2d(2)),
-sc_fc1(2 * inputSize, 256),
-sc_fc2(256, 1),
+sc_fc1(2 * inputSize, 1),
+//sc_fc2(256, 1),
 
 // score map head
 sc_map_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
@@ -57,21 +57,21 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("at_cv4", at_cv4);
 	register_module("at_bn4", at_bn4);
 	register_module("at_fc1", at_fc1);
-	register_module("at_fc2", at_fc2);
+	// register_module("at_fc2", at_fc2);
 
 	register_module("v_cv3", v_cv3);
 	register_module("v_bn3", v_bn3);
 	register_module("v_cv4", v_cv4);
 	register_module("v_bn4", v_bn4);
 	register_module("v_fc1", v_fc1);
-	register_module("v_fc2", v_fc2);
+	// register_module("v_fc2", v_fc2);
 
 	register_module("sc_cv3", sc_cv3);
 	register_module("sc_bn3", sc_bn3);
 	register_module("sc_cv4", sc_cv4);
 	register_module("sc_bn4", sc_bn4);
 	register_module("sc_fc1", sc_fc1);
-	register_module("sc_fc2", sc_fc2);
+	// register_module("sc_fc2", sc_fc2);
 
 	register_module("sc_map_cv3", sc_map_cv3);
 	register_module("sc_map_bn3", sc_map_bn3);
@@ -93,22 +93,22 @@ NNOutput Net::forward(const torch::Tensor& state)
 	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
 	log_act = at_bn4(at_cv4(log_act));
 	log_act = log_act.view({ -1, 2 * inputSize });
-	log_act = torch::nn::functional::relu(at_fc1(log_act));
-	log_act = at_fc2(log_act);
+	//log_act = torch::nn::functional::relu(at_fc1(log_act));
+	log_act = at_fc1(log_act);
 
 	// value head
 	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
 	val = v_bn4(v_cv4(val));
 	val = val.view({-1, 2 * inputSize});
-	val = torch::nn::functional::relu(v_fc1(val));
-	val = v_fc2(val).tanh();
+	//val = torch::nn::functional::relu(v_fc1(val));
+	val = v_fc1(val).tanh();
 
 	// score head
 	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
 	score = sc_bn4(sc_cv4(score));
 	score = score.view({-1, 2 * inputSize});
-	score = torch::nn::functional::relu(sc_fc1(score));
-	torch::Tensor exp_score_diff = sc_fc2(score);
+	//score = torch::nn::functional::relu(sc_fc1(score));
+	torch::Tensor exp_score_diff = sc_fc1(score);
 
 	// score map head
 	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn3(sc_map_cv3(x)));
@@ -566,7 +566,7 @@ std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float
 }
 
 std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
-		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Wintype>& type_batch, float lr){
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr){
 
 	int B = result_batch.size();
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
@@ -592,13 +592,16 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		options).to(device);
 
 	auto mask = torch::from_blob(type_batch.data(), {B, 1}, torch::kUInt8).to(device);
-	auto smask = (mask == SCORE);
-	auto sm_mask = (mask == SCORE).unsqueeze(-1).unsqueeze(-1);
-	auto cap_mask = (mask == CAPTURE).unsqueeze(-1).unsqueeze(-1);
 
+	auto pmask = (mask & POLICYHEAD).to(torch::kBool);
+	auto smask = (mask & SCOREHEAD).to(torch::kBool);
+	auto sm_mask = (mask & SMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
+	auto cap_mask = (mask & CMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
+
+	auto policy_active_elements = pmask.sum().item<float>() + 1e-8f;
 	auto score_active_elements = smask.sum().item<float>() + 1e-8f;
-	auto smap_active_elements = score_active_elements * outputRow * outputCol;
-	auto cap_active_elements = (mask == CAPTURE).sum().item<float>() * outputRow * outputCol + 1e-8f;
+	auto smap_active_elements = sm_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
+	auto cap_active_elements = cap_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
 
 	sd *= smask;
 	auto smap = map * sm_mask;
@@ -624,7 +627,8 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		// } 
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
-		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
+		torch::Tensor policy_loss_per_sample = -torch::sum(mp * log_move_probs, 1, /*keepdim=*/true); // [B, 1]
+		torch::Tensor policy_loss = (policy_loss_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements;
 
 		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
 

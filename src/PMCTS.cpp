@@ -369,7 +369,7 @@ MoveData Node::selectMoveProb(float temp){
 
     if(forcedState == -1){
         assert(availableMoves.empty());
-        return {RESIGNMOVE, visitPortion};
+        return {RESIGNMOVE, visitPortion, forcedState, 1};
     }
 
     if(forcedState > 0){
@@ -409,7 +409,7 @@ MoveData Node::selectMoveProb(float temp){
         selectedMove = availableMoves[index];
     }
 
-    return {selectedMove, visitPortion};
+    return {selectedMove, visitPortion, forcedState, availableMoves.size() == 1};
 }
 
 Node* Node::jump(Move move){

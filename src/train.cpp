@@ -8,7 +8,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
 	map_batch = new std::vector<float>(globalConfig.batchSize * boardSize);
-	type_batch = new std::vector<Wintype>(globalConfig.batchSize);
+	type_batch = new std::vector<Trainhead>(globalConfig.batchSize);
 
 	gameBuffer = new std::deque<std::shared_ptr<TrainData>>();
 	
@@ -30,11 +30,12 @@ TrainPipeline::TrainPipeline(std::string init_model,
 
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
-	MoveData moveProb;
 	InputMatrix state;
 
 	std::vector<Move> sequence;
 	std::vector<TrainData> buffer;
+	std::vector<int> forced;
+	std::vector<bool> only; 
 
 	#ifdef measureTime
 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -42,24 +43,23 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 	while (true) {
 		state = PolicyValueNet::getData(game_manager);
-		moveProb = player->getMoveProb(temp);
-		Move m = std::get<0>(moveProb);
+		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
 		//printMove(m);
+
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
 
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
 			// add placeHolder value to buffer
-			buffer.emplace_back(state, std::get<1>(moveProb), 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
+			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
+			forced.push_back(forcedState);
+			only.push_back(isOnlyMove);
 		}
 		else{ // Agent only resigns when capture is unavoidable.
 			wintype = CAPTURE;
 		}
 
 		if (winner == EMPTY) {
-			// add placeHolder value to buffer
-			// buffer.emplace_back(state, std::get<1>(moveProb), 0, 0.0f, std::vector<float>(boardSize, 0.0f), -1);
-
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl;
 				ModelCompare::displayBoardGUI(false, game_manager);
@@ -122,7 +122,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				for(const auto& move : sequence){
 					std::get<2>(buffer[idx]) = result;
 					std::get<3>(buffer[idx]) = score_diff;
-					std::get<5>(buffer[idx]) = NONE;
+					std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
+
 					insertData(buffer[idx]);
 
 					// set up data after move.
@@ -151,7 +152,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::get<2>(buffer[idx]) = result;
 					std::get<3>(buffer[idx]) = score_diff;
 					std::get<4>(buffer[idx]) = maskedMap;
-					std::get<5>(buffer[idx]) = CAPTURE;
+					std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
 					insertData(buffer[idx]);
 
 					// set up data after move. Terminal state is not included.
@@ -178,7 +179,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::get<2>(data) = result;
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[idx];
-					std::get<5>(data) = SCORE;
+					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | CMAPHEAD | SMAPHEAD;
 					insertData(data);
 					result = -result; // switch color
 					score_diff = -score_diff;
@@ -192,7 +193,13 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	}
 }
 
-void TrainPipeline::insertData(const TrainData& data) {
+void TrainPipeline::insertData(TrainData& data, const int& forced, const bool& only) {
+	// if forced < 0 -> don't train policy head.
+	// if forced = 0 and only = true -> don't train policy head.
+	// if forced > 0 -> maybe add another copy?
+	if(forced < 0 || (forced == 0 && only))
+		std::get<5>(data) &= ~POLICYHEAD;
+
 	std::vector<std::shared_ptr<TrainData>> rotatedData = generateDihedralTransformations(data);
 
 	buffer_mutex.lock();
@@ -439,7 +446,7 @@ void TrainPipeline::setLearningRate(const int games_played){
 }
 
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
-	// TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Wintype>
+	// TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Trainhead>
 	const auto& [boardState, policy, value, score, map, wintype] = *data;
 
 	char display[rowSize][colSize];

@@ -126,7 +126,7 @@ public:
 		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 	
 	std::tuple<float, float, float, float, float> train(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
-		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Wintype>& type_batch, float lr);
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr);
 
 	void save_model(const std::string& model_file) const;
 

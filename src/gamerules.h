@@ -24,6 +24,13 @@ struct SegInfo{
     std::bitset<4> adjEdge;
 };
 
+enum Wintype{
+    SCORE,
+    CAPTURE,
+    RESIGN,
+    NONE
+};
+
 
 class Game{
 public:
