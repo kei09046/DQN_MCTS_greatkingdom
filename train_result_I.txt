@@ -1,0 +1,59 @@
+starting ...
+Model loaded: ../models/none
+Model loaded: ../models/none
+Model loaded: ../models/none
+/pytorch/aten/src/ATen/native/cuda/ScatterGatherKernel.cu:409: operator(): block: [0,0,0], thread: [0,0,0] Assertion `idx_dim >= 0 && idx_dim < index_size && "index out of bounds"` failed.
+/pytorch/aten/src/ATen/native/cuda/ScatterGatherKernel.cu:409: operator(): block: [0,0,0], thread: [1,0,0] Assertion `idx_dim >= 0 && idx_dim < index_size && "index out of bounds"` failed.
+/pytorch/aten/src/ATen/native/cuda/ScatterGatherKernel.cu:409: operator(): block: [0,0,0], thread: [59,0,0] Assertion `idx_dim >= 0 && idx_dim < index_size && "index out of bounds"` failed.
+/pytorch/aten/src/ATen/native/cuda/ScatterGatherKernel.cu:409: operator(): block: [0,0,0], thread: [124,0,0] Assertion `idx_dim >= 0 && idx_dim < index_size && "index out of bounds"` failed.
+/pytorch/aten/src/ATen/native/cuda/ScatterGatherKernel.cu:409: operator(): block: [0,0,0], thread: [125,0,0] Assertion `idx_dim >= 0 && idx_dim < index_size && "index out of bounds"` failed.
+
+6,4 5,1 5,2 5,8 6,8 6,0 7,0 2,3 1,1 0,6 8,2 5,5 7,2 4,3 2,4 4,5 6,1 6,5 5,0 
+episode length : 19 winner : 1 wintype : 1 score diff : -3
+
+
+2,1 1,1 0,5 5,8 4,6 0,8 6,3 4,2 2,2 5,3 4,8 5,0 8,2 1,5 0,7 6,1 1,8 
+episode length : 17 winner : 1 wintype : 1 score diff : -0
+
+
+8,8 0,8 2,1 4,3 5,8 4,1 3,4 2,2 1,2 1,4 6,4 5,3 3,2 3,0 2,3 
+episode length : 15 winner : 1 wintype : 1 score diff : -0
+
+
+3,5 4,8 0,5 5,3 2,0 1,0 6,4 3,4 5,2 3,2 1,6 6,5 2,7 5,6 3,8 6,8 4,3 8,6 2,5 7,7 8,1 3,6 7,5 2,3 4,1 5,7 2,4 0,3 3,3 
+episode length : 29 winner : 1 wintype : 1 score diff : -2
+
+terminate called after throwing an instance of 'c10::AcceleratorError'
+  what():  CUDA error: device-side assert triggered
+Search for `cudaErrorAssert' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9c (0x73e1483a8bcc in /home/myungkyo/libtorch/lib/libc10.so)
+frame #1: <unknown function> + 0x18ef9 (0x73e107d54ef9 in /home/myungkyo/libtorch/lib/libc10_cuda.so)
+frame #2: void at::native::nonzero_cuda_out_impl<bool>(at::Tensor const&, at::Tensor&) + 0x37e (0x73e10a1866ce in /home/myungkyo/libtorch/lib/libtorch_cuda.so)
+frame #3: at::native::nonzero_out_cuda(at::Tensor const&, at::Tensor&) + 0x4c0 (0x73e10a1313c0 in /home/myungkyo/libtorch/lib/libtorch_cuda.so)
+frame #4: at::native::nonzero_cuda(at::Tensor const&) + 0x27e (0x73e10a13184e in /home/myungkyo/libtorch/lib/libtorch_cuda.so)
+frame #5: <unknown function> + 0x379c914 (0x73e10b59c914 in /home/myungkyo/libtorch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0x379ca05 (0x73e10b59ca05 in /home/myungkyo/libtorch/lib/libtorch_cuda.so)
+frame #7: at::_ops::nonzero::redispatch(c10::DispatchKeySet, at::Tensor const&) + 0x83 (0x73e13427b323 in /home/myungkyo/libtorch/lib/libtorch_cpu.so)
+frame #8: <unknown function> + 0x54e7792 (0x73e136ee7792 in /home/myungkyo/libtorch/lib/libtorch_cpu.so)
+frame #9: <unknown function> + 0x54e7808 (0x73e136ee7808 in /home/myungkyo/libtorch/lib/libtorch_cpu.so)
+frame #10: at::_ops::nonzero::call(at::Tensor const&) + 0x17c (0x73e1342df15c in /home/myungkyo/libtorch/lib/libtorch_cpu.so)
+frame #11: <unknown function> + 0xaed05 (0x5d75eb03ed05 in ./play)
+frame #12: <unknown function> + 0xb7930 (0x5d75eb047930 in ./play)
+frame #13: <unknown function> + 0xc0c6b (0x5d75eb050c6b in ./play)
+frame #14: <unknown function> + 0x9dda4 (0x5d75eb02dda4 in ./play)
+frame #15: <unknown function> + 0xa04e3 (0x5d75eb0304e3 in ./play)
+frame #16: <unknown function> + 0x7400d (0x5d75eb00400d in ./play)
+frame #17: <unknown function> + 0x7deb4 (0x5d75eb00deb4 in ./play)
+frame #18: <unknown function> + 0x7ddf5 (0x5d75eb00ddf5 in ./play)
+frame #19: <unknown function> + 0x7dd39 (0x5d75eb00dd39 in ./play)
+frame #20: <unknown function> + 0x7dce8 (0x5d75eb00dce8 in ./play)
+frame #21: <unknown function> + 0x7dc9e (0x5d75eb00dc9e in ./play)
+frame #22: <unknown function> + 0xecdb4 (0x73e1076ecdb4 in /lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #23: <unknown function> + 0x9cb84 (0x73e10729cb84 in /lib/x86_64-linux-gnu/libc.so.6)
+frame #24: <unknown function> + 0x129d6c (0x73e107329d6c in /lib/x86_64-linux-gnu/libc.so.6)
+
