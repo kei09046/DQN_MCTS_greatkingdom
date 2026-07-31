@@ -54,6 +54,24 @@ public:
         int64_t num_elements = x.size(1);
         int64_t max_groups = first_indices.size(1);
 
+        // debug: catch out-of-range group_ids/first_indices synchronously here, before the async
+        // CUDA scatter/gather kernels below turn a bad index into an opaque device-side assert.
+        {
+            int64_t max_gid = group_ids.max().item<int64_t>();
+            int64_t min_gid = group_ids.min().item<int64_t>();
+            int64_t max_fi = first_indices.max().item<int64_t>();
+            int64_t min_fi = first_indices.min().item<int64_t>();
+            if(max_gid >= max_groups || min_gid < -1 || max_fi >= num_elements || min_fi < -1){
+                std::cerr << "BAD CONVERTER INPUT: max_gid=" << max_gid << " min_gid=" << min_gid
+                          << " max_fi=" << max_fi << " min_fi=" << min_fi
+                          << " max_groups=" << max_groups << " num_elements=" << num_elements
+                          << " batch_size=" << batch_size << std::endl;
+                std::cerr << "group_ids:\n" << group_ids.to(torch::kCPU) << std::endl;
+                std::cerr << "first_indices:\n" << first_indices.to(torch::kCPU) << std::endl;
+                std::abort();
+            }
+        }
+
         // 1. Isolate valid group elements and mask omitted elements (-1) to -inf
         auto valid_elements_mask = (group_ids != -1);
         auto inf_tensor = torch::full_like(x, -std::numeric_limits<float>::infinity());
