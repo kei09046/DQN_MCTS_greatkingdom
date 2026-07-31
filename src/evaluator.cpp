@@ -27,18 +27,19 @@ void Evaluator::HandlerWork() {
         std::vector<PolicyValueOutput> outputs;
         // std::cerr << "attempting batch evaluation" << std::endl;
 
-        try{
-            outputs = net->batchEvaluate(batchGames);
-            //std::cerr << "Batch evaluated successfully" << std::endl;
-        }catch(const c10::Error& e){
-            std::cerr << "batch evaluate failed. retrying..." << std::endl << e.what() << std::endl;
-            try{
-                outputs = net->batchEvaluate(batchGames);
-            }catch(const c10::Error& e2){
-                std::cerr << "retry failed as well. attempting backupEvaluation" << std::endl;
-                outputs = net->backupEvaluate(batchGames);
-            }
-        }
+        outputs = net->batchEvaluate(batchGames);
+        // try{
+        //     outputs = net->batchEvaluate(batchGames);
+        //     //std::cerr << "Batch evaluated successfully" << std::endl;
+        // }catch(const c10::Error& e){
+        //     std::cerr << "batch evaluate failed. retrying..." << std::endl << e.what() << std::endl;
+        //     try{
+        //         outputs = net->batchEvaluate(batchGames);
+        //     }catch(const c10::Error& e2){
+        //         std::cerr << "retry failed as well. attempting backupEvaluation" << std::endl;
+        //         outputs = net->backupEvaluate(batchGames);
+        //     }
+        // }
         // std::cerr << "Batch evaluated successfully" << std::endl;
 
         // write results back & notify

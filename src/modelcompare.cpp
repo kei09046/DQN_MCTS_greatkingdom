@@ -201,30 +201,27 @@ void ModelCompare::playHuman() {
 		displayBoardGUI(true, game_manager);
 		std::cout << std::endl;
 
-		auto [onlymove, forcedState] = experiment.threatCheck();
-		if(onlymove != RESIGNMOVE){
-			std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
-			<< " " << static_cast<int>(onlymove.second) << std::endl;
-		}
-		auto [win, moves, transtable] = experiment.expand(onlymove);
+		// auto [onlymove, forcedState] = experiment.threatCheck();
+		// if(onlymove != RESIGNMOVE){
+		// 	std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
+		// 	<< " " << static_cast<int>(onlymove.second) << std::endl;
+		// }
+		experiment.setPolicyMask();
+		const auto& moves = experiment.getAvailableMoves();
+		const auto& transTable = experiment.getTransferTable();
 		
-		if(moves.size() == 1){
-			std::cout << "only one possible move! " << static_cast<int>(moves[0].first) 
-			<< " " << static_cast<int>(moves[0].second) << std::endl;
-		}
-
 		int idx;
 		for(idx = 0; idx < moves.size(); ++idx)
-			if(moves[idx] == Move{r, c})
+			if(moves[idx] == r * colSize + c)
 				break;
 
 		std::cout << "move idx : " << idx << std::endl;
 		std::cout << "trans table : ";
-		for(const auto& m : transtable[idx])
-			std::cout << static_cast<int>(m / colSize) << static_cast<int>(m % colSize) << " ";
+		for(auto m : transTable)
+			std::cout << m << " ";
 		std::cout << std::endl;
 		 
-		experiment.makeMoveGivenScore(cord, transtable[idx]);
+		experiment.makeMoveGivenScore(cord);
 		displayBoardGUI(true, experiment);
 		std::cout << std::endl;
 

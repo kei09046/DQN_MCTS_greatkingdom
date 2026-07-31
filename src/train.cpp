@@ -4,6 +4,8 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
 	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
+	available_batch = new std::vector<float>(globalConfig.batchSize * (boardSize + 1));
+	transfer_batch = new std::vector<float>(globalConfig.batchSize * (boardSize + 1));
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
@@ -30,7 +32,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
-	InputMatrix state;
+	NNInput state;
 
 	std::vector<Move> sequence;
 	std::vector<TrainData> buffer;
@@ -42,9 +44,54 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	#endif
 
 	while (true) {
+		game_manager.setPolicyMask();
 		state = PolicyValueNet::getData(game_manager);
+
+		// debug: dump game_manager vs MCTS root state when root is stuck in a terminated forcedState
+		// if(player->rootForcedState() == -1 || player->rootForcedState() == 1){
+		// 	std::cerr << "==== about to hit \"terminated position\" assertion, root forcedState : " << player->rootForcedState() << " ====" << std::endl;
+
+		// 	std::cerr << "--- game_manager state ---" << std::endl;
+		// 	ModelCompare::displayBoardGUI(true, game_manager);
+
+		// 	std::cerr << "--- MCTS root's internal game state ---" << std::endl;
+		// 	ModelCompare::displayBoardGUI(true, player->currentGame());
+
+		// 	std::cerr << "root available moves : ";
+		// 	for(int mv : player->currentGame().getAvailableMoves())
+		// 		std::cerr << mv << " ";
+		// 	std::cerr << std::endl;
+
+		// 	std::cerr << "root transfer table : ";
+		// 	for(int g : player->currentGame().getTransferTable())
+		// 		std::cerr << g << " ";
+		// 	std::cerr << std::endl;
+		// }
+
 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
 		//printMove(m);
+
+		// debug: dump game_manager vs MCTS root state when the chosen move is illegal on game_manager
+		// if(m != RESIGNMOVE && m != PASSMOVE && !game_manager.isLegal(m.first, m.second)){
+		// 	std::cerr << "==== about to play illegal move : " << static_cast<int>(m.first) << "," << static_cast<int>(m.second) << " ====" << std::endl;
+
+		// 	std::cerr << "--- game_manager state ---" << std::endl;
+		// 	ModelCompare::displayBoardGUI(true, game_manager);
+
+		// 	const Game& rootGame = player->currentGame();
+		// 	std::cerr << "--- MCTS root's internal game state ---" << std::endl;
+		// 	ModelCompare::displayBoardGUI(true, rootGame);
+
+		// 	std::cerr << "root available moves : ";
+		// 	for(int mv : rootGame.getAvailableMoves())
+		// 		std::cerr << mv << " ";
+		// 	std::cerr << std::endl;
+
+		// 	std::cerr << "root transfer table : ";
+		// 	for(int g : rootGame.getTransferTable())
+		// 		std::cerr << g << " ";
+		// 	std::cerr << std::endl;
+		// }
 
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
 
@@ -250,10 +297,17 @@ void TrainPipeline::train(){
 			const auto& map = std::get<4>(data);
 
 			int state_offset = i * globalConfig.inputChannel * inputSize;
+			int available_offset = i * (boardSize + 1);
+			int transfer_offset = i * (boardSize + 1);
 			int move_offset  = i * outputSize;
 			int map_offset = i * boardSize;
 
-			std::copy(state.begin(), state.end(), state_batch->begin() + state_offset);
+			// NN inputs
+			std::copy(std::get<0>(state).begin(), std::get<0>(state).end(), state_batch->begin() + state_offset);
+			std::copy(std::get<1>(state).begin(), std::get<1>(state).end(), available_batch->begin() + available_offset);
+			std::copy(std::get<2>(state).begin(), std::get<2>(state).end(), transfer_batch->begin() + transfer_offset);
+
+			// NN outputs
 			std::copy(nextmove.begin(), nextmove.end(), nextmove_batch->begin() + move_offset);
 			(*result_batch)[i] = std::get<2>(data);
 			(*score_batch)[i] = std::get<3>(data);
@@ -261,7 +315,8 @@ void TrainPipeline::train(){
 			(*type_batch)[i] = std::get<5>(data);
 		}
 		
-		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
+		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch, *available_batch, *transfer_batch,
+			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		train_losses[0].push_back(pLoss);
 		train_losses[1].push_back(vLoss);
 		train_losses[2].push_back(sLoss);
@@ -446,8 +501,9 @@ void TrainPipeline::setLearningRate(const int games_played){
 }
 
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
-	// TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Trainhead>
-	const auto& [boardState, policy, value, score, map, wintype] = *data;
+	// TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead>
+	const auto& [state, policy, value, score, map, wintype] = *data;
+	const auto& [boardState, moveState, transState] = state;
 
 	char display[rowSize][colSize];
     for(int i=0; i<rowSize; ++i){

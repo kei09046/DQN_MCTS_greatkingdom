@@ -15,7 +15,7 @@ namespace{
 }
 
 
-Game::Game() : moveCount(0){
+Game::Game() : moveCount(0), possibleMoves(), pTransferGroups(boardSize + 1, -1){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
@@ -78,7 +78,14 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
     return {EMPTY, NONE};
 }
 
-Color Game::makeMoveGivenScore(const Move& move, const std::vector<uint8_t>& acquired){
+Color Game::makeMoveGivenScore(const Move& move){
+    std::vector<int> acquired;
+    int moveInt = move.first * colSize + move.second;
+    for(int i=0; i<pTransferGroups.size(); ++i){
+        if(i != moveInt && pTransferGroups[i] == pTransferGroups[moveInt])
+            acquired.push_back(i);
+    }
+
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
 
@@ -188,6 +195,77 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
     return {EMPTY, NONE, {}};
 }
 
+void Game::setPolicyMask(){
+    possibleMoves.clear();
+    std::fill(pTransferGroups.begin(), pTransferGroups.end(), -1);
+
+    int groupCntr = -1;
+
+    std::bitset<boardSize> potScore;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbeScore(i, j, currentTurn));
+        }
+    }
+
+    const auto segTable = segmentTable(potScore);
+    const auto& segIdx = segTable.second;
+    std::bitset<boardSize> acquiredSeg;
+
+    std::array<std::bitset<boardSize>, boardSize> buffer;
+    // push back possible moves
+    std::vector<uint8_t> nonEmptySquaresIdx;
+    for(uint8_t i=0U; i<boardSize; ++i){
+        if(isLegal(i / colSize, i % colSize))
+            nonEmptySquaresIdx.push_back(i);
+    }
+
+    for(const auto i : nonEmptySquaresIdx){
+        // if(segIdx[i] < 0 || segIdx[i] >= 81){
+        //     for(int j=0; j<rowSize; ++j){
+        //         for(int k=0; k<colSize; ++k){
+        //             std::cerr << static_cast<int>(segIdx[j * colSize + k]);
+        //         }
+        //         std::cerr << std::endl;
+        //     }
+        // }
+
+        if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
+            auto acquired = checkScore(i/colSize, i%colSize, currentTurn, segTable);
+            acquiredSeg |= acquired;
+            buffer[i] = acquired;
+        }
+    }
+
+    for(const auto i : nonEmptySquaresIdx){
+        // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
+        if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
+            possibleMoves.push_back(i);
+            pTransferGroups.at(i) = ++groupCntr;
+
+            // if territory is gained.
+            if(!buffer[i].none()){
+                for(const auto j : nonEmptySquaresIdx){
+                    if((segIdx[j] != 255U) && buffer[i].test(segIdx[j]))
+                        pTransferGroups.at(j) = groupCntr;
+                }
+            }
+        }
+    }
+    if(scoreWinner() == currentTurn){
+        possibleMoves.push_back(PASSMOVE.first * colSize + PASSMOVE.second);
+        pTransferGroups.at(boardSize) = ++groupCntr;
+    }
+}
+
+const std::vector<int>& Game::getAvailableMoves() const{
+    return possibleMoves;
+} 
+
+const std::vector<int>& Game::getTransferTable() const{
+    return pTransferGroups;
+}
+
 std::pair<Move, int> Game::threatCheck() const{
     Move threat = RESIGNMOVE;
 
@@ -239,142 +317,130 @@ std::pair<Move, int> Game::threatCheck() const{
     return {threat, 0};
 }
 
-std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> Game::expand(const Move threat) const{
-    std::bitset<boardSize> potScore;
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbeScore(i, j, currentTurn));
-        }
-    }
+// std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> Game::expand(const Move threat) const{
+//     std::bitset<boardSize> potScore;
+//     for(int i=0; i<rowSize; ++i){
+//         for(int j=0; j<colSize; ++j){
+//             potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbeScore(i, j, currentTurn));
+//         }
+//     }
 
-    if(threat != RESIGNMOVE){
-        // first find list of possible moves.
+//     if(threat != RESIGNMOVE){
+//         // first find list of possible moves.
 
-        std::vector<Move> possibleMoves = possibleMovesWhenThreat(threat, potScore);
-        // std::cerr << "possible moves : " << std::endl;
-        // for(const auto& m : possibleMoves)
-        //     printMove(m);
+//         std::vector<Move> possibleMoves = possibleMovesWhenThreat(threat, potScore);
+//         // std::cerr << "possible moves : " << std::endl;
+//         // for(const auto& m : possibleMoves)
+//         //     printMove(m);
 
-        // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
-        const auto segTable = segmentTable(potScore);
-        const auto& segIdx = segTable.second;
-        // for(int i=0; i<rowSize; ++i){
-        //     for(int j=0; j<colSize; ++j){
-        //         std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
-        //     }
-        //     std::cerr << std::endl;
-        // }
+//         // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
+//         const auto segTable = segmentTable(potScore);
+//         const auto& segIdx = segTable.second;
+//         // for(int i=0; i<rowSize; ++i){
+//         //     for(int j=0; j<colSize; ++j){
+//         //         std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
+//         //     }
+//         //     std::cerr << std::endl;
+//         // }
 
-        const auto threatSeg = segIdx.at(threat.first * colSize + threat.second);
-        std::bitset<boardSize> acquiredSeg, threatAcquireSeg;
+//         const auto threatSeg = segIdx.at(threat.first * colSize + threat.second);
+//         std::bitset<boardSize> acquiredSeg, threatAcquireSeg;
 
-        Move bestMove;
-        std::vector<std::vector<uint8_t>> transferTable(1, std::vector<uint8_t>());
+//         Move bestMove;
+//         std::vector<std::vector<uint8_t>> transferTable(1, std::vector<uint8_t>());
 
-        // if only possible move is to play at threat, and if it can't generate any score
-        if(possibleMoves.size() == 1 && segIdx[threat.first * colSize + threat.second] == 255U){
-            assert(possibleMoves[0] == threat);
-            bestMove = threat;
-        }
+//         // if only possible move is to play at threat, and if it can't generate any score
+//         if(possibleMoves.size() == 1 && segIdx[threat.first * colSize + threat.second] == 255U){
+//             assert(possibleMoves[0] == threat);
+//             bestMove = threat;
+//         }
 
-        else{
-            // for(const auto& option : possibleMoves){
-            //     if(!acquiredSeg.test(segIdx[option.first * colSize + option.second])){
-            //         const std::bitset<boardSize> acquired = checkScore(option.first, option.second, currentTurn, segTable);
-            //         acquiredSeg |= acquired;
-            //         // if option == threat, it means that no other move made threat a territory.
-            //         if(acquired[threatSeg] || (option == threat)){
-            //             bestMove = option;
-            //             threatAcquireSeg = acquired;
-            //             // Q : can I break here?
-            //         }
-            //     }
-            // }
+//         else{
+//             for(const auto& option : possibleMoves){
+//                 const std::bitset<boardSize> acquired = checkScore(option.first, option.second, currentTurn, segTable);
+//                 acquiredSeg |= acquired;
+//                 // if option == threat, it means that no other move made threat a territory.
+//                 if(acquired[threatSeg] || (option == threat)){
+//                     bestMove = option;
+//                     threatAcquireSeg = acquired;
+//                     // can break here. Not a bug.
+//                     break;
+//                 }
+//             }
+//         }
 
-            for(const auto& option : possibleMoves){
-                const std::bitset<boardSize> acquired = checkScore(option.first, option.second, currentTurn, segTable);
-                acquiredSeg |= acquired;
-                // if option == threat, it means that no other move made threat a territory.
-                if(acquired[threatSeg] || (option == threat)){
-                    bestMove = option;
-                    threatAcquireSeg = acquired;
-                    break;
-                }
-            }
-        }
+//         if(!threatAcquireSeg.none()){
+//             for(uint8_t i=0U; i<boardSize; ++i){
+//                 if(segIdx[i] != 255U && threatAcquireSeg.test(segIdx[i]))
+//                     transferTable[0].push_back(i);
+//             }
+//         }
 
-        if(!threatAcquireSeg.none()){
-            for(uint8_t i=0U; i<boardSize; ++i){
-                if(segIdx[i] != 255U && threatAcquireSeg.test(segIdx[i]))
-                    transferTable[0].push_back(i);
-            }
-        }
+//         assert(transferTable.size() == 1);
+//         return {{bestMove, 0}, {bestMove}, transferTable};
+//     }
 
-        assert(transferTable.size() == 1);
-        return {{bestMove, 0}, {bestMove}, transferTable};
-    }
+//     else{
+//         const auto segTable = segmentTable(potScore);
+//         const auto& segIdx = segTable.second;
+//         std::bitset<boardSize> acquiredSeg;
+//         std::vector<std::vector<uint8_t>> transferTable;
+//         std::array<std::bitset<boardSize>, boardSize> buffer;
 
-    else{
-        const auto segTable = segmentTable(potScore);
-        const auto& segIdx = segTable.second;
-        std::bitset<boardSize> acquiredSeg;
-        std::vector<std::vector<uint8_t>> transferTable;
-        std::array<std::bitset<boardSize>, boardSize> buffer;
+//         // push back possible moves
+//         std::vector<uint8_t> nonEmptySquaresIdx;
+//         for(uint8_t i=0U; i<boardSize; ++i){
+//             if(isLegal(i / colSize, i % colSize))
+//                 nonEmptySquaresIdx.push_back(i);
+//         }
 
-        // push back possible moves
-        std::vector<uint8_t> nonEmptySquaresIdx;
-        for(uint8_t i=0U; i<boardSize; ++i){
-            if(isLegal(i / colSize, i % colSize))
-                nonEmptySquaresIdx.push_back(i);
-        }
+//         for(const auto i : nonEmptySquaresIdx){
+//             // if(segIdx[i] < 0 || segIdx[i] >= 81){
+//             //     for(int j=0; j<rowSize; ++j){
+//             //         for(int k=0; k<colSize; ++k){
+//             //             std::cerr << static_cast<int>(segIdx[j * colSize + k]);
+//             //         }
+//             //         std::cerr << std::endl;
+//             //     }
+//             // }
 
-        for(const auto i : nonEmptySquaresIdx){
-            // if(segIdx[i] < 0 || segIdx[i] >= 81){
-            //     for(int j=0; j<rowSize; ++j){
-            //         for(int k=0; k<colSize; ++k){
-            //             std::cerr << static_cast<int>(segIdx[j * colSize + k]);
-            //         }
-            //         std::cerr << std::endl;
-            //     }
-            // }
+//             if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
+//                 auto acquired = checkScore(i/colSize, i%colSize, currentTurn, segTable);
+//                 acquiredSeg |= acquired;
+//                 buffer[i] = acquired;
+//             }
+//         }
 
-            if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
-                auto acquired = checkScore(i/colSize, i%colSize, currentTurn, segTable);
-                acquiredSeg |= acquired;
-                buffer[i] = acquired;
-            }
-        }
+//         std::vector<Move> possibleMoves;
+//         for(const auto i : nonEmptySquaresIdx){
+//             // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
+//             if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
+//                 possibleMoves.push_back({i / colSize, i % colSize});
+//                 transferTable.push_back({});
 
-        std::vector<Move> possibleMoves;
-        for(const auto i : nonEmptySquaresIdx){
-            // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
-            if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
-                possibleMoves.push_back({i / colSize, i % colSize});
-                transferTable.push_back({});
-
-                // if territory is gained.
-                if(!buffer[i].none()){
-                    for(const auto j : nonEmptySquaresIdx){
-                        if((segIdx[j] != 255U) && buffer[i].test(segIdx[j]))
-                            transferTable.back().push_back(j);
-                    }
-                }
-            }
-        }
-        if(scoreWinner() == currentTurn){
-            possibleMoves.push_back(PASSMOVE);
-            transferTable.push_back({});
-        }
+//                 // if territory is gained.
+//                 if(!buffer[i].none()){
+//                     for(const auto j : nonEmptySquaresIdx){
+//                         if((segIdx[j] != 255U) && buffer[i].test(segIdx[j]))
+//                             transferTable.back().push_back(j);
+//                     }
+//                 }
+//             }
+//         }
+//         if(scoreWinner() == currentTurn){
+//             possibleMoves.push_back(PASSMOVE);
+//             transferTable.push_back({});
+//         }
         
-        return {{RESIGNMOVE, 0}, possibleMoves, transferTable};
-    }
+//         return {{RESIGNMOVE, 0}, possibleMoves, transferTable};
+//     }
 
-    //std::cerr << "expand finished" << std::endl;
-    #ifdef measureTime
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
-    #endif
-}
+//     //std::cerr << "expand finished" << std::endl;
+//     #ifdef measureTime
+//     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+//     expandTime += (std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count());
+//     #endif
+// }
 
 void Game::onGameEnd(Color winner){
     std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
@@ -467,6 +533,11 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
         // else adjacent to neutral; nothing should happen
     }
 
+    if(winner == EMPTY && chains[findHead(r, c)].liberties.none()){
+        winner = reverseColor(sColor);
+        capturedChainIdx.push_back(findHead(r, c));
+    }
+
     if(winner != EMPTY){
         std::vector<float> captureMap(boardSize, 0.0f);
         for(auto idx : capturedChainIdx){
@@ -479,11 +550,6 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
         return {winner, captureMap};
     }
 
-    if(winner == EMPTY && chains[findHead(r, c)].liberties.none()){
-        winner = reverseColor(sColor);
-        capturedChainIdx.push_back(findHead(r, c));
-    }
-    
     return {EMPTY, {}};
 }
 

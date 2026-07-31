@@ -27,14 +27,6 @@ public:
 
     void deleteTree(Node* exception);
 
-    inline const std::vector<std::vector<uint8_t>>& TransferTable_() const{
-        return transferTable;
-    }
-
-    inline const std::vector<Move>& availableMoves_() const{
-        return availableMoves;
-    }
-
     inline const Game& game_() const{
         return game;
     }
@@ -42,27 +34,21 @@ public:
 private:
     friend class MCTS;
 
-    const Game game; // includes position, territory, valid moves etc. for heuristic
+    Game game; // includes position, territory, valid moves etc. for heuristic
     float N, W, initQ, S, Wp; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
     // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP, edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
-    std::vector<std::vector<uint8_t>> transferTable; 
     const Color turn;
     const HashValue hashValue; // hash value needed for transition table and evaluation hash, for each dihedral transformation
-
     std::vector<Node*> child;
-    std::vector<Move> availableMoves; // among game.isLegal() moves, consider actually useful moves.
-    Move onlyMove; // One, critical move. if forcedState > 0 -> winmove, if forcedState = 0 -> only move that does not lose by capture immediately. 
-    int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
 
+    int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
     bool expanded; // check if node has been expanded.
     std::shared_ptr<PolicyValueOutput> evaluation; // stores evaluation for this node. Used to temporarily hold evaluation.
     
     TransTable* const transposTable;
 
     void addChild(const Move& move, int idx = -1); // add child to the node. Will be added at the end by default.
-
-    void threatCheck();
 
     void expand();
 
@@ -90,6 +76,15 @@ public:
     bool jump(Move move);
 
     void reset();
+
+    // exposes the root node's internal game state, for debugging desyncs against an external mirror (e.g. TrainPipeline::game_manager).
+    inline const Game& currentGame() const{
+        return root->game_();
+    }
+
+    inline int rootForcedState() const{
+        return root->forcedState;
+    }
 
     #ifdef measureTime
     std::vector<int> getTimeStats() const;

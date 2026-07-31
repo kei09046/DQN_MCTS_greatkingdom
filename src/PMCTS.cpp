@@ -20,23 +20,14 @@ namespace{
     const Hash hash;
 
     std::vector<float> softmax(const std::vector<float>& logit, const Node* node){
-        const auto& availableMoves = node->availableMoves_();
-        const auto& transferTable = node->TransferTable_();
-
+        // edgeP/edgeN/child are indexed by position within getAvailableMoves(), not by raw
+        // board position, so the returned vector must be compacted/reindexed the same way.
+        const auto& availableMoves = node->game_().getAvailableMoves();
         const int moveSize = availableMoves.size();
-        assert(transferTable.size() == moveSize);
-        std::vector<float> n_logit(moveSize);
 
-        std::vector<int> maxIdx(moveSize);
+        std::vector<float> n_logit(moveSize);
         for(int i=0; i<moveSize; ++i){
-            n_logit[i] = logit[availableMoves[i].first * colSize + availableMoves[i].second];
-            maxIdx[i] = availableMoves[i].first * colSize + availableMoves[i].second;
-            for(int j : transferTable[i]){
-                if(logit.at(j) > n_logit[i]){
-                    n_logit[i] = logit[j];
-                    maxIdx[i] = j;
-                }
-            }
+            n_logit[i] = logit[availableMoves[i]];
         }
 
         std::vector<float> exp_logit(moveSize);
@@ -63,7 +54,7 @@ namespace{
         //         int t = 0;
         //         for(uint8_t i=0U; i<rowSize; ++i){
         //             for(uint8_t j=0U; j<colSize; ++j){
-        //                 if(availableMoves[t] == Move{i, j}){
+        //                 if(game.getAvailableMoves()[t] == Move{i, j}){
         //                     std::printf("%8.4f ", exp_logit[t++]);
         //                 }
         //                 else{
@@ -75,7 +66,7 @@ namespace{
         //         t = 0;
         //         for(int i=0; i<rowSize; ++i){
         //             for(int j=0; j<colSize; ++j){
-        //                 if(availableMoves[t] == Move{i, j}){
+        //                 if(game.getAvailableMoves()[t] == Move{i, j}){
         //                     std::cout << maxIdx[t] / colSize << "," << maxIdx[t] % colSize << " "; 
         //                     t++;
         //                 }
@@ -171,27 +162,32 @@ namespace{
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), onlyMove(RESIGNMOVE), hashValue(hashValue), expanded(false), evaluation(nullptr), transposTable(transposTable){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), hashValue(hashValue), expanded(false), evaluation(nullptr), transposTable(transposTable){
 }
 
 void Node::addChild(const Move& move, int idx){
     HashValue newHash = hash.computeHashAfterMove(game, move, hashValue);
 
     Node* childNode;
+    Color winner;
+
     if(globalConfig.transTable){
         auto it = transposTable->find(newHash);
 
         if(it == transposTable->end()){
             Game ng = this->game;
+
             // if idx = -1, move is not in the list. -> Add completely new child.
             if(idx == -1){
-                ng.makeMove(move);
+                winner = ng.makeMove(move).first;
             }
             // else, compute child based on stats calculated on expand() call.
             else{
-                ng.makeMoveGivenScore(move, transferTable[idx]);
+                winner = ng.makeMoveGivenScore(move);
             }
+
             childNode = new Node(ng, newHash, transposTable);
+            childNode->forcedState = (winner == EMPTY) ? 0 : (winner == turn) ? -1 : 1;
             transposTable->emplace(newHash, std::make_pair(childNode, 1));
         }
         else{
@@ -202,12 +198,13 @@ void Node::addChild(const Move& move, int idx){
     else{
         Game ng = this->game;
         if(idx == -1){
-            ng.makeMove(move);
+            winner = ng.makeMove(move).first;
         }
         else{
-            ng.makeMoveGivenScore(move, transferTable[idx]);
+            winner = ng.makeMoveGivenScore(move);
         }
         childNode = new Node(ng, newHash, transposTable);
+        childNode->forcedState = (winner == EMPTY) ? 0 : (winner == turn) ? -1 : 1;
     }
 
     if(idx == -1)
@@ -216,12 +213,7 @@ void Node::addChild(const Move& move, int idx){
         child[idx] = childNode;
 }
 
-void Node::threatCheck(){
-    auto [threat, forced] = game.threatCheck();
-    assert(threat != RESIGNMOVE || forced == 0);
-    forcedState = forced;
-    onlyMove = threat;
-}
+
 
 void Node::expand(){
     //ModelCompare::displayBoardGUI(true, game);
@@ -232,16 +224,9 @@ void Node::expand(){
     if(forcedState != 0)
         return;
 
-    auto [result, moves, tranfTable] = game.expand(onlyMove);
+    child = std::vector<Node*>(game.getAvailableMoves().size(), nullptr);
 
-    transferTable = std::move(tranfTable);
-    onlyMove = std::move(result.first);
-    forcedState = std::move(result.second);
-
-    child = std::vector<Node*>(moves.size(), nullptr);
-    availableMoves = std::move(moves);
-
-    if(availableMoves.empty()){
+    if(game.getAvailableMoves().empty()){
         forcedState = -1;
     }
     
@@ -256,13 +241,13 @@ int Node::selectChildInSearch(){
     float pref, maxval = -1000.0f; // pref may be less than -1.(due to score head)
     bool lost = true;
 
-    if(availableMoves.empty()){
+    if(game.getAvailableMoves().empty()){
         std::cerr << N << " " << W << " " << initQ << " " << S << " " << Wp << std::endl;
         ModelCompare::displayBoardGUI(true, game);
     }
-    assert(!availableMoves.empty());
+    assert(!game.getAvailableMoves().empty());
 
-    for(int i=0; i<availableMoves.size(); ++i){
+    for(int i=0; i<game.getAvailableMoves().size(); ++i){
         if(child[i] == nullptr){
             pref = ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
             lost = false;
@@ -274,7 +259,6 @@ int Node::selectChildInSearch(){
             // if winning continuation found.
             if(forced < 0){
                 forcedState = -forced + 1;
-                onlyMove = availableMoves[i];
                 return i;
             }
             // only select non-losing move.
@@ -301,33 +285,41 @@ int Node::selectChildInSearch(){
 
     // Allocate child only when child gets selected; Delay memory allocation as much as possible.
     if(child[maxi] == nullptr)
-        addChild(availableMoves[maxi], maxi);
+        addChild({game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize}, maxi);
     return maxi;
 }
 
 Move Node::selectMove(float temp){
-    //std::cout << "available move size : " << availableMoves.size() << std::endl;
+    //std::cout << "available move size : " << game.getAvailableMoves().size() << std::endl;
+    if(forcedState == -1 || forcedState == 1){
+        ModelCompare::displayBoardGUI(true, game);
+        assert(false && "trying to make move on terminated position!");
+    }
 
-    if(forcedState > 0){
+    else if(forcedState > 0){
         // if(globalConfig.detailedStat)
         //     std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
         //     << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
-        return onlyMove;
+        for(int i=0; i<child.size(); ++i){
+            if(child[i]->forcedState < 0)
+                return {game.getAvailableMoves()[i] / colSize, game.getAvailableMoves()[i] % colSize};
+        }
+        assert(false && "no losing child found despite winning! = no winning move found!");
     }
-    else if(availableMoves.empty()){
+    else if(game.getAvailableMoves().empty()){
         return RESIGNMOVE;
     }
     // else if(globalConfig.detailedStat){
-    //     std::vector<int> v(availableMoves.size());
+    //     std::vector<int> v(game.getAvailableMoves().size());
     //     std::iota(v.begin(), v.end(), 0);
     //     std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
     //         return edgeN[a] > edgeN[b];
     //     });
 
-    //     for(int i=0; i<std::min(static_cast<int>(availableMoves.size()), 3); ++i){
+    //     for(int i=0; i<std::min(static_cast<int>(game.getAvailableMoves().size()), 3); ++i){
     //         int idx = v[i];
     //         if(child[idx] != nullptr)
-    //             std::cout << "status: " << static_cast<int>(availableMoves[idx].first) << " " << static_cast<int>(availableMoves[idx].second)
+    //             std::cout << "status: " << static_cast<int>(game.getAvailableMoves()[idx].first) << " " << static_cast<int>(game.getAvailableMoves()[idx].second)
     //             << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
     //             << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
     //             << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
@@ -335,7 +327,7 @@ Move Node::selectMove(float temp){
     // }
 
     int maxi, maxn = -1, index;
-    for(int i=0; i<availableMoves.size(); ++i){
+    for(int i=0; i<game.getAvailableMoves().size(); ++i){
         if(edgeN[i] > maxn){
             maxn = edgeN[i];
             maxi = i;
@@ -343,12 +335,12 @@ Move Node::selectMove(float temp){
     }
 
     if(temp >= 5.0f || game.getMoveCount() >= 10){
-        return availableMoves[maxi];
+        return {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
     }
 
-    std::vector<float> weights(availableMoves.size());
-    std::vector<float> cumulative(availableMoves.size());
-    for(int i=0; i<availableMoves.size(); ++i){
+    std::vector<float> weights(game.getAvailableMoves().size());
+    std::vector<float> cumulative(game.getAvailableMoves().size());
+    for(int i=0; i<game.getAvailableMoves().size(); ++i){
         weights[i] = std::pow(edgeN[i], temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -358,7 +350,7 @@ Move Node::selectMove(float temp){
 
     auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
     index = std::distance(cumulative.begin(), it);
-    return availableMoves[index];
+    return {game.getAvailableMoves()[index] / colSize, game.getAvailableMoves()[index] % colSize};
 
 }
 
@@ -367,35 +359,41 @@ MoveData Node::selectMoveProb(float temp){
     std::vector<float> visitPortion(outputSize, 0.0f);
     Move selectedMove;
 
-    if(forcedState == -1){
-        assert(availableMoves.empty());
-        return {RESIGNMOVE, visitPortion, forcedState, 1};
+    if(forcedState == -1 || forcedState == 1){
+        ModelCompare::displayBoardGUI(true, game);
+        assert(false && "trying to make move on terminated position!");
     }
 
     if(forcedState > 0){
         // label smoothing is applied here.
         //std::fill(visitPortion.begin(), visitPortion.end(), 0.02f/(outputSize - 1));
-        visitPortion[onlyMove.first * colSize + onlyMove.second] = 1.0f;
-        selectedMove = onlyMove;
+        for(int i=0; i<child.size(); ++i){
+            if(child[i] != nullptr && child[i]->forcedState < 0){
+                auto winningMove = game.getAvailableMoves()[i];
+                visitPortion[winningMove] = 1.0f;
+                selectedMove = {winningMove / colSize, winningMove % colSize};
+                break;
+            }
+        }
     }
 
     else if(temp >= 5.0f || game.getMoveCount() >= 10){
         int maxi, maxn = -1;
-        for(int i=0; i<availableMoves.size(); ++i){
+        for(int i=0; i<game.getAvailableMoves().size(); ++i){
             if(edgeN[i] > maxn){
                 maxn = edgeN[i];
                 maxi = i;
             }
-            visitPortion[availableMoves[i].first * colSize + availableMoves[i].second] = edgeN[i]/N;
+            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
         }
-        selectedMove = availableMoves[maxi];
+        selectedMove = {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
     }
 
     else{
-        std::vector<float> cumulative(availableMoves.size()), weights(availableMoves.size());
+        std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
 
-        for(int i=0; i<availableMoves.size(); ++i){
-            visitPortion[availableMoves[i].first * colSize + availableMoves[i].second] = edgeN[i]/N;
+        for(int i=0; i<game.getAvailableMoves().size(); ++i){
+            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
             weights[i] = (edgeN[i] == 0.0f) ? 0.0f : std::pow(edgeN[i], temp);
         }
 
@@ -406,42 +404,32 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
-        selectedMove = availableMoves[index];
+        selectedMove = {game.getAvailableMoves()[index] / colSize, game.getAvailableMoves()[index] % colSize};
     }
 
-    return {selectedMove, visitPortion, forcedState, availableMoves.size() == 1};
+    return {selectedMove, visitPortion, forcedState, game.getAvailableMoves().size() == 1};
 }
 
 Node* Node::jump(Move move){
     if(N == 0){
-        // std::cerr << "original forcedState : " << forcedState << std::endl;
-        // std::cerr << "threat : ";
-        // printMove(onlyMove);
-        threatCheck();
-        // std::cerr << "after forcedState : " << forcedState << std::endl;
-        // std::cerr << "threat : ";
-        // printMove(onlyMove);
+        // threatCheck();
+        game.setPolicyMask();
     }
     if(!expanded){
-        // std::cerr << "E original forcedState : " << forcedState << std::endl;
-        // std::cerr << "threat : ";
-        // printMove(onlyMove);
         expand();
-        // std::cerr << "E after forcedState : " << forcedState << std::endl;
-        // std::cerr << "threat : ";
-        // printMove(onlyMove);
     }
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
     // std::cerr << "available options : " << std::endl;
-    // for(auto p : availableMoves)
+    // for(auto p : game.getAvailableMoves())
     //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
     // std::cerr << "node's state : " << std::endl;
     // ModelCompare::displayBoardGUI(true, game);
 
-    for(int i=0; i<availableMoves.size(); ++i){
-        if(availableMoves[i] == move){
+    int moveInt = move.first * colSize + move.second;
+    for(int i=0; i<game.getAvailableMoves().size(); ++i){
+        if(game.getAvailableMoves()[i] == moveInt){
             // delay child allocation as much as possible. Happens when agent is forced to jump to a move that it hasn't considered at all.
             if(child[i] == nullptr){
                 addChild(move, i);
@@ -460,19 +448,16 @@ Node* Node::jump(Move move){
     std::cerr << "expanded : " << expanded << std::endl;
     std::cerr << "N : " << N << std::endl;
     std::cerr << "forcedState : " << forcedState << std::endl;
-    std::cerr << "only move : " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second) << std::endl;
     std::cerr << "available options : " << std::endl;
-    for(auto p : availableMoves)
-        std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
+    for(auto p : game.getAvailableMoves())
+        std::cerr << static_cast<int>(p / colSize) << "," << static_cast<int>(p % colSize) << " ";
 
     std::cerr << "node's state : " << std::endl;
     ModelCompare::displayBoardGUI(true, game);
     
     std::cerr << "transfer table : " << std::endl;
-    for(const auto& v : transferTable){
-        for(const auto& move : v){
-            std::cerr << static_cast<int>(move) / colSize << static_cast<int>(move) % colSize << " ";
-        }
+    for(int v : game.getTransferTable()){
+        std::cerr << v << " ";
         std::cerr << std::endl;
     }
 
@@ -539,9 +524,10 @@ void Node::deleteTree(Node* exception){
 
 void Node::addDirichletNoise(Evaluator* evaluator){
     if(N == 0){
-        threatCheck();
+        // threatCheck();
     }
     if (!expanded) {
+        game.setPolicyMask();
         expand();
         if(forcedState == 0){
             auto buf = std::make_shared<NNResultBuf>();
@@ -553,7 +539,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     }
 
     // Dirichlet noise is only applied when position is undetermined or lost.
-    if(forcedState <= 0 && availableMoves.size() > 0){
+    if(forcedState <= 0 && game.getAvailableMoves().size() > 0){
         std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
         for(int i=0; i<edgeP.size(); ++i)
             edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
@@ -646,10 +632,10 @@ void MCTS::printVariation(){
     while(node->N > 1){
         int maxv = -1;
         int maxi = -1;
-        Move m;
+        int m;
 
         if(node->forcedState == 0){
-            for(int i=0; i<node->availableMoves.size(); ++i){
+            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
                 // if(!globalConfig.transTable)
                 //     assert(node->edgeN[i] == node->child[i]->N);
                 // else
@@ -663,29 +649,32 @@ void MCTS::printVariation(){
             if(maxi == -1)
                 break;
 
-            m = node->availableMoves[maxi];
+            m = node->game.getAvailableMoves()[maxi];
         }
         else if(node->forcedState > 0){
-            m = node->onlyMove;
-            assert(m != RESIGNMOVE);
+            for(int i=0; i<node->child.size(); ++i){
+                if(node->child[i]->forcedState < 0){
+                    m = node->game.getAvailableMoves()[i];
+                }
+            }
             // std::cerr << "only move : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 
             if(node->forcedState == 2)
                 break;
 
-            for(int i=0; i<node->availableMoves.size(); ++i){
-                if(node->availableMoves[i] == m){
+            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+                if(node->game.getAvailableMoves()[i] == m){
                     maxi = i;
                     break;
                 }
             }
             // if(maxi == -1){
-            //     for(const auto& options : node->availableMoves)
+            //     for(const auto& options : node->game.getAvailableMoves())
             //         std::cerr << "options : " << static_cast<int>(options.first) << " " << static_cast<int>(options.second) << std::endl;
             // }
         }
         else{ // losing. Delay losing as much as possible.
-            for(int i=0; i<node->availableMoves.size(); ++i){
+            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
                 if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
                     maxv = node->child[i]->forcedState;
                     maxi = i;
@@ -694,14 +683,14 @@ void MCTS::printVariation(){
 
             if(maxi == -1)
                 break;
-            m = node->availableMoves[maxi];
+            m = node->game.getAvailableMoves()[maxi];
         }
 
         int visit = node->edgeN[maxi];
         node = node->child[maxi];
         if(node == nullptr)
             return;
-        std::cout << (int)m.first << " " << (int)m.second << " " << visit << " forced " << node->forcedState << " Q: " << 
+        std::cout << (int)m / colSize << " " << (int)m % colSize << " " << visit << " forced " << node->forcedState << " Q: " << 
             node->W/node->N << " initQ : " << node->initQ << " Wp : " << node->Wp/node->N 
             << " S : " << node->S / node->N << std::endl;  
     }
@@ -740,21 +729,9 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         while (true) {
             path.push_back(cur);
 
-            // One can save memory and CPU expansion by delaying expansion until second visit. However, that would also
-            // mean forcedState would not be computed in first visit thus NN evaluation request would happen for terminal nodes.
-            // TODO : Is it possible to separate expand() logic to legal move computation + actual expansion?
-            // Also, is it possible to expand each child separately while maintaining speed advantage?
-
-            // step 1 done. Expansion is only done on second visit.
-            
-            // step 2 done. Split expand logic so that terminal state is determined as much as possible on first visit without actual expansion.
-
-            // TODO step 3. When expand called, only expand the nodes which gives more score. Other nodes should be expanded only when they are actually visited.
-
-            // on first visit, check easy capture then just quit.
+            // on first visit, set up policyMask then just quit.
             if(cur->N == 0.0f){
-                cur->threatCheck();
-                forced = cur->forcedState;
+                cur->game.setPolicyMask();
                 break;
             }
 
@@ -818,6 +795,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             // enqueue evaluation
             auto buf = std::make_shared<NNResultBuf>();
 
+            // TODO : move game.getAvailableMoves(), transferTable into game object. They are used both in NN evaluation & expansion.
             bool cacheHit = evaluator->asyncEvaluate(buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
             if(!cacheHit){
                 resultBuffer.push_back(buf);

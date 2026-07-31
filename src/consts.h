@@ -18,9 +18,10 @@ using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vect
 using Move = std::pair<uint8_t, uint8_t>;
 using MoveData = std::tuple<Move, std::vector<float>, int, bool>; // move + move probability + forcedState + onlyMove?
 
-using Color = uint8_t;
+// for training heads
 using Trainhead = uint8_t;
-using TrainData = std::tuple<std::vector<float>, std::vector<float>, float, float, std::vector<float>, Trainhead>; // board, moveprob, result, score diff, (score map/capture map), wintype
+
+using Color = uint8_t;
 
 
 constexpr int rowSize = 9;

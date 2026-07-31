@@ -7,7 +7,9 @@
 
 using InputMatrix = std::vector<float>;
 using OutputMatrix = std::vector<float>;
-using Matrix = std::vector<float>;
+
+template <typename T>
+using Matrix = std::vector<T>;
 
 // InputMatrix inputRotate90(const InputMatrix mat);
 

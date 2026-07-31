@@ -35,6 +35,7 @@ enum Wintype{
 class Game{
 public:
     Game();
+
     inline bool isLegal(uint8_t r, uint8_t c) const{
         return board[r][c] & EMPTY;
     }
@@ -59,15 +60,22 @@ public:
 
     std::pair<Color, Wintype> makeMove(Move move);
 
-    Color makeMoveGivenScore(const Move& move, const std::vector<uint8_t>& acquired);
+    Color makeMoveGivenScore(const Move& move);
 
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
+    // list of possible moves, logit transfer list.
+    void setPolicyMask();
+
+    const std::vector<int>& getAvailableMoves() const;
+
+    const std::vector<int>& getTransferTable() const;
+
     std::pair<Move, int> threatCheck() const;
 
     // return type : winMove(resignMove if nothing), list of possible moves, transferTable. 
-    std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
+    // std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
@@ -130,6 +138,10 @@ private:
 
     Chain chains[boardSize];   // Chain data
     Stone stones[rowSize][colSize];    // Stone linked list info
+
+    // for NN input.
+    std::vector<int> possibleMoves;
+    std::vector<int> pTransferGroups;
 
 
     // overflow is managed.

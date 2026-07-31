@@ -2,8 +2,9 @@
 #include <iostream>
 
 namespace{
-    Matrix rotate90(const Matrix& mat, int channel, bool passInc){
-        Matrix res;
+    template <typename T>
+    Matrix<T> rotate90(const Matrix<T>& mat, int channel, bool passInc){
+        Matrix<T> res;
         if(passInc)
             res.reserve((boardSize + 1) * channel);
         else
@@ -22,8 +23,9 @@ namespace{
         return res;
     }
 
-    Matrix reflectHorizontal(const Matrix& mat, int channel, bool passInc){
-        Matrix res;
+    template <typename T>
+    Matrix<T> reflectHorizontal(const Matrix<T>& mat, int channel, bool passInc){
+        Matrix<T> res;
         if(passInc)
             res.reserve((boardSize + 1) * channel);
         else
@@ -42,27 +44,85 @@ namespace{
         return res;
     }
 
-    std::vector<Matrix> generateTransformed(const Matrix mat, int channel, bool passInc){
-        std::vector<Matrix> transforms;
+    // available_moves is a flat list of board-position VALUES (not a position-indexed grid, unlike
+    // transfer_table/board channels), so rotating it means remapping each value through the board's
+    // coordinate transform, not permuting which array slot holds which value.
+    // -1 (padding) and boardSize (PASS) are not board squares, so they pass through unchanged.
+    inline int rotateIndex90(int v){
+        if(v < 0 || v >= boardSize) return v;
+        int r = v / colSize, c = v % colSize;
+        // mirrors rotate90's res[i][j] = mat[N-1-j][i]: source (r,c) lands at target (c, N-1-r)
+        return c * colSize + (colSize - 1 - r);
+    }
+
+    inline int reflectIndexHorizontal(int v){
+        if(v < 0 || v >= boardSize) return v;
+        int r = v / colSize, c = v % colSize;
+        // mirrors reflectHorizontal's res[i][j] = mat[N-1-i][j]: source (r,c) lands at target (N-1-r, c)
+        return (rowSize - 1 - r) * colSize + c;
+    }
+
+    template <typename T>
+    Matrix<T> remapMoveList(const Matrix<T>& mat, int (*mapFn)(int)){
+        Matrix<T> res;
+        res.reserve(mat.size());
+        for(const auto& v : mat)
+            res.push_back(mapFn(v));
+        return res;
+    }
+
+    // Same 8-transform composition/order as generateTransformed below, so the result lines up
+    // index-for-index with rotatedStates/rotatedTransfer/rotatedMoves/rotatedMap.
+    template <typename T>
+    std::vector<Matrix<T>> generateTransformedMoveList(const Matrix<T>& mat){
+        std::vector<Matrix<T>> transforms;
+        transforms.reserve(8);
+
+        transforms.push_back(mat);
+
+        Matrix<T> rot90 = remapMoveList(mat, rotateIndex90);
+        Matrix<T> rot180 = remapMoveList(rot90, rotateIndex90);
+        Matrix<T> rot270 = remapMoveList(rot180, rotateIndex90);
+
+        transforms.push_back(rot90);
+        transforms.push_back(rot180);
+        transforms.push_back(rot270);
+
+        Matrix<T> reflH = remapMoveList(mat, reflectIndexHorizontal);
+        Matrix<T> ref_rot90 = remapMoveList(reflH, rotateIndex90);
+        Matrix<T> ref_rot180 = remapMoveList(ref_rot90, rotateIndex90);
+        Matrix<T> ref_rot270 = remapMoveList(ref_rot180, rotateIndex90);
+
+        transforms.push_back(reflH);
+        transforms.push_back(ref_rot90);
+        transforms.push_back(ref_rot180);
+        transforms.push_back(ref_rot270);
+
+        return transforms;
+    }
+
+    template <typename T>
+    std::vector<Matrix<T>> generateTransformed(const Matrix<T> mat, int channel, bool passInc){
+        std::vector<Matrix<T>> transforms;
         transforms.reserve(8);
         
-        // Original Matrix
+        // Original Matrix<T>
         transforms.push_back(mat);
 
         // Rotations
-        Matrix rot90 = rotate90(mat, channel, passInc);
-        Matrix rot180 = rotate90(rot90, channel, passInc);
-        Matrix rot270 = rotate90(rot180, channel, passInc);
+        Matrix<T> rot90 = rotate90(mat, channel, passInc);
+        Matrix<T> rot180 = rotate90(rot90, channel, passInc);
+        Matrix<T> rot270 = rotate90(rot180, channel, passInc);
 
         transforms.push_back(rot90);
         transforms.push_back(rot180);
         transforms.push_back(rot270);
 
         // Reflections
-        Matrix reflH = reflectHorizontal(mat, channel, passInc);
-        Matrix ref_rot90 = rotate90(reflH, channel, passInc);
-        Matrix ref_rot180 = rotate90(ref_rot90, channel, passInc);
-        Matrix ref_rot270 = rotate90(ref_rot180, channel, passInc);
+        Matrix<T> reflH = reflectHorizontal(mat, channel, passInc);
+        Matrix<T> ref_rot90 = rotate90(reflH, channel, passInc);
+        Matrix<T> ref_rot180 = rotate90(ref_rot90, channel, passInc);
+        Matrix<T> ref_rot270 = rotate90(ref_rot180, channel, passInc);
 
         transforms.push_back(reflH);
         transforms.push_back(ref_rot90);
@@ -87,132 +147,17 @@ namespace{
     }
 }
 
-
-// InputMatrix inputRotate90(const InputMatrix mat) {
-//     assert(mat.size() == inputSize * globalConfig.inputChannel);
-
-//     InputMatrix res(inputSize * globalConfig.inputChannel);
-//     int cnt = 0, dnt = 0;
-
-//     for(int k = 0; k < globalConfig.inputChannel; ++k){
-//         for (int i = 0; i < inputRow; ++i)
-//             for (int j = 0; j < inputCol; ++j)
-//                 res[cnt++] = mat[dnt + (inputRow - 1 - j) * inputCol + i];
-        
-//         dnt += inputSize;
-//     }
-//     return res;
-// }
-
-// InputMatrix inputReflectHorizontal(const InputMatrix mat) {
-//     assert(mat.size() == inputSize * globalConfig.inputChannel);
-
-//     InputMatrix res(inputSize * globalConfig.inputChannel);
-//     int cnt = 0, dnt = 0;
-
-//     for(int k=0; k<globalConfig.inputChannel; ++k){
-//         for (int i = 0; i < inputRow; ++i)
-//             for (int j = 0; j < inputCol; ++j)
-//                 res[cnt++] = mat[dnt + (inputRow - 1 - i) * inputCol + j];
-
-//         dnt += inputSize;
-//     }
-//     return res;
-// }
-
-// std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat) {
-//     std::vector<InputMatrix> transforms;
-//     transforms.reserve(8);
-    
-//     // Original InputMatrix
-//     transforms.push_back(mat);
-
-//     // Rotations
-//     InputMatrix rot90 = inputRotate90(mat);
-//     InputMatrix rot180 = inputRotate90(rot90);
-//     InputMatrix rot270 = inputRotate90(rot180);
-
-//     transforms.push_back(rot90);
-//     transforms.push_back(rot180);
-//     transforms.push_back(rot270);
-
-//     // Reflections
-//     InputMatrix reflH = inputReflectHorizontal(mat);
-//     InputMatrix ref_rot90 = inputRotate90(reflH);
-//     InputMatrix ref_rot180 = inputRotate90(ref_rot90);
-//     InputMatrix ref_rot270 = inputRotate90(ref_rot180);
-
-//     transforms.push_back(reflH);
-//     transforms.push_back(ref_rot90);
-//     transforms.push_back(ref_rot180);
-//     transforms.push_back(ref_rot270);
-
-//     return transforms;
-// }
-
-
-// OutputMatrix outputRotate90(const OutputMatrix mat) {
-//     assert(mat.size() == outputSize);
-
-//     OutputMatrix res(outputSize);
-//     int cnt = 0;
-
-//     for (int i = 0; i < outputRow; ++i)
-//         for (int j = 0; j < outputCol; ++j)
-//             res[cnt++] = mat[(outputRow - 1 - j) * outputCol + i];
-
-//     res[cnt] = mat[cnt];
-//     return res;
-// }
-
-// OutputMatrix outputReflectHorizontal(const OutputMatrix mat) {
-//     assert(mat.size() == outputSize);
-
-//     OutputMatrix res(outputSize);
-//     int cnt = 0;
-
-//     for (int i = 0; i < outputRow; ++i)
-//         for (int j = 0; j < outputCol; ++j)
-//             res[cnt++] = mat[(outputRow - 1 - i) * outputCol + j];
-
-//     res[cnt] = mat[cnt];
-//     return res;
-// }
-
-// std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat) {
-//     std::vector<OutputMatrix> transforms;
-    
-//     // Original OutputMatrix
-//     transforms.push_back(mat);
-
-//     // Rotations
-//     OutputMatrix rot90 = outputRotate90(mat);
-//     OutputMatrix rot180 = outputRotate90(rot90);
-//     OutputMatrix rot270 = outputRotate90(rot180);
-
-//     transforms.push_back(rot90);
-//     transforms.push_back(rot180);
-//     transforms.push_back(rot270);
-
-//     // Reflections
-//     OutputMatrix reflH = outputReflectHorizontal(mat);
-//     OutputMatrix ref_rot90 = outputRotate90(reflH);
-//     OutputMatrix ref_rot180 = outputRotate90(ref_rot90);
-//     OutputMatrix ref_rot270 = outputRotate90(ref_rot180);
-
-//     transforms.push_back(reflH);
-//     transforms.push_back(ref_rot90);
-//     transforms.push_back(ref_rot180);
-//     transforms.push_back(ref_rot270);
-
-//     return transforms;
-// }
-
 std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const TrainData& data) {
     std::vector<std::shared_ptr<TrainData>> transformed_data;
     transformed_data.reserve(8);
     
-    auto rotatedStates = generateTransformed(std::get<0>(data), globalConfig.inputChannel, false); // NN input rotation
+    auto& [states, availables, transfer] = std::get<0>(data);
+
+    // NN input rotation
+    auto rotatedStates = generateTransformed(states, globalConfig.inputChannel, false);
+    auto rotatedAvail = generateTransformedMoveList(availables);
+    auto rotatedTransfer = generateTransformed(transfer, 1, true);
+
     auto rotatedMoves = generateTransformed(std::get<1>(data), 1, true); // NN output rotation
     auto value = std::get<2>(data);
     auto scoreDiff = std::get<3>(data);
@@ -220,7 +165,8 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
     auto type = std::get<5>(data);
 
     for(int i=0; i<8; ++i){
-        transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i], rotatedMoves[i], value, scoreDiff, rotatedMap[i], type));
+        transformed_data.push_back(std::make_shared<TrainData>(NNInput{rotatedStates[i], rotatedAvail[i], rotatedTransfer[i]},
+             rotatedMoves[i], value, scoreDiff, rotatedMap[i], type));
     }
 
     return transformed_data;
