@@ -597,6 +597,25 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
+    // The search loop above can exit (nPlayout reached, root->forcedState flips nonzero, or a
+    // searchStuck early-return in playout()) while an evaluation request is still sitting in the
+    // shared evaluator queue, pointing at one of our nodes. The caller (start_self_play) calls
+    // jump()/reset() right after this returns, which deletes nodes — so any such request must be
+    // waited on and drained here first, or the evaluator thread will read freed memory.
+    if(!current_evaluating_nodes.empty()){
+        std::shared_ptr<NNResultBuf> rb = result_buffer.back();
+        std::unique_lock<std::mutex> lk2(rb->resultmutex);
+        rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; });
+
+        for(size_t i=0; i<current_evaluating_nodes.size(); ++i){
+            updateEval(result_buffer[i], need_update_chain[i], current_evaluating_nodes[i]);
+        }
+        evaluate_counter += current_evaluating_nodes.size();
+        result_buffer.clear();
+        need_update_chain.clear();
+        current_evaluating_nodes.clear();
+    }
+
     // if(globalConfig.detailedStat)
     //     printVariation();
 }
