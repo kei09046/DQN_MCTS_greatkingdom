@@ -267,49 +267,30 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		{B, boardSize + 1},
 		torch::TensorOptions().dtype(torch::kInt32)).to(torch::kInt64).to(device);
 
-	// debug: pin down which game in the batch produced out-of-range values, and whether the
-	// flattened moveData/groupData copy disagrees with a fresh re-read of the live Game object
-	// (which would indicate a data race on possibleMoves/pTransferGroups rather than a stale copy).
-	for(int b=0; b<B; ++b){
-		bool bad = false;
-		for(int k=0; k<boardSize+1; ++k){
-			int mv = moveData[b*(boardSize+1)+k];
-			int tg = groupData[b*(boardSize+1)+k];
-			if(mv < -1 || mv > boardSize || tg < -1 || tg > boardSize) bad = true;
-		}
-		if(bad){
-			std::cerr << "BAD BATCH ROW " << b << "/" << B << " ptr=" << gameBatch[b]
-					   << " moveCount=" << gameBatch[b]->getMoveCount()
-					   << " turn=" << (int)gameBatch[b]->getTurn() << std::endl;
-			std::cerr << "moveData[row]: ";
-			for(int k=0; k<boardSize+1; ++k) std::cerr << moveData[b*(boardSize+1)+k] << " ";
-			std::cerr << std::endl;
-			std::cerr << "groupData[row]: ";
-			for(int k=0; k<boardSize+1; ++k) std::cerr << groupData[b*(boardSize+1)+k] << " ";
-			std::cerr << std::endl;
-
-			const auto& liveMv = gameBatch[b]->getAvailableMoves();
-			const auto& liveTg = gameBatch[b]->getTransferTable();
-			std::cerr << "live getAvailableMoves() size=" << liveMv.size() << ": ";
-			for(int v : liveMv) std::cerr << v << " ";
-			std::cerr << std::endl;
-			std::cerr << "live getTransferTable() size=" << liveTg.size() << ": ";
-			for(int v : liveTg) std::cerr << v << " ";
-			std::cerr << std::endl;
-			std::abort();
-		}
-	}
 
 	torch::Tensor stones = inputBatch.index({Slice(), Slice(8, 12), Slice(), Slice()}).sum(1) + inputBatch.index({Slice(), Slice(13, 17), Slice(), Slice()}).sum(1);
 	// ---- Forward pass ----
 	torch::NoGradGuard no_grad;
 	if(use_gpu){
-		auto r = policy_value_net->forward(inputBatch, possibleMovesBatch, transferBatch);
-		policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
-		valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
-		scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
-		scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
-		captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
+		try{
+			auto r = policy_value_net->forward(inputBatch, possibleMovesBatch, transferBatch);
+			policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
+			valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
+			scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
+			scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
+			captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
+		}catch(std::exception e){
+			std::cerr << "wrong move batch" << std::endl;
+			for(int i=0; i<B; ++i){
+				for(int j=0; j<boardSize + 1; ++j)
+					std::cerr << moveData[i * (boardSize + 1) + j] << " ";
+				std::cerr << std::endl;
+
+				for(int j=0; j<boardSize + 1; ++j)
+					std::cerr << groupData[i * (boardSize + 1) + j] << " ";
+				std::cerr << std::endl;
+			}
+		}
 	} else {
 		auto r = policy_value_net->forward(inputBatch, possibleMovesBatch, transferBatch);
 		policyBatch = std::get<0>(r);   // already CPU
