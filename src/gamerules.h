@@ -34,6 +34,15 @@ enum Wintype{
 
 class Game{
 public:
+    // debug: canary to detect use-after-free of a Game object (e.g. a Node deleted while its
+    // game member's pointer is still queued for async NN evaluation). Poisoned in the destructor
+    // before any member vectors are torn down, so a stale read shows the poison value instead of
+    // ALIVE_MAGIC.
+    static constexpr uint64_t ALIVE_MAGIC = 0x1234567890ABCDEFULL;
+    static constexpr uint64_t DEAD_MAGIC = 0xDEADDEADDEADDEADULL;
+    uint64_t debugCanary = ALIVE_MAGIC;
+    ~Game(){ debugCanary = DEAD_MAGIC; }
+
     Game();
 
     inline bool isLegal(uint8_t r, uint8_t c) const{

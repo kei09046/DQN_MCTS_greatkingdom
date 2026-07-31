@@ -250,6 +250,17 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
+	// debug: catch use-after-free directly, before copying any data out of the pointed-to Game.
+	for(int b=0; b<B; ++b){
+		if(gameBatch[b]->debugCanary != Game::ALIVE_MAGIC){
+			std::cerr << "USE-AFTER-FREE DETECTED: batch idx " << b << "/" << B
+					   << " ptr=" << gameBatch[b] << " canary=0x" << std::hex << gameBatch[b]->debugCanary
+					   << std::dec << " (expected ALIVE_MAGIC=0x" << std::hex << Game::ALIVE_MAGIC << std::dec << ")"
+					   << std::endl;
+			std::abort();
+		}
+	}
+
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto [gameData, moveData, groupData] = getData(gameBatch);
 
