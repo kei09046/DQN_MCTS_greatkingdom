@@ -40,93 +40,67 @@ TORCH_MODULE(ResidualBlock);
 
 class PureTensorGroupedMaxInfConverterImpl : public torch::nn::Module {
 public:
+public:
     PureTensorGroupedMaxInfConverterImpl() {}
 
     /**
      * @param x: [BatchSize, N] - The float/half input data tensor
      * @param group_ids: [BatchSize, N] - Long tensor mapping elements to group IDs. Use -1 for omitted elements.
-     * @param first_indices: [BatchSize, MaxNumGroups] - Long tensor marking target positions for group maxes. Pad with -1.
+     * @param first_indices: [BatchSize, MaxNumGroups] - Long tensor marking target positions for group sums. Pad with -1.
      */
-
-    // corresponds to state, availableMoves, transferList.
     torch::Tensor forward(const torch::Tensor& x, const torch::Tensor& first_indices, const torch::Tensor& group_ids) {
-        // x : [B, outputSize]
-        // first_indices : [B, boardSize + 1]
-        // group_ids : [B, boardSize + 1]
         int64_t batch_size = x.size(0);
         int64_t num_elements = x.size(1);
         int64_t max_groups = first_indices.size(1);
 
-        // debug: catch out-of-range group_ids/first_indices synchronously here, before the async
-        // CUDA scatter/gather kernels below turn a bad index into an opaque device-side assert.
-        // {
-        //     int64_t max_gid = group_ids.max().item<int64_t>();
-        //     int64_t min_gid = group_ids.min().item<int64_t>();
-        //     int64_t max_fi = first_indices.max().item<int64_t>();
-        //     int64_t min_fi = first_indices.min().item<int64_t>();
-        //     if(max_gid >= max_groups || min_gid < -1 || max_fi >= num_elements || min_fi < -1){
-        //         std::cerr << "BAD CONVERTER INPUT: max_gid=" << max_gid << " min_gid=" << min_gid
-        //                   << " max_fi=" << max_fi << " min_fi=" << min_fi
-        //                   << " max_groups=" << max_groups << " num_elements=" << num_elements
-        //                   << " batch_size=" << batch_size << std::endl;
-        //         std::cerr << "group_ids:\n" << group_ids.to(torch::kCPU) << std::endl;
-        //         std::cerr << "first_indices:\n" << first_indices.to(torch::kCPU) << std::endl;
-        //         std::abort();
-        //     }
-        // }
-
-        // 1. Isolate valid group elements and mask omitted elements (-1) to -inf
+        // 1. Identify valid elements (Omitted elements are marked -1)
         auto valid_elements_mask = (group_ids != -1);
-        auto inf_tensor = torch::full_like(x, -std::numeric_limits<float>::infinity());
-        auto filtered_x = torch::where(valid_elements_mask, x, inf_tensor);
 
         // 2. Globalize group IDs across the batch to avoid inter-batch contamination
-        // Global group IDs will span from 0 to (BatchSize * MaxNumGroups - 1)
         auto batch_offsets = torch::arange(0, batch_size, group_ids.options()).view({batch_size, 1}) * max_groups;
         
-        // Wherever group_ids is -1, keep it -1; otherwise, add the batch offset
-        auto global_group_ids = torch::where(valid_elements_mask, group_ids + batch_offsets, -1);
+        // Wherever group_ids is -1, we temporarily set it to 0 so flat scattering doesn't break.
+        // We will mask out invalid inputs by multiplying their values by 0.
+        auto safe_group_ids = torch::where(valid_elements_mask, group_ids + batch_offsets, 0);
+        auto flat_global_ids = safe_group_ids.reshape({-1});
 
-        // 3. Compute group maximums in parallel using a flattened scatter_reduce
-        int64_t total_global_groups = batch_size * max_groups;
-        auto global_group_max = torch::full({total_global_groups}, -std::numeric_limits<float>::infinity(), x.options());
-        
-        // scatter_reduce naturally ignores indices that are negative when using valid dimensions, 
-        // but to be perfectly safe with all LibTorch versions, we flatten everything except the -1s.
-        auto flat_global_ids = global_group_ids.reshape({-1});
+        // Step 1 variation: Set omitted input elements to 0 so they contribute nothing to the sum
+        auto filtered_x = torch::where(valid_elements_mask, x, 0.0);
         auto flat_filtered_x = filtered_x.reshape({-1});
+
+        // 3. Compute group sums in parallel using non-blocking scatter_reduce
+        int64_t total_global_groups = batch_size * max_groups;
+        auto global_group_sum = torch::zeros({total_global_groups}, x.options());
         
-        // Filter out the -1 entries to perform a clean parallel reduction
-        auto valid_reduce_mask = (flat_global_ids >= 0);
-        auto reduce_ids = flat_global_ids.index_select(0, torch::nonzero(valid_reduce_mask).squeeze(1));
-        auto reduce_vals = flat_filtered_x.index_select(0, torch::nonzero(valid_reduce_mask).squeeze(1));
+        // Optimized: No more index_select or nonzero. We scatter the entire flat array.
+        // Omitted inputs are now 0.0 and scatter into index 0, which gets overwritten/corrected 
+        // if index 0 is an actual valid group, or ignored later if it's an unused group.
+        global_group_sum = torch::scatter_reduce(
+            global_group_sum, /*dim=*/0, flat_global_ids, flat_filtered_x, /*reduce=*/"sum", /*include_self=*/false
+        );
 
-        if (reduce_ids.size(0) > 0) {
-            global_group_max = torch::scatter_reduce(
-                global_group_max, /*dim=*/0, reduce_ids, reduce_vals, /*reduce=*/"amax", /*include_self=*/false
-            );
-        }
-
-        // 4. Map the calculated global maximums back onto the first index positions
-        auto out_flat = torch::full({batch_size * num_elements}, -std::numeric_limits<float>::infinity(), x.options());
+        // 4. Map calculated global sums back onto the first index positions
+        // Initialize the final background canvas with 0.0 (or -inf if your architecture expects it)
+        auto out_flat = torch::zeros({batch_size * num_elements}, x.options());
         
         // Calculate global absolute target indices for scattering
         auto element_offsets = torch::arange(0, batch_size, first_indices.options()).view({batch_size, 1}) * num_elements;
         auto valid_first_mask = (first_indices != -1);
-        auto global_first_indices = torch::where(valid_first_mask, first_indices + element_offsets, -1);
-
-        // Flatten and extract only valid scatter instructions
-        auto flat_first_ids = global_first_indices.reshape({-1});
-        auto valid_scatter_mask = (flat_first_ids >= 0);
         
-        auto scatter_destinations = flat_first_ids.index_select(0, torch::nonzero(valid_scatter_mask).squeeze(1));
-        auto scatter_sources = torch::arange(0, total_global_groups, first_indices.options())
-                                    .index_select(0, torch::nonzero(valid_scatter_mask).squeeze(1));
+        // Temporarily map invalid target indices to 0 to keep the flat scatter operations safe
+        auto safe_first_indices = torch::where(valid_first_mask, first_indices + element_offsets, 0);
+        auto flat_first_ids = safe_first_indices.reshape({-1});
+        
+        auto scatter_sources = torch::arange(0, total_global_groups, first_indices.options());
 
-        if (scatter_destinations.size(0) > 0) {
-            auto gathered_maxes = global_group_max.index_select(0, scatter_sources);
-            out_flat = torch::scatter(out_flat, /*dim=*/0, scatter_destinations, gathered_maxes);
-        }
+        // Optimized: Scatter everything unconditionally to avoid dynamic branching
+        auto gathered_sums = global_group_sum.index_select(0, scatter_sources);
+        out_flat = torch::scatter(out_flat, /*dim=*/0, flat_first_ids, gathered_sums);
+
+        // Clean up: If a target index was originally -1, force its final output back to 0.0 (or -inf)
+        // This ensures the dummy index 0 write doesn't corrupt actual data
+        auto final_mask = valid_first_mask.reshape({-1});
+        out_flat = torch::where(final_mask, out_flat, 0.0);
 
         // 5. Reshape back cleanly to match the original [BatchSize, N] layout
         return out_flat.reshape({batch_size, num_elements});

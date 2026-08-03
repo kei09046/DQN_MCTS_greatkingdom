@@ -301,7 +301,7 @@ Move Node::selectMove(float temp){
         //     std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
         //     << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
         for(int i=0; i<child.size(); ++i){
-            if(child[i]->forcedState < 0)
+            if(child[i] != nullptr && child[i]->forcedState < 0)
                 return {game.getAvailableMoves()[i] / colSize, game.getAvailableMoves()[i] % colSize};
         }
         assert(false && "no losing child found despite winning! = no winning move found!");

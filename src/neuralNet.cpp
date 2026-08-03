@@ -250,17 +250,6 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
-	// debug: catch use-after-free directly, before copying any data out of the pointed-to Game.
-	for(int b=0; b<B; ++b){
-		if(gameBatch[b]->debugCanary != Game::ALIVE_MAGIC){
-			std::cerr << "USE-AFTER-FREE DETECTED: batch idx " << b << "/" << B
-					   << " ptr=" << gameBatch[b] << " canary=0x" << std::hex << gameBatch[b]->debugCanary
-					   << std::dec << " (expected ALIVE_MAGIC=0x" << std::hex << Game::ALIVE_MAGIC << std::dec << ")"
-					   << std::endl;
-			std::abort();
-		}
-	}
-
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	auto [gameData, moveData, groupData] = getData(gameBatch);
 
@@ -687,12 +676,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		// } 
 
 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
-		// r1 is -inf at masked-out positions (by design of the grouped-max converter), and mp is exactly
-		// 0 there too, so the "correct" contribution is 0 -- but 0 * -inf is NaN in IEEE754, not 0.
-		// Zero out the -inf entries first so the product is well-defined. Single fused kernel over a
-		// [B, outputSize] tensor (outputSize=82); negligible next to the conv forward/backward above.
-		torch::Tensor safe_log_probs = torch::where(torch::isfinite(log_move_probs), log_move_probs, torch::zeros_like(log_move_probs));
-		torch::Tensor policy_loss_per_sample = -torch::sum(mp * safe_log_probs, 1, /*keepdim=*/true); // [B, 1]
+		torch::Tensor policy_loss_per_sample = -torch::sum(mp * log_move_probs, 1, /*keepdim=*/true); // [B, 1]
 		torch::Tensor policy_loss = (policy_loss_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements;
 
 		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
