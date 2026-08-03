@@ -4,8 +4,6 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
 	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
-	available_batch = new std::vector<float>(globalConfig.batchSize * (boardSize + 1));
-	transfer_batch = new std::vector<float>(globalConfig.batchSize * (boardSize + 1));
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
@@ -303,9 +301,7 @@ void TrainPipeline::train(){
 			int map_offset = i * boardSize;
 
 			// NN inputs
-			std::copy(std::get<0>(state).begin(), std::get<0>(state).end(), state_batch->begin() + state_offset);
-			std::copy(std::get<1>(state).begin(), std::get<1>(state).end(), available_batch->begin() + available_offset);
-			std::copy(std::get<2>(state).begin(), std::get<2>(state).end(), transfer_batch->begin() + transfer_offset);
+			std::copy(state.begin(), state.end(), state_batch->begin() + state_offset);
 
 			// NN outputs
 			std::copy(nextmove.begin(), nextmove.end(), nextmove_batch->begin() + move_offset);
@@ -315,7 +311,7 @@ void TrainPipeline::train(){
 			(*type_batch)[i] = std::get<5>(data);
 		}
 		
-		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch, *available_batch, *transfer_batch,
+		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch,
 			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		train_losses[0].push_back(pLoss);
 		train_losses[1].push_back(vLoss);
@@ -503,7 +499,7 @@ void TrainPipeline::setLearningRate(const int games_played){
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
 	// TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead>
 	const auto& [state, policy, value, score, map, wintype] = *data;
-	const auto& [boardState, moveState, transState] = state;
+	const auto& boardState = state;
 
 	char display[rowSize][colSize];
     for(int i=0; i<rowSize; ++i){

@@ -5,7 +5,7 @@
 #include "gamerules.h"
 
 using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
-using NNInput = std::tuple<std::vector<float>, std::vector<int>, std::vector<int>>;
+using NNInput = std::vector<float>;
 
 // board, moveprob, result, score diff, (score map/capture map), wintype
 using TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead>; 
@@ -201,7 +201,7 @@ public:
 	// std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
 	// 	std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 	
-	std::tuple<float, float, float, float, float> train(std::vector<float>& state_batch, std::vector<float>& available_batch, std::vector<float>& transfer_batch,
+	std::tuple<float, float, float, float, float> train(std::vector<float>& state_batch,
          std::vector<float>& nextmove_batch,
 		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr);
 

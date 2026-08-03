@@ -14,7 +14,6 @@ at_bn3(torch::nn::BatchNorm2d(32)),
 at_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
 at_bn4(torch::nn::BatchNorm2d(2)),
 at_fc1(2 * inputSize, outputSize),
-at_cvtr(),
 
 // Value head
 v_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
@@ -57,7 +56,6 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("at_cv4", at_cv4);
 	register_module("at_bn4", at_bn4);
 	register_module("at_fc1", at_fc1);
-	register_module("at_cvtr", at_cvtr);
 
 	register_module("v_cv3", v_cv3);
 	register_module("v_bn3", v_bn3);
@@ -82,7 +80,7 @@ cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("cap_cv4", cap_cv4);
 }
 
-NNOutput Net::forward(const torch::Tensor& state, const torch::Tensor& available_moves, const torch::Tensor& transfer_table)
+NNOutput Net::forward(const torch::Tensor& state)
 {
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& block : *blocks) {
@@ -95,7 +93,6 @@ NNOutput Net::forward(const torch::Tensor& state, const torch::Tensor& available
 	log_act = log_act.view({ -1, 2 * inputSize });
 	//log_act = torch::nn::functional::relu(at_fc1(log_act));
 	log_act = at_fc1(log_act);
-	log_act = at_cvtr(log_act, available_moves, transfer_table);
 
 	// value head
 	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
@@ -227,21 +224,17 @@ NNInput PolicyValueNet::getData(const Game& game){
 
 	std::vector<int> moves = game.getAvailableMoves();
 	moves.resize(boardSize + 1, -1);
-    return {ret, moves, game.getTransferTable()};
+    return {ret};
 }
 
 NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 	NNInput ret;
-	std::get<0>(ret).reserve(gameBatch.size() * inputSize * globalConfig.inputChannel);
-	std::get<1>(ret).reserve(gameBatch.size() * (boardSize + 1));
-	std::get<2>(ret).reserve(gameBatch.size() * (boardSize + 1));
+	ret.reserve(gameBatch.size() * inputSize * globalConfig.inputChannel);
 
 	for(int b=0; b<gameBatch.size(); ++b){
 		auto data = getData(*gameBatch[b]);
 		// data : std::tuple<std::vector, std::vector, std::vector> with size inputSize * globalConfig.inputChannel, boardSize + 1, boardSize + 1
-		std::get<0>(ret).insert(std::get<0>(ret).end(), std::get<0>(data).begin(), std::get<0>(data).end());
-		std::get<1>(ret).insert(std::get<1>(ret).end(), std::get<1>(data).begin(), std::get<1>(data).end());
-		std::get<2>(ret).insert(std::get<2>(ret).end(), std::get<2>(data).begin(), std::get<2>(data).end());
+		ret.insert(ret.end(), data.begin(), data.end());
 	}
     return ret;
 }
@@ -265,48 +258,27 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	outputs.reserve(B);
 
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	auto [gameData, moveData, groupData] = getData(gameBatch);
+	auto gameData = getData(gameBatch);
 
-	torch::Tensor inputBatch, possibleMovesBatch, transferBatch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch;
+	torch::Tensor inputBatch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch;
 
 	inputBatch = torch::from_blob(gameData.data(), // [B, 18, 9, 9]
 		{B, globalConfig.inputChannel, rowSize, colSize},
 		options).to(device);
 
-	possibleMovesBatch = torch::from_blob(moveData.data(),
-		{B, boardSize + 1},
-		torch::TensorOptions().dtype(torch::kInt32)).to(torch::kInt64).to(device);
-
-	transferBatch = torch::from_blob(groupData.data(),
-		{B, boardSize + 1},
-		torch::TensorOptions().dtype(torch::kInt32)).to(torch::kInt64).to(device);
-
-
 	torch::Tensor stones = inputBatch.index({Slice(), Slice(8, 12), Slice(), Slice()}).sum(1) + inputBatch.index({Slice(), Slice(13, 17), Slice(), Slice()}).sum(1);
 	// ---- Forward pass ----
 	torch::NoGradGuard no_grad;
 	if(use_gpu){
-		try{
-			auto r = policy_value_net->forward(inputBatch, possibleMovesBatch, transferBatch);
-			policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
-			valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
-			scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
-			scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
-			captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
-		}catch(std::exception e){
-			std::cerr << "wrong move batch" << std::endl;
-			for(int i=0; i<B; ++i){
-				for(int j=0; j<boardSize + 1; ++j)
-					std::cerr << moveData[i * (boardSize + 1) + j] << " ";
-				std::cerr << std::endl;
-
-				for(int j=0; j<boardSize + 1; ++j)
-					std::cerr << groupData[i * (boardSize + 1) + j] << " ";
-				std::cerr << std::endl;
-			}
-		}
-	} else {
-		auto r = policy_value_net->forward(inputBatch, possibleMovesBatch, transferBatch);
+		auto r = policy_value_net->forward(inputBatch);
+		policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
+		valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
+		scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
+		scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
+		captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
+	}
+	else{
+		auto r = policy_value_net->forward(inputBatch);
 		policyBatch = std::get<0>(r);   // already CPU
 		valueBatch  = std::get<1>(r);
 		scoreBatch = std::get<2>(r);
@@ -381,24 +353,16 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 
 PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	auto [gameData, moveData, groupData] = getData(game);
+	auto gameData = getData(game);
 
 	torch::Tensor input = torch::from_blob(gameData.data(), // [B, 18, 9, 9]
 		{1, globalConfig.inputChannel, rowSize, colSize},
 		options).to(device);
 
-	torch::Tensor possibleMoves = torch::from_blob(moveData.data(),
-		{1, boardSize + 1},
-		torch::TensorOptions().dtype(torch::kInt32)).to(torch::kInt64).to(device);
-
-	torch::Tensor transfer = torch::from_blob(groupData.data(),
-		{1, boardSize + 1},
-		torch::TensorOptions().dtype(torch::kInt32)).to(torch::kInt64).to(device);
-
 	NNOutput res;
 	torch::NoGradGuard no_grad;
 	if (use_gpu) {
-		auto r = policy_value_net->forward(input, possibleMoves, transfer);
+		auto r = policy_value_net->forward(input);
 		get<0>(res) = get<0>(r).to(torch::kCPU); // policy
 		get<1>(res) = get<1>(r).to(torch::kCPU); // evaluation (scalar)
 		get<2>(res) = get<2>(r).to(torch::kCPU); // score differential (scalar)
@@ -406,7 +370,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		get<4>(res) = get<4>(r).to(torch::kCPU); // capture map
 	}
 	else {
-		res = policy_value_net->forward(input, possibleMoves, transfer);
+		res = policy_value_net->forward(input);
 	}
 
 	std::vector<float> policy;
@@ -619,8 +583,8 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // }
 
 // TODO : TrainData should now include game's availableMoves & transferTable info.
-std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch, std::vector<float>& available_batch,
-	 std::vector<float>& transfer_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
+std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
+	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
 	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr){
 
 	int B = result_batch.size();
@@ -629,14 +593,6 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	auto sb = torch::from_blob(state_batch.data(),
 		{B, globalConfig.inputChannel, inputRow, inputCol},
 		options).to(device);
-
-	auto ab = torch::from_blob(available_batch.data(),
-		{B, boardSize + 1},
-		options).to(torch::kInt64).to(device);
-
-	auto tb = torch::from_blob(transfer_batch.data(),
-		{B, boardSize + 1},
-		options).to(torch::kInt64).to(device);
 
 	auto mp = torch::from_blob(nextmove_batch.data(),
 		{B, outputSize},
@@ -678,7 +634,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb, ab, tb);
+		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb);
 		// if(cntr % 1 == 0){
 		// 	std::cout << "iter " << i << "\n";
 		// 	for(int j=0; j<B; ++j){
@@ -733,7 +689,8 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G" || model_type == "H"){
+	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G" || model_type == "H"
+	|| model_type == "I"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -767,6 +724,9 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		else if(model_type == "H"){
 			net = std::make_shared<Net>(18, 20);
 		}
+		else if(model_type == "I"){
+			net = std::make_shared<Net>(20, 20);
+		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
 		}
@@ -774,7 +734,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(18, 20);
+		policy_value_net = std::make_shared<Net>(20, 20);
 	}
 
 	policy_value_net->to(device);

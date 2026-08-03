@@ -151,12 +151,10 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
     std::vector<std::shared_ptr<TrainData>> transformed_data;
     transformed_data.reserve(8);
     
-    auto& [states, availables, transfer] = std::get<0>(data);
+    auto& states = std::get<0>(data);
 
     // NN input rotation
     auto rotatedStates = generateTransformed(states, globalConfig.inputChannel, false);
-    auto rotatedAvail = generateTransformedMoveList(availables);
-    auto rotatedTransfer = generateTransformed(transfer, 1, true);
 
     auto rotatedMoves = generateTransformed(std::get<1>(data), 1, true); // NN output rotation
     auto value = std::get<2>(data);
@@ -165,7 +163,7 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
     auto type = std::get<5>(data);
 
     for(int i=0; i<8; ++i){
-        transformed_data.push_back(std::make_shared<TrainData>(NNInput{rotatedStates[i], rotatedAvail[i], rotatedTransfer[i]},
+        transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i],
              rotatedMoves[i], value, scoreDiff, rotatedMap[i], type));
     }
 
