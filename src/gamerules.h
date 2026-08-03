@@ -68,11 +68,7 @@ public:
     // list of possible moves, logit transfer list.
     void setPolicyMask();
 
-    const std::vector<int>& getAvailableMoves() const;
-
-    const std::vector<int>& getTransferTable() const;
-
-    std::pair<Move, int> threatCheck() const;
+    std::pair<Move, int> tacticCheck() const;
 
     // return type : winMove(resignMove if nothing), list of possible moves, transferTable. 
     // std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
@@ -125,6 +121,22 @@ public:
         return lastTwoMoves[idx];
     }
 
+    inline const std::vector<int>& getAvailableMoves() const{
+        return possibleMoves;
+    }
+
+    inline const std::vector<int>& getTransferTable() const{
+        return pTransferGroups;
+    }
+
+    inline Move getThreat() const{
+        return threat;
+    }
+
+    inline Move getWin() const{
+        return winmove;
+    }
+
     static inline Color reverseColor(Color c){
         return (c == BLACK) ? WHITE : BLACK;
     }
@@ -140,6 +152,8 @@ private:
     Stone stones[rowSize][colSize];    // Stone linked list info
 
     // for NN input.
+    Move threat;
+    Move winmove;
     std::vector<int> possibleMoves;
     std::vector<int> pTransferGroups;
 
@@ -194,7 +208,7 @@ private:
     std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segmentTable(const std::bitset<boardSize>& potScore) const;
 
     // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
-    std::vector<Move> possibleMovesWhenThreat(const Move& threat, const std::bitset<boardSize>& potScore) const;
+    void setPossibleMovesWhenThreat(const std::bitset<boardSize>& potScore);
     /////////////////////////////////////////////////////////////////////////
 
     uint8_t getLegalMoveCount() const;

@@ -412,7 +412,7 @@ MoveData Node::selectMoveProb(float temp){
 
 Node* Node::jump(Move move){
     if(N == 0){
-        // threatCheck();
+        // tacticCheck();
         game.setPolicyMask();
     }
     if(!expanded){
@@ -524,7 +524,7 @@ void Node::deleteTree(Node* exception){
 
 void Node::addDirichletNoise(Evaluator* evaluator){
     if(N == 0){
-        // threatCheck();
+        // tacticCheck();
     }
     if (!expanded) {
         game.setPolicyMask();

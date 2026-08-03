@@ -211,6 +211,20 @@ NNInput PolicyValueNet::getData(const Game& game){
 		}
 	}
 
+	// channel 18 : opponent's threat
+	// channel 19 : best move to avoid threat
+	Move threat = game.getThreat();
+	if(threat != RESIGNMOVE){
+		ret.at(18 * inputSize + threat.first * colSize + threat.second) = 1.0f;
+		ret.at(19 * inputSize + game.getAvailableMoves()[0]) = 1.0f;
+	}
+
+	// channel 20 : winning move
+	Move winmove = game.getWin();
+	if(winmove != RESIGNMOVE){
+		ret.at(20 * inputSize + winmove.first * colSize + winmove.second) = 1.0f;
+	}
+
 	std::vector<int> moves = game.getAvailableMoves();
 	moves.resize(boardSize + 1, -1);
     return {ret, moves, game.getTransferTable()};

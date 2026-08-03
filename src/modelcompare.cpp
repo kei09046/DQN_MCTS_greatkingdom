@@ -201,7 +201,7 @@ void ModelCompare::playHuman() {
 		displayBoardGUI(true, game_manager);
 		std::cout << std::endl;
 
-		// auto [onlymove, forcedState] = experiment.threatCheck();
+		// auto [onlymove, forcedState] = experiment.tacticCheck();
 		// if(onlymove != RESIGNMOVE){
 		// 	std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
 		// 	<< " " << static_cast<int>(onlymove.second) << std::endl;
