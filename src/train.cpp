@@ -106,8 +106,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 		if (winner == EMPTY) {
 			if(!player->jump(m)){ // very rare case
-				std::cerr << "game manager's state : " << std::endl;
-				ModelCompare::displayBoardGUI(false, game_manager);
+				std::cerr << "game manager's state : " << std::endl; 
+				ModelCompare::displayBoardGUI(true, game_manager);
 				std::cout << std::endl;
 				for(const auto& i : sequence){
 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";

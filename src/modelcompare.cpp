@@ -190,6 +190,7 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 void ModelCompare::playHuman() {
 	Game game_manager = Game();
 	Game experiment = Game();
+	experiment.setPolicyMask();
 	Move cord;
 	Color res;
 	while (true) {
@@ -206,7 +207,6 @@ void ModelCompare::playHuman() {
 		// 	std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
 		// 	<< " " << static_cast<int>(onlymove.second) << std::endl;
 		// }
-		experiment.setPolicyMask();
 		const auto& moves = experiment.getAvailableMoves();
 		const auto& transTable = experiment.getTransferTable();
 		
@@ -222,6 +222,7 @@ void ModelCompare::playHuman() {
 		std::cout << std::endl;
 		 
 		experiment.makeMoveGivenScore(cord);
+		experiment.setPolicyMask();
 		displayBoardGUI(true, experiment);
 		std::cout << std::endl;
 
@@ -363,20 +364,20 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
         for(int j=0; j<colSize; ++j){
             std::cout << display[i][j] << " ";
         }
-        std::cout << "\n";
+        std::cout << std::endl;
     }
 
-	// const auto nnInput = PolicyValueNet::getData(game);
-	// int cnt = rowSize * colSize * 8;
-	// for(int i=8; i<=17; ++i){
-	// 	std::cout << "\n channel " << i << "\n";
+	const auto nnInput = PolicyValueNet::getData(game);
+	int cnt = rowSize * colSize * 18 ;
+	for(int i=18; i<=21; ++i){
+		std::cout << "\n channel " << i << "\n";
 		
-	// 	for(int j=0; j<rowSize; ++j){
-	// 		for(int k=0; k<colSize; ++k)
-	// 			std::cout << nnInput[cnt++] << " ";
-	// 		std::cout << "\n";
-	// 	}
-	// }
+		for(int j=0; j<rowSize; ++j){
+			for(int k=0; k<colSize; ++k)
+				std::cout << nnInput[cnt++] << " ";
+			std::cout << "\n";
+		}
+	}
 }
 
 

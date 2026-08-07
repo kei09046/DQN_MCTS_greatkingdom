@@ -23,20 +23,30 @@ namespace{
         // edgeP/edgeN/child are indexed by position within getAvailableMoves(), not by raw
         // board position, so the returned vector must be compacted/reindexed the same way.
         const auto& availableMoves = node->game_().getAvailableMoves();
+        const auto& transferList = node->game_().getTransferTable();
         const int moveSize = availableMoves.size();
+        // available moves : [1, 2, 3, 7, 8, 9 ...]
+        // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...]
 
-        std::vector<float> n_logit(moveSize);
-        for(int i=0; i<moveSize; ++i){
-            n_logit[i] = logit[availableMoves[i]];
+        std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
+        for(int i=0; i<transferList.size(); ++i){
+            if(transferList[i] != -1){
+                transferred.at(transferList.at(i)) = std::max(transferred[transferList[i]], logit.at(i));
+            }
         }
 
+        // std::vector<float> n_logit(moveSize);
+        // for(int i=0; i<moveSize; ++i){
+        //     n_logit[i] = transferred.at(availableMoves[i]);
+        // }
+
         std::vector<float> exp_logit(moveSize);
-        float max_logit = *std::max_element(n_logit.begin(), n_logit.end()); // For numerical stability
+        float max_logit = *std::max_element(transferred.begin(), transferred.end()); // For numerical stability
 
         // Compute exponentials after subtracting max_logit
         float sum_exp = 0.0f;
         for (int i = 0; i < moveSize; ++i) {
-            exp_logit[i] = std::exp(n_logit[i] - max_logit);
+            exp_logit[i] = std::exp(transferred[i] - max_logit);
             sum_exp += exp_logit[i];
         }
 

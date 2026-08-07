@@ -210,7 +210,7 @@ void Game::setPolicyMask(){
     else if(wdl < 0){
         threat = tactic;
         possibleMoves.push_back(PASSMOVE.first * colSize + PASSMOVE.second);
-        pTransferGroups.at(winmove.first * colSize + winmove.second) = 0;
+        pTransferGroups.at(PASSMOVE.first * colSize + PASSMOVE.second) = 0;
         return;
     }
     else{
@@ -224,7 +224,7 @@ void Game::setPolicyMask(){
 
         if(threat != RESIGNMOVE){
             // first find list of possible moves.
-            setPossibleMovesWhenThreat(potScore);
+            std::vector<int> candidates = candidatesWhenThreat(potScore);
             // std::cerr << "possible moves : " << std::endl;
             // for(const auto& m : possibleMoves)
             //     printMove(m);
@@ -244,21 +244,21 @@ void Game::setPolicyMask(){
 
             int threatInt = threat.first * colSize + threat.second;
             // if only possible move is to play at threat, and if it can't generate any score
-            if(possibleMoves.size() == 1 && segIdx[threatInt] == 255U){
-                assert(possibleMoves[0] == threatInt);
+            if(candidates.size() == 1 && segIdx[threatInt] == 255U){
+                assert(candidates[0] == threatInt);
                 possibleMoves.push_back(threatInt);
                 pTransferGroups.at(threatInt) = 0;
                 return;
             }
 
             else{
-                for(const auto& option : possibleMoves){
+                for(const auto& option : candidates){
                     const std::bitset<boardSize> acquired = checkScore(option / colSize, option % colSize, currentTurn, segTable);
                     acquiredSeg |= acquired;
                     // if option == threat, it means that no other move made threat a territory.
                     if(acquired[threatSeg] || (option == threatInt)){
-                        possibleMoves.push_back(threatInt);
-                        pTransferGroups.at(threatInt) = 0;
+                        possibleMoves.push_back(option);
+                        pTransferGroups.at(option) = 0;
                         threatAcquireSeg = acquired;
                         // can break here. Not a bug.
                         break;
@@ -869,10 +869,11 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segmentTab
     return {segInfos, segMap};
 }
 
-void Game::setPossibleMovesWhenThreat(const std::bitset<boardSize>& potScore){
+std::vector<int> Game::candidatesWhenThreat(const std::bitset<boardSize>& potScore) const{
+    std::vector<int> candidates;
     if(potScore.none()){
-        possibleMoves.push_back(threat.first * colSize + threat.second);
-        return;
+        candidates = {threat.first * colSize + threat.second};
+        return candidates;
     }
         
     // find shortest path from T to opposite color stone.
@@ -910,13 +911,13 @@ void Game::setPossibleMovesWhenThreat(const std::bitset<boardSize>& potScore){
         for(uint8_t i=0U; i<rowSize; ++i){
             for(uint8_t j=0U; j<colSize; ++j){
                 if(direction[i][j] > 0U && potScore[i * colSize + j])
-                    possibleMoves.push_back(i * colSize + j);
+                    candidates.push_back(i * colSize + j);
             }
         }
 
         // if threat is not inserted, insert threat.
         if(!(direction[threat.first][threat.second] > 0U && potScore[threat.first * colSize + threat.second])){
-            possibleMoves.push_back(threat.first * colSize + threat.second);
+            candidates.push_back(threat.first * colSize + threat.second);
         }
     }
 
@@ -925,15 +926,16 @@ void Game::setPossibleMovesWhenThreat(const std::bitset<boardSize>& potScore){
         option = oppStone;
         while(option != threat){
             if(potScore[option.first * colSize + option.second])
-                possibleMoves.push_back(option.first * colSize + option.second);
+                candidates.push_back(option.first * colSize + option.second);
 
             const auto dir = direction[option.first][option.second];
             assert(dir >= 1 && dir <= 4);
             option.first -= dr[dir - 1];
             option.second -= dc[dir - 1];
         }
-        possibleMoves.push_back(threat.first * colSize + threat.second);
+        candidates.push_back(threat.first * colSize + threat.second);
     }
+    return candidates;
 }
 
 uint8_t Game::getLegalMoveCount() const{

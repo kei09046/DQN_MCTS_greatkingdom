@@ -208,7 +208,7 @@ private:
     std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segmentTable(const std::bitset<boardSize>& potScore) const;
 
     // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
-    void setPossibleMovesWhenThreat(const std::bitset<boardSize>& potScore);
+    std::vector<int> candidatesWhenThreat(const std::bitset<boardSize>& potScore) const;
     /////////////////////////////////////////////////////////////////////////
 
     uint8_t getLegalMoveCount() const;

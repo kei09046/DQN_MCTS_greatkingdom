@@ -222,8 +222,12 @@ NNInput PolicyValueNet::getData(const Game& game){
 		ret.at(20 * inputSize + winmove.first * colSize + winmove.second) = 1.0f;
 	}
 
-	std::vector<int> moves = game.getAvailableMoves();
-	moves.resize(boardSize + 1, -1);
+	// channel 21 : available moves
+	for(const auto& m : game.getAvailableMoves()){
+		if(m < inputSize)
+			ret.at(21 * inputSize + m) = 1.0f;
+	}
+
     return {ret};
 }
 
@@ -582,7 +586,6 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 // }
 
-// TODO : TrainData should now include game's availableMoves & transferTable info.
 std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
 	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
 	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr){
@@ -669,8 +672,8 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		/////////////////////////
 
 		// TODO : find best ratio
-		torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		// torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss + capture_loss;
+		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
+		torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss + capture_loss;
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();
@@ -725,7 +728,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 			net = std::make_shared<Net>(18, 20);
 		}
 		else if(model_type == "I"){
-			net = std::make_shared<Net>(20, 20);
+			net = std::make_shared<Net>(22, 20);
 		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
@@ -734,7 +737,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(20, 20);
+		policy_value_net = std::make_shared<Net>(22, 20);
 	}
 
 	policy_value_net->to(device);
