@@ -73,6 +73,11 @@ public:
 
     void printVariation();
 
+    // Prints root winrate + per-candidate-move (visits, policy prior, winrate) breakdown
+    // for analysis mode. Requires globalConfig.detailedStat = true (winrate is otherwise
+    // never accumulated).
+    void printAnalysis();
+
     bool jump(Move move);
 
     void reset();
@@ -86,6 +91,10 @@ public:
         return root->forcedState;
     }
 
+    inline int rootVisits() const{
+        return static_cast<int>(root->N);
+    }
+
     #ifdef measureTime
     std::vector<int> getTimeStats() const;
     
@@ -97,9 +106,14 @@ private:
     Evaluator* evaluator; // shared along multiple MCTS instances
     TransTable* transposTable;
 
-    void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation, 
+    void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation,
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
     const int playMode, const int nPlayout, const int timeLimit);
+
+    // Walks from `node` picking the highest-edgeN child at each step (same selection rule as
+    // printVariation()'s main line), falling back to the forced win/loss chain when applicable.
+    // Used by printAnalysis() to attach a short follow-up line to each candidate move.
+    std::vector<Move> followUpFrom(Node* node, int maxDepth);
 
     void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
 

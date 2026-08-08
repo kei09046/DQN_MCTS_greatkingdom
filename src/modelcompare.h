@@ -18,6 +18,11 @@ public:
 
 	static void playGTP(const std::string& model, float temp, bool gpu); // play against human via GTP
 
+	// Interactive analysis mode: reads "reset" / "play <r> <c>" / "analyze [playouts]" / "quit"
+	// commands from stdin, letting a caller build up an arbitrary position and request a
+	// winrate / policy / visit-count breakdown for it without playing a full game.
+	static void analyze(const std::string& model, bool gpu);
+
 	static void playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two

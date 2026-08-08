@@ -322,6 +322,7 @@ import re
 import subprocess
 import threading
 import queue
+import math
 
 from tkinter import *
 from PIL import Image, ImageTk
@@ -336,6 +337,66 @@ MODELS_DIR = os.path.join(REPO_ROOT, "models")
 ENGINE_BLACK = 1
 ENGINE_WHITE = 2
 
+BOARD_BG = "#DCB35C"
+OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit intensity
+
+
+def _blend_hex(c1, c2, t):
+    """Lerp between two '#rrggbb' colors by t in [0, 1]; used to fake per-marker opacity
+    (Tk canvas fills have no real alpha) by blending toward the board background instead."""
+    t = max(0.0, min(1.0, t))
+    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+    r = round(r1 + (r2 - r1) * t)
+    g = round(g1 + (g2 - g1) * t)
+    b = round(b1 + (b2 - b1) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _luminance(hex_color):
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _policy_visit_cross_entropy(result):
+    """H(visit distribution, policy prior) -- same quantity AlphaZero-style training uses as
+    the policy head's loss, with the search's own visit counts standing in for the target."""
+    total_visits = result.get("visits") or 0
+    moves = result.get("moves", [])
+    if total_visits <= 0 or not moves:
+        return None
+
+    eps = 1e-8
+    ce = 0.0
+    for mv in moves:
+        visits = mv.get("visits", 0)
+        if visits <= 0:
+            continue
+        target = visits / total_visits
+        pred = max(mv.get("prior", 0.0), eps)
+        ce -= target * math.log(pred)
+    return ce
+
+
+def _value_mse(result):
+    """Squared error between the network's first-look value estimate (initQ, before any search)
+    and the fully-searched winrate -- how far search moved the evaluation from its first guess."""
+    init_q = result.get("initQ")
+    winrate = result.get("winrate")
+    if init_q is None or winrate is None:
+        return None
+    return (init_q - winrate) ** 2
+
+
+def _sorted_candidate_moves(result):
+    """Candidate moves with at least one visit, sorted by visit count -- the exact set/order the
+    candidate Listbox is populated in, so a row index maps back to the same move on either side."""
+    moves = sorted(result.get("moves", []), key=lambda m: m["visits"], reverse=True)
+    return [mv for mv in moves if mv["visits"] > 0]
+
+
 _FLOAT = r"(-?\d+\.?\d*(?:[eE][+-]?\d+)?)"
 
 # "move : <r> <c>" -- the engine's chosen move
@@ -348,6 +409,20 @@ _VARIATION_RE = re.compile(r"^(-?\d+) (-?\d+) (\d+) forced (-?\d+) Q:")
 _WINPROB_RE = re.compile(r"^winprob\s*:\s*" + _FLOAT)
 # "scoreEXP : <float>" expected score difference
 _SCOREEXP_RE = re.compile(r"^scoreEXP\s*:\s*" + _FLOAT)
+
+# ---- ModelCompare::analyze() protocol (see MCTS::printAnalysis in src/PMCTS.cpp) ----
+# "winrate : <float>" (-1 = 0%, 1 = 100%, from the perspective of whoever is to move)
+_ANALYSIS_WINRATE_RE = re.compile(r"^winrate\s*:\s*" + _FLOAT)
+# "visits : <int>" total root visit count
+_ANALYSIS_VISITS_RE = re.compile(r"^visits\s*:\s*(\d+)")
+# "initQ : <float>" -- the raw value-head output the first time this position was evaluated
+_ANALYSIS_INITQ_RE = re.compile(r"^initQ\s*:\s*" + _FLOAT)
+# "move <r> <c> visits <N> prior <P> winrate <W> q <Q> variation <r1> <c1> <r2> <c2> ..." --
+# one candidate move; the variation tail is 0 or more coordinate pairs, captured whole and
+# split separately since its length varies per move.
+_ANALYSIS_MOVE_RE = re.compile(
+    r"^move\s+(-?\d+)\s+(-?\d+)\s+visits\s+" + _FLOAT + r"\s+prior\s+" + _FLOAT
+    + r"\s+winrate\s+" + _FLOAT + r"\s+q\s+" + _FLOAT + r"\s+variation(.*)$")
 
 
 def list_models(models_dir=MODELS_DIR):
@@ -448,6 +523,110 @@ class EngineProcess:
             self.proc.terminate()
 
 
+class AnalysisEngine:
+    """Wraps `./play analyze <model>` (ModelCompare::analyze in src/modelcompare.cpp).
+
+    Unlike EngineProcess, this never moves on its own: the caller drives the position
+    with reset()/play() and explicitly asks for a winrate/policy/visit-count breakdown
+    of every candidate move via request_analysis(). Results stream back asynchronously
+    through a reader thread, same pattern as EngineProcess.
+    """
+
+    def __init__(self, model, build_dir=BUILD_DIR):
+        self.proc = subprocess.Popen(
+            ["./play", "analyze", model],
+            cwd=build_dir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        # results: dicts {"winrate": float, "visits": int,
+        #                 "moves": [{"move": (r,c), "visits": float, "prior": float, "winrate": float}, ...]}
+        self.results = queue.Queue()
+        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader_thread.start()
+
+    def _read_loop(self):
+        in_block = False
+        current = None
+
+        for line in self.proc.stdout:
+            line = line.rstrip("\n")
+
+            if line == "analysis begin":
+                in_block = True
+                current = {"winrate": None, "visits": None, "initQ": None, "moves": []}
+                continue
+            if line == "analysis end":
+                in_block = False
+                if current is not None:
+                    self.results.put(current)
+                current = None
+                continue
+            if not in_block:
+                continue
+
+            m = _ANALYSIS_MOVE_RE.match(line)
+            if m:
+                r, c, visits, prior, winrate, q, var_tail = m.groups()
+                var_ints = [int(x) for x in var_tail.split()]
+                variation = list(zip(var_ints[0::2], var_ints[1::2]))
+                current["moves"].append({
+                    "move": (int(r), int(c)),
+                    "visits": float(visits),
+                    "prior": float(prior),
+                    "winrate": float(winrate),
+                    "q": float(q),
+                    "variation": variation,
+                })
+                continue
+
+            m = _ANALYSIS_WINRATE_RE.match(line)
+            if m:
+                current["winrate"] = float(m.group(1))
+                continue
+
+            m = _ANALYSIS_VISITS_RE.match(line)
+            if m:
+                current["visits"] = int(m.group(1))
+                continue
+
+            m = _ANALYSIS_INITQ_RE.match(line)
+            if m:
+                current["initQ"] = float(m.group(1))
+                continue
+
+    def _send(self, cmd):
+        if self.proc.poll() is not None or self.proc.stdin.closed:
+            return
+        try:
+            self.proc.stdin.write(cmd + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def send_reset(self):
+        self._send("reset")
+
+    def send_play(self, x, y):
+        self._send(f"play {x} {y}")
+
+    def request_analysis(self, playouts=None):
+        self._send("analyze" if playouts is None else f"analyze {playouts}")
+
+    def get_result_nowait(self):
+        try:
+            return self.results.get_nowait()
+        except queue.Empty:
+            return None
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+
+
 class Game:
     def __init__(self, margin=50):
         self.rule = RuleManager()
@@ -460,18 +639,21 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        self.root.geometry("1300x1000")
+        self.root.geometry("1420x1000")
 
         self.boardFrame = Frame(self.root)
-        self.canvas = Canvas(self.boardFrame, width=900, height=900, bg="#DCB35C", highlightthickness=0)
+        self.canvas = Canvas(self.boardFrame, width=900, height=900, bg=BOARD_BG, highlightthickness=0)
         self.passButton = Button(self.boardFrame, text="pass")
         self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
 
-        self.sideFrame = Frame(self.root, width=300)
+        self.sideFrame = Frame(self.root, width=420, height=900)
+        self.sideFrame.pack_propagate(False)
         self.setupPanel = None
         self.analysisPanel = None
+        self.analysisResultPanel = None
         self._build_setup_panel()
         self._build_analysis_panel()
+        self._build_analysis_result_panel()
 
         self.stones = []
         self.stones.append(
@@ -486,6 +668,10 @@ class Game:
         self.engine = None
         self.human_color = 0
         self.game_over = False
+        self.analysis_mode = False
+        self.analysisEngine = None
+        self.last_analysis_result = None
+        self.selected_variation_move = None
 
     def _build_setup_panel(self):
         panel = Frame(self.sideFrame)
@@ -525,6 +711,15 @@ class Game:
         Label(panel, text="No engine selected: the board is\nfree to play locally, move by move.",
               wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
         Button(panel, text="New Local Game", command=self.reset_board).pack(fill=X)
+
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
+
+        Label(panel, text="See what the selected model thinks of\nthe position currently on the board.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
+        self.analyze_button = Button(panel, text="Analyze Position", command=self.start_position_analysis)
+        self.analyze_button.pack(fill=X)
+        if not models:
+            self.analyze_button.configure(state=DISABLED)
 
     def _open_model_picker(self):
         models = list_models()
@@ -587,13 +782,63 @@ class Game:
 
         Button(panel, text="End Game / Back to Setup", command=self.end_ai_game).pack(fill=X, pady=(20, 0))
 
-    def _show_setup_panel(self):
-        self.analysisPanel.pack_forget()
-        self.setupPanel.pack(fill=X)
+    def _build_analysis_result_panel(self):
+        panel = Frame(self.sideFrame)
+        self.analysisResultPanel = panel
 
-    def _show_analysis_panel(self):
-        self.setupPanel.pack_forget()
-        self.analysisPanel.pack(fill=X)
+        Label(panel, text="Position Analysis", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+
+        limit_row = Frame(panel)
+        limit_row.pack(fill=X, pady=(0, 10))
+        Label(limit_row, text="Playout limit:").pack(side=LEFT)
+        self.analysis_limit_var = StringVar(value="4000")
+        Entry(limit_row, textvariable=self.analysis_limit_var, width=8).pack(side=LEFT, padx=(5, 5))
+        Button(limit_row, text="Apply", command=self.apply_analysis_limit).pack(side=LEFT)
+
+        Label(panel, text="Board overlay:", anchor="w").pack(fill=X)
+        overlay_row = Frame(panel)
+        overlay_row.pack(fill=X, pady=(2, 10))
+        self.overlay_var = StringVar(value="none")
+        for label, value in (("No effect", "none"), ("Policy", "policy"),
+                              ("Visits", "visits"), ("Variation", "variation")):
+            Radiobutton(overlay_row, text=label, variable=self.overlay_var, value=value,
+                        command=self._on_overlay_mode_change).pack(side=LEFT)
+
+        self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
+        self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisInitQLabel = Label(panel, text="Initial value (initQ): -", font=("Helvetica", 12), anchor="w")
+        self.analysisInitQLabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisValueMSELabel = Label(panel, text="Value MSE loss: -", font=("Helvetica", 12), anchor="w")
+        self.analysisValueMSELabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisPolicyCELabel = Label(panel, text="Policy CE loss: -", font=("Helvetica", 12), anchor="w")
+        self.analysisPolicyCELabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisVisitsLabel = Label(panel, text="Visits: -", font=("Helvetica", 12), anchor="w")
+        self.analysisVisitsLabel.pack(fill=X, pady=5, anchor="w")
+
+        self.candidateListHeader = Label(panel, text="Candidate moves, by visit count:",
+                                          font=("Helvetica", 10, "bold"), anchor="w",
+                                          wraplength=260, justify=LEFT)
+        self.candidateListHeader.pack(fill=X, pady=(10, 0))
+        self.candidateColumnHeader = Label(panel, text="move       visits   policy  winrate     Q",
+                                            font=("Courier", 9), fg="#555555", anchor="w")
+        self.candidateColumnHeader.pack(fill=X, pady=(2, 2))
+
+        list_frame = Frame(panel)
+        list_frame.pack(fill=BOTH, expand=True)
+        scrollbar = Scrollbar(list_frame, orient=VERTICAL)
+        self.analysisListbox = Listbox(list_frame, yscrollcommand=scrollbar.set,
+                                        font=("Courier", 10), height=20, exportselection=False)
+        scrollbar.configure(command=self.analysisListbox.yview)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        self.analysisListbox.pack(side=LEFT, fill=BOTH, expand=True)
+        self.analysisListbox.bind("<<ListboxSelect>>", self._on_candidate_listbox_select)
+
+        Button(panel, text="Stop Analysis / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(10, 0))
+
+    def _show_panel(self, panel):
+        for p in (self.setupPanel, self.analysisPanel, self.analysisResultPanel):
+            p.pack_forget()
+        panel.pack(fill=BOTH, expand=True)
 
     def start(self):
         """Open the main window with a freely playable board and the setup panel."""
@@ -625,7 +870,7 @@ class Game:
         self.canvas.bind("<Button-1>", self.on_click)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self._show_setup_panel()
+        self._show_panel(self.setupPanel)
         self._update_status()
 
     def _draw_star_points(self):
@@ -685,6 +930,10 @@ class Game:
             res = self.rule.make_move(x_cord, y_cord)
             if self.against_ai:
                 self.engine.send_move(x_cord, y_cord)
+            elif self.analysis_mode:
+                self.analysisEngine.send_play(x_cord, y_cord)
+                self.analysisEngine.request_analysis(self._get_analysis_limit())
+                self.selected_variation_move = None
             if res == 1 or res == -1 or res == -2:
                 self.on_end(res * self.rule.turn)
             else:
@@ -698,6 +947,10 @@ class Game:
             result = self.rule.make_move(-1, 0)
             if self.against_ai:
                 self.engine.send_move(self.boardSize, 0)
+            elif self.analysis_mode:
+                self.analysisEngine.send_play(self.boardSize, 0)
+                self.analysisEngine.request_analysis(self._get_analysis_limit())
+                self.selected_variation_move = None
 
             if result == -2:
                 self.on_end(-2)
@@ -712,15 +965,22 @@ class Game:
         if self.engine is not None:
             self.engine.close()
             self.engine = None
+        if self.analysisEngine is not None:
+            self.analysisEngine.close()
+            self.analysisEngine = None
         self.canvas.delete("stone")
+        self.canvas.delete("move_overlay")
+        self.last_analysis_result = None
+        self.selected_variation_move = None
         self.rule = RuleManager()
         self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
         self.turn = 0
         self.game_over = False
         self.against_ai = False
+        self.analysis_mode = False
         self.human_color = 0
         self.statusLabel.configure(text="")
-        self._show_setup_panel()
+        self._show_panel(self.setupPanel)
         self._update_status()
 
     # human_color: 0 for black, 1 for white
@@ -738,13 +998,270 @@ class Game:
         self.engine = EngineProcess(model, engine_color, build_dir=build_dir)
         self.against_ai = True
 
-        self._show_analysis_panel()
+        self._show_panel(self.analysisPanel)
         self._update_status()
         self.root.after(100, self.poll_engine)
         self.root.after(100, self.poll_stats)
 
     def end_ai_game(self):
         self.reset_board()
+
+    def start_position_analysis(self, model=None):
+        """Launch (or restart) the analysis engine and evaluate the position currently on the board."""
+        if model is None:
+            model = self.setup_model_var.get()
+        if not model:
+            return
+
+        if self.engine is not None:
+            self.engine.close()
+            self.engine = None
+        self.against_ai = False
+        if self.analysisEngine is not None:
+            self.analysisEngine.close()
+
+        self.analysisEngine = AnalysisEngine(model, build_dir=BUILD_DIR)
+        self.analysis_mode = True
+        self._sync_analysis_position()
+
+        self._show_panel(self.analysisResultPanel)
+        self._update_status()
+        self.root.after(100, self.poll_analysis)
+
+    def _sync_analysis_position(self):
+        """Replay the current game's move sequence into the analysis engine and request a first pass."""
+        self.selected_variation_move = None
+        self.analysisEngine.send_reset()
+        for x, y in self.rule.seq:
+            if x == -1 or y == -1:
+                self.analysisEngine.send_play(self.boardSize, 0)
+            else:
+                self.analysisEngine.send_play(x, y)
+        self.analysisEngine.request_analysis(self._get_analysis_limit())
+
+    def _get_analysis_limit(self):
+        try:
+            return max(1, int(self.analysis_limit_var.get()))
+        except ValueError:
+            return 4000
+
+    def apply_analysis_limit(self):
+        """Re-request analysis with whatever limit is currently in the entry box.
+
+        The engine tracks visits cumulatively on the current position, so raising the
+        limit resumes search on the existing tree instead of restarting; lowering it
+        (or leaving it unchanged) is a cheap no-op re-print of the current snapshot.
+        """
+        if not self.analysis_mode or self.analysisEngine is None:
+            return
+        self.analysisEngine.request_analysis(self._get_analysis_limit())
+
+    def end_analysis_mode(self):
+        self.analysis_mode = False
+        if self.analysisEngine is not None:
+            self.analysisEngine.close()
+            self.analysisEngine = None
+        self.canvas.delete("move_overlay")
+        self.last_analysis_result = None
+        self._show_panel(self.setupPanel)
+
+    def poll_analysis(self):
+        if not self.analysis_mode or self.game_over:
+            return
+        latest = None
+        while True:
+            r = self.analysisEngine.get_result_nowait()
+            if r is None:
+                break
+            latest = r
+        if latest is not None:
+            self._update_analysis_result_panel(latest)
+        if self.analysis_mode and not self.game_over:
+            self.root.after(200, self.poll_analysis)
+
+    def _on_overlay_mode_change(self):
+        if self.last_analysis_result is not None:
+            self._draw_move_overlay(self.last_analysis_result)
+            self._update_candidate_listbox(self.last_analysis_result)
+        else:
+            self.canvas.delete("move_overlay")
+
+    def _draw_move_overlay(self, result):
+        self.canvas.delete("move_overlay")
+
+        mode = self.overlay_var.get()
+        if mode == "none":
+            return
+
+        moves = result.get("moves", [])
+        if not moves:
+            return
+
+        if mode == "variation":
+            self._draw_variation_overlay(moves)
+            return
+
+        if mode == "policy":
+            # prior is already a probability (fraction of 1); use it directly as the "share".
+            get_val = lambda mv: mv["prior"]
+            get_share = lambda mv: mv["prior"]
+        else:
+            total_visits = result.get("visits") or 0
+            if total_visits <= 0:
+                return
+            get_val = lambda mv: mv["visits"]
+            get_share = lambda mv: mv["visits"] / total_visits
+
+        max_val = max((get_val(mv) for mv in moves), default=0.0)
+        if max_val <= 0:
+            return
+
+        r = int(self.stone_size * 0.42)
+        font_size = max(7, int(self.stone_size * 0.16))
+        for mv in moves:
+            if get_share(mv) < 0.01:  # hide anything under 1% probability/visit share -- mostly noise
+                continue
+            val = get_val(mv)
+            x, y = mv["move"]
+            if x < 0 or x >= self.boardSize or y < 0 or y >= self.boardSize or self.on_stone[x][y]:
+                continue
+
+            color = _blend_hex(BOARD_BG, OVERLAY_COLOR, val / max_val)
+            text_color = "#ffffff" if _luminance(color) < 140 else "#000000"
+            label = f"{val * 100:.0f}%" if mode == "policy" else f"{int(val)}"
+
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline="",
+                                     tags=("move_overlay", "move_overlay_shape"))
+            self.canvas.create_text(cx, cy, text=label, fill=text_color,
+                                     font=("Helvetica", font_size, "bold"),
+                                     tags=("move_overlay", "move_overlay_text"))
+
+            q_val = mv.get("q")
+            if q_val is not None:
+                self.canvas.create_text(cx, cy + r + max(8, int(font_size * 0.7)),
+                                         text=f"{q_val:+.2f}", fill="#1a1a1a",
+                                         font=("Helvetica", max(6, font_size - 2)),
+                                         tags=("move_overlay", "move_overlay_text"))
+
+        # stacking order (bottom to top): overlay circles, grid/star (board coordinates),
+        # stones, overlay numbers. Sink the circles below everything already on the board
+        # (grid/star/stones) instead of raising grid/star, which would otherwise climb above
+        # stones too; keep the numbers on top so they stay legible even over a star point.
+        self.canvas.tag_lower("move_overlay_shape")
+        self.canvas.tag_raise("move_overlay_text")
+
+    def _draw_variation_overlay(self, moves):
+        """KataGo-style principal-variation overlay: numbered stone-colored markers tracing the
+        expected continuation for the selected candidate (or the top/highest-visit move if none
+        has been clicked in the list yet), alternating color by ply."""
+        target = None
+        if self.selected_variation_move is not None:
+            target = next((mv for mv in moves if mv["move"] == self.selected_variation_move
+                            and mv["visits"] > 0), None)
+        if target is None:
+            target = max(moves, key=lambda mv: mv["visits"])
+        if target["visits"] <= 0:
+            return
+
+        seq = [target["move"]] + target.get("variation", [])
+        if not seq:
+            return
+
+        r = int(self.stone_size * 0.42)
+        font_size = max(7, int(self.stone_size * 0.32))
+        mover = self.turn  # 0 = black, 1 = white -- whoever is to move in the analyzed position
+
+        for idx, (x, y) in enumerate(seq):
+            if x < 0 or x >= self.boardSize or y < 0 or y >= self.boardSize or self.on_stone[x][y]:
+                continue
+
+            black_to_play = (mover + idx) % 2 == 0
+            fill = "#111111" if black_to_play else "#f2f2f2"
+            text_color = "#ffffff" if black_to_play else "#000000"
+
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=fill, outline="#000000",
+                                     tags=("move_overlay", "move_overlay_shape"))
+            self.canvas.create_text(cx, cy, text=str(idx + 1), fill=text_color,
+                                     font=("Helvetica", font_size, "bold"),
+                                     tags=("move_overlay", "move_overlay_text"))
+
+        self.canvas.tag_lower("move_overlay_shape")
+        self.canvas.tag_raise("move_overlay_text")
+
+    def _update_analysis_result_panel(self, result):
+        self.last_analysis_result = result
+        self._draw_move_overlay(result)
+
+        winrate = result.get("winrate")
+        if winrate is not None:
+            pct = (winrate + 1) / 2 * 100
+            self.analysisWinrateLabel.configure(text=f"Win probability: {pct:.1f}%")
+
+        init_q = result.get("initQ")
+        if init_q is not None:
+            self.analysisInitQLabel.configure(text=f"Initial value (initQ): {init_q:+.4f}")
+
+        mse = _value_mse(result)
+        if mse is not None:
+            self.analysisValueMSELabel.configure(text=f"Value MSE loss: {mse:.4f}")
+
+        ce = _policy_visit_cross_entropy(result)
+        if ce is not None:
+            self.analysisPolicyCELabel.configure(text=f"Policy CE loss: {ce:.4f}")
+
+        visits = result.get("visits")
+        if visits is not None:
+            limit = self._get_analysis_limit()
+            status = "analyzing..." if visits < limit else "done"
+            self.analysisVisitsLabel.configure(text=f"Visits: {visits} / {limit} ({status})")
+
+        self._update_candidate_listbox(result)
+
+    def _update_candidate_listbox(self, result):
+        show_variation = self.overlay_var.get() == "variation"
+
+        if show_variation:
+            self.candidateListHeader.configure(text="Candidate moves, with follow-up line:")
+            self.candidateColumnHeader.configure(text="expected continuation")
+        else:
+            self.candidateListHeader.configure(text="Candidate moves, by visit count:")
+            self.candidateColumnHeader.configure(text="move       visits   policy  winrate     Q")
+
+        self.analysisListbox.delete(0, END)
+        moves = _sorted_candidate_moves(result)
+        selected_row = None
+        for idx, mv in enumerate(moves):
+            r, c = mv["move"]
+            if mv["move"] == self.selected_variation_move:
+                selected_row = idx
+            if show_variation:
+                seq = [(r, c)] + mv.get("variation", [])
+                self.analysisListbox.insert(END, " → ".join(f"({sr},{sc})" for sr, sc in seq))
+            else:
+                pct = (mv["winrate"] + 1) / 2 * 100
+                self.analysisListbox.insert(
+                    END, f"({r},{c})".ljust(10) + f"{int(mv['visits']):<8}"
+                         f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}")
+
+        if show_variation and selected_row is not None:
+            self.analysisListbox.selection_set(selected_row)
+
+    def _on_candidate_listbox_select(self, event=None):
+        if self.overlay_var.get() != "variation" or self.last_analysis_result is None:
+            return
+        sel = self.analysisListbox.curselection()
+        if not sel:
+            return
+        moves = _sorted_candidate_moves(self.last_analysis_result)
+        idx = sel[0]
+        if idx >= len(moves):
+            return
+        self.selected_variation_move = moves[idx]["move"]
+        self._draw_move_overlay(self.last_analysis_result)
 
     def poll_engine(self):
         if not self.against_ai or self.game_over:
@@ -828,10 +1345,15 @@ class Game:
 
         if self.engine is not None:
             self.engine.close()
+        if self.analysisEngine is not None:
+            self.analysisEngine.close()
+            self.analysisEngine = None
 
     def on_close(self):
         if self.engine is not None:
             self.engine.close()
+        if self.analysisEngine is not None:
+            self.analysisEngine.close()
         self.root.destroy()
 
     @staticmethod

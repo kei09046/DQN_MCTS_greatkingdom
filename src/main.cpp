@@ -36,6 +36,11 @@ int main(int argc, char** argv) {
         int co = std::stoi(argv[3]); // human Color
         ModelCompare::play(model_file, (Color)co, 10.0f, true, true);
     }
+    else if(mod == "analyze"){
+        globalConfig = loadConfig("../configs/play_config.json");
+        std::string model_file = argv[2];
+        ModelCompare::analyze(model_file, true);
+    }
     else if(mod == "web"){
         globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];

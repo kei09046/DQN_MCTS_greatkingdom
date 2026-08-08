@@ -82,6 +82,77 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 	return;
 }
 
+void ModelCompare::analyze(const std::string& model, bool gpu) {
+	Game game_manager = Game();
+	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
+	MCTS player = MCTS(evaluator);
+
+	std::cout << "analysis ready" << std::endl;
+
+	std::string line;
+	while (std::getline(std::cin, line)) {
+		std::istringstream iss(line);
+		std::string cmd;
+		iss >> cmd;
+
+		if (cmd == "quit") {
+			break;
+		}
+		else if (cmd == "reset") {
+			game_manager = Game();
+			player.reset();
+			std::cout << "reset ok" << std::endl;
+		}
+		else if (cmd == "play") {
+			int r, c;
+			iss >> r >> c;
+			Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+
+			if (m == PASSMOVE || game_manager.isLegal(m)) {
+				Color res = game_manager.makeMove(m).first;
+				player.jump(m);
+				std::cout << "play ok" << std::endl;
+				if (res != EMPTY) {
+					std::cout << "game over : " << static_cast<int>(res) << std::endl;
+				}
+			}
+			else {
+				std::cout << "play illegal" << std::endl;
+			}
+		}
+		else if (cmd == "analyze") {
+			// target is a *cumulative* visit count on the root, not a one-shot playout budget:
+			// re-requesting the same or a lower target is a no-op (just re-prints current state),
+			// and raising it later resumes search on the existing tree instead of restarting.
+			int targetVisits = globalConfig.nPlayout;
+			int requested;
+			if (iss >> requested)
+				targetVisits = requested;
+
+			constexpr int chunk = 100; // stream a fresh snapshot roughly this often, for a live "mid-search" view
+
+			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+			bool ranAny = false;
+			while (player.rootVisits() < targetVisits && player.rootForcedState() == 0) {
+				int remaining = targetVisits - player.rootVisits();
+				player.runSimulation(PLAYOUT, std::min(chunk, remaining), 0);
+				player.printAnalysis();
+				ranAny = true;
+			}
+			if (!ranAny)
+				player.printAnalysis();
+			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+			std::cout << "analyze time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
+		}
+		else {
+			std::cout << "unknown command" << std::endl;
+		}
+	}
+
+	delete evaluator;
+	return;
+}
+
 void ModelCompare::playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);

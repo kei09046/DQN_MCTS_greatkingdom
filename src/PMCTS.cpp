@@ -725,6 +725,115 @@ void MCTS::printVariation(){
     }
 }
 
+std::vector<Move> MCTS::followUpFrom(Node* node, int maxDepth){
+    std::vector<Move> seq;
+
+    while(node != nullptr && node->N > 1 && (int)seq.size() < maxDepth){
+        int maxv = -1;
+        int maxi = -1;
+        int m;
+
+        if(node->forcedState == 0){
+            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+                if(node->edgeN[i] > maxv){
+                    maxv = node->edgeN[i];
+                    maxi = i;
+                }
+            }
+            if(maxi == -1)
+                break;
+            m = node->game.getAvailableMoves()[maxi];
+        }
+        else if(node->forcedState > 0){
+            for(int i=0; i<node->child.size(); ++i){
+                if(node->child[i]->forcedState < 0){
+                    m = node->game.getAvailableMoves()[i];
+                    maxi = i;
+                    break;
+                }
+            }
+            if(maxi == -1 || node->forcedState == 2)
+                break;
+        }
+        else{ // losing. Delay losing as much as possible.
+            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+                if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
+                    maxv = node->child[i]->forcedState;
+                    maxi = i;
+                }
+            }
+            if(maxi == -1)
+                break;
+            m = node->game.getAvailableMoves()[maxi];
+        }
+
+        seq.push_back({static_cast<uint8_t>(m / colSize), static_cast<uint8_t>(m % colSize)});
+        node = node->child[maxi];
+    }
+
+    return seq;
+}
+
+void MCTS::printAnalysis(){
+    std::cout << "analysis begin" << std::endl;
+
+    if(root->forcedState > 0)
+        std::cout << "winrate : 1" << std::endl;
+    else if(root->forcedState < 0)
+        std::cout << "winrate : -1" << std::endl;
+    else if(root->N > 0)
+        // Every playout adds root's OWN Wp contribution with a sign already oriented so that
+        // root->Wp/root->N == -(visit-weighted average of the *children's* raw Wp/N below) --
+        // verified numerically against real search output. Since the per-move winrate below is
+        // deliberately left unnegated (child->Wp/N, matching how selectChildInSearch() reads
+        // child->W directly as its PUCT preference -- the heaviest-visited child empirically has
+        // the *highest* unnegated value, not the lowest), root's own line needs the negation to
+        // land on the same scale: "root winrate" ends up the weighted average of the move winrates
+        // printed below, rather than their complement.
+        std::cout << "winrate : " << (-root->Wp / root->N) << std::endl;
+    else
+        std::cout << "winrate : 0" << std::endl;
+    std::cout << "visits : " << root->N << std::endl;
+    // root->initQ is set exactly once, the first time this exact position is ever evaluated by
+    // the network (calculateQ's blended-utility output) -- i.e. the raw value-head verdict before
+    // any tree search refined it. Comparing it against the searched winrate above shows how much
+    // search moved the evaluation away from the network's first guess.
+    std::cout << "initQ : " << root->initQ << std::endl;
+
+    // per-move breakdown is only meaningful once the root has been expanded with real moves.
+    if(root->forcedState == 0){
+        const auto& moves = root->game.getAvailableMoves();
+        for(int i=0; i<moves.size(); ++i){
+            int r = moves[i] / colSize;
+            int c = moves[i] % colSize;
+
+            float visits = (i < root->edgeN.size()) ? root->edgeN[i] : 0.0f;
+            float prior = (i < root->edgeP.size()) ? root->edgeP[i] : 0.0f;
+            float winrate = 0.0f;
+            float q = 0.0f;
+            if(i < root->child.size() && root->child[i] != nullptr && root->child[i]->N > 0){
+                winrate = root->child[i]->Wp / root->child[i]->N;
+                q = root->child[i]->W / root->child[i]->N; // blended utility actually used for PUCT selection
+            }
+
+            std::cout << "move " << r << " " << c
+                       << " visits " << visits
+                       << " prior " << prior
+                       << " winrate " << winrate
+                       << " q " << q
+                       << " variation";
+            if(i < root->child.size() && root->child[i] != nullptr){
+                for(const Move& fm : followUpFrom(root->child[i], 6)){
+                    std::cout << " " << (int)fm.first << " " << (int)fm.second;
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+
+    std::cout << "analysis end" << std::endl;
+}
+
 bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
