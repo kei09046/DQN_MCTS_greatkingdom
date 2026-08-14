@@ -4,7 +4,7 @@
 #include <torch/torch.h>
 #include "gamerules.h"
 
-using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
+using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 using NNInput = std::vector<float>;
 
 // board, moveprob, result, score diff, (score map/capture map), wintype
@@ -157,9 +157,9 @@ public:
 	torch::nn::Conv2d sc_map_cv4;
 
 	// capture
-	torch::nn::Conv2d cap_cv3;
-	torch::nn::BatchNorm2d cap_bn3;
-	torch::nn::Conv2d cap_cv4;
+	// torch::nn::Conv2d cap_cv3;
+	// torch::nn::BatchNorm2d cap_bn3;
+	// torch::nn::Conv2d cap_cv4;
 };
 
 

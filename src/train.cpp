@@ -161,76 +161,77 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			player->resetTimeStats();
 			#endif
 
-			if(wintype == CAPTURE){
-				std::vector<float> maskedMap(boardSize, 0.0f);
-				int idx = 0;
-				for(const auto& move : sequence){
-					std::get<2>(buffer[idx]) = result;
-					std::get<3>(buffer[idx]) = score_diff;
-					std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
+			// if(wintype == CAPTURE){
+			// 	std::vector<float> maskedMap(boardSize, 0.0f);
+			// 	int idx = 0;
+			// 	for(const auto& move : sequence){
+			// 		std::get<2>(buffer[idx]) = result;
+			// 		std::get<3>(buffer[idx]) = score_diff;
+			// 		std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
 
-					insertData(buffer[idx]);
+			// 		insertData(buffer[idx]);
 
-					// set up data after move.
-					idx++;
-					result = -result; // switch color
-					score_diff = -score_diff;
-					if(move != PASSMOVE){
-						int mv = move.first * colSize + move.second;
-						maskedMap[mv] = map[mv];
-						if(map[mv] != 0.0f)
-							break;
-					}
+			// 		// set up data after move.
+			// 		idx++;
+			// 		result = -result; // switch color
+			// 		score_diff = -score_diff;
+			// 		if(move != PASSMOVE){
+			// 			int mv = move.first * colSize + move.second;
+			// 			maskedMap[mv] = map[mv];
+			// 			if(map[mv] != 0.0f)
+			// 				break;
+			// 		}
 
-					// std::cerr << idx << " ";
-					// printMove(move);
-				}
+			// 		// std::cerr << idx << " ";
+			// 		// printMove(move);
+			// 	}
 
-				// if(idx % 2 != 0){
-				// 	result = -result;
-				// 	score_diff = -score_diff;
-				// }
-				while(true){
-					// std::cerr << idx << " ";
-					// printMove(sequence[idx]);
+			// 	// if(idx % 2 != 0){
+			// 	// 	result = -result;
+			// 	// 	score_diff = -score_diff;
+			// 	// }
+			// 	while(true){
+			// 		// std::cerr << idx << " ";
+			// 		// printMove(sequence[idx]);
 
-					std::get<2>(buffer[idx]) = result;
-					std::get<3>(buffer[idx]) = score_diff;
-					std::get<4>(buffer[idx]) = maskedMap;
-					std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
-					insertData(buffer[idx]);
+			// 		std::get<2>(buffer[idx]) = result;
+			// 		std::get<3>(buffer[idx]) = score_diff;
+			// 		std::get<4>(buffer[idx]) = maskedMap;
+			// 		std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
+			// 		insertData(buffer[idx]);
 
-					// set up data after move. Terminal state is not included.
-					result = -result; // switch color
-					score_diff = -score_diff;
-					if(sequence[idx] != PASSMOVE){
-						int mv = sequence[idx].first * colSize + sequence[idx].second;
-						maskedMap[mv] = map[mv];
-					}
-					if(++idx >= buffer.size())
-						break;
-				}
+			// 		// set up data after move. Terminal state is not included.
+			// 		result = -result; // switch color
+			// 		score_diff = -score_diff;
+			// 		if(sequence[idx] != PASSMOVE){
+			// 			int mv = sequence[idx].first * colSize + sequence[idx].second;
+			// 			maskedMap[mv] = map[mv];
+			// 		}
+			// 		if(++idx >= buffer.size())
+			// 			break;
+			// 	}
+			// }
+
+			
+			// else
+			std::vector<float> maps[2];
+			maps[0] = std::move(map);
+			maps[1].reserve(boardSize);
+			for(auto v : maps[0])
+				maps[1].push_back(-v);
+
+			int idx = 0;
+			for(TrainData& data : buffer){
+				std::get<2>(data) = result;
+				std::get<3>(data) = score_diff;
+				std::get<4>(data) = maps[idx];
+				std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | SMAPHEAD;
+				insertData(data);
+				result = -result; // switch color
+				score_diff = -score_diff;
+				idx = 1 - idx;
 			}
-
-			else{
-				std::vector<float> maps[2];
-				maps[0] = std::move(map);
-				maps[1].reserve(boardSize);
-				for(auto v : maps[0])
-					maps[1].push_back(-v);
-
-				int idx = 0;
-				for(TrainData& data : buffer){
-					std::get<2>(data) = result;
-					std::get<3>(data) = score_diff;
-					std::get<4>(data) = maps[idx];
-					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | SMAPHEAD;
-					insertData(data);
-					result = -result; // switch color
-					score_diff = -score_diff;
-					idx = 1 - idx;
-				}
-			}
+			
 
 			player->reset();
 			return;

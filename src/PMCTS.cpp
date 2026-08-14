@@ -94,7 +94,7 @@ namespace{
 
     // returns (U, Q) estimate
     std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game){
-        const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = *nnOutput;
+        const auto& [logAct, winP, scoreEXP, scoreMap] = *nnOutput;
 
         float captureV[2] = {0.0f, 0.0f};
         const Color turn = game.getTurn();
@@ -114,31 +114,32 @@ namespace{
 
         // float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
 
-        std::bitset<boardSize> mark;
-        for(int i=0; i<inputSize; ++i){
-            int cidx = game.getChainIdx(i);
-		    const Chain c = game.getChain(i);
+        // std::bitset<boardSize> mark;
+        // for(int i=0; i<inputSize; ++i){
+        //     int cidx = game.getChainIdx(i);
+		//     const Chain c = game.getChain(i);
 
-		    if(c.size != 0 && !mark[cidx]){
-			    mark[cidx] = true;
-                auto head = game.getStone({i / colSize, i % colSize}).head;
-                auto cur = head;
-                float avgCapChance = 0.0f;
+		//     if(c.size != 0 && !mark[cidx]){
+		// 	    mark[cidx] = true;
+        //         auto head = game.getStone({i / colSize, i % colSize}).head;
+        //         auto cur = head;
+        //         float avgCapChance = 0.0f;
 
-                do {
-                    avgCapChance += captureMap[cur];
-                    cur = game.getStone({cur/colSize, cur%colSize}).next;
-                } while (cur != head);
+        //         do {
+        //             avgCapChance += captureMap[cur];
+        //             cur = game.getStone({cur/colSize, cur%colSize}).next;
+        //         } while (cur != head);
 
-                avgCapChance /= c.size;
+        //         avgCapChance /= c.size;
 
-                int type = game.getBoard({i / colSize, i % colSize}) == turn ? 0 : 1;
-                captureV[type] = (captureV[type] > avgCapChance) ? captureV[type] : avgCapChance;
-            }
-        }
+        //         int type = game.getBoard({i / colSize, i % colSize}) == turn ? 0 : 1;
+        //         captureV[type] = (captureV[type] > avgCapChance) ? captureV[type] : avgCapChance;
+        //     }
+        // }
 
         // float utility = winP * 0.9f;
-        float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
+        // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
+        float utility = winP * 0.9f + scoreV * 0.01f;
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
         //     if(cntr++ % 100 == 0){
@@ -811,12 +812,12 @@ void MCTS::printAnalysis(){
     {
         auto buf = std::make_shared<NNResultBuf>();
         evaluator->evaluate(buf, &root->game, root->hashValue);
-        const auto& [policy, wp, sd, scoreMap, captureMap] = *buf->result;
+        const auto& [policy, wp, sd, scoreMap] = *buf->result;
         std::cout << "scoreMap :";
         for(float v : scoreMap) std::cout << " " << v;
         std::cout << std::endl;
-        std::cout << "captureMap :";
-        for(float v : captureMap) std::cout << " " << v;
+        // std::cout << "captureMap :";
+        // for(float v : captureMap) std::cout << " " << v;
         std::cout << std::endl;
     }
 
