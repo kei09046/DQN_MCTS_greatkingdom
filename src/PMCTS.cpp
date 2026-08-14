@@ -422,7 +422,6 @@ MoveData Node::selectMoveProb(float temp){
 
 Node* Node::jump(Move move){
     if(N == 0){
-        // tacticCheck();
         game.setPolicyMask();
     }
     if(!expanded){
@@ -534,10 +533,9 @@ void Node::deleteTree(Node* exception){
 
 void Node::addDirichletNoise(Evaluator* evaluator){
     if(N == 0){
-        // tacticCheck();
+        game.setPolicyMask();
     }
     if (!expanded) {
-        game.setPolicyMask();
         expand();
         if(forcedState == 0){
             auto buf = std::make_shared<NNResultBuf>();
