@@ -131,24 +131,24 @@ Color Game::makeMoveGivenScore(const Move& move){
 std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
-    if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties + single liberty is not territory; add all of them to captureMap.
-        std::vector<float> captureMap(boardSize, 0.0f);
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                if((board[i][j] & currentTurn)){
-                    const Chain& c = chains[findHead(i, j)];
-                    if(c.liberties.count() == 1){
-                        int libIdx = c.liberties._Find_first();
-                        if(!(board[libIdx / colSize][libIdx % colSize] & SCOREMASK))
-                            captureMap[i * colSize + j] = 1.0f;
-                    }
-                }
-            }
-        }
+    // if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties + single liberty is not territory; add all of them to captureMap.
+    //     std::vector<float> captureMap(boardSize, 0.0f);
+    //     for(int i=0; i<rowSize; ++i){
+    //         for(int j=0; j<colSize; ++j){
+    //             if((board[i][j] & currentTurn)){
+    //                 const Chain& c = chains[findHead(i, j)];
+    //                 if(c.liberties.count() == 1){
+    //                     int libIdx = c.liberties._Find_first();
+    //                     if(!(board[libIdx / colSize][libIdx % colSize] & SCOREMASK))
+    //                         captureMap[i * colSize + j] = 1.0f;
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        switchTurn();
-        return {currentTurn, RESIGN, captureMap};
-    }
+    //     switchTurn();
+    //     return {currentTurn, RESIGN, captureMap};
+    // }
 
     if(move == PASSMOVE){ // pass
         switchTurn();
@@ -173,9 +173,9 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
         }
     }
 
-    auto [clr, captureMap] = captureResultWithStat(r, c);
+    auto [clr, scoreMap] = captureResultWithStat(r, c);
     if(clr != EMPTY)
-        return {clr, CAPTURE, captureMap};
+        return {clr, CAPTURE, scoreMap};
         
     if(moveCount >= 2)
         updateScore(r, c);
@@ -187,7 +187,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
         std::vector<float> scoreMap(boardSize);
         for(int i=0; i<rowSize; ++i){
             for(int j=0; j<colSize; ++j){
-                scoreMap[i * colSize + j] = (board[i][j] & BSCORE) ? -1.0f : (board[i][j] & WSCORE ? 1.0f : 0.0f);
+                scoreMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
             }
         }
         return {scoreWinner(), SCORE, scoreMap};
@@ -602,15 +602,28 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
     }
 
     if(winner != EMPTY){
-        std::vector<float> captureMap(boardSize, 0.0f);
+        std::vector<float> scoreMap(boardSize, 0.0f);
+
         for(auto idx : capturedChainIdx){
+            int v = (winner == BLACK) ? 0 : 1;
+            uint8_t repl = (winner == BLACK) ? BSCORE : WSCORE;
+
+            score[v] += chains[idx].size;
+
             uint8_t cur = idx, start = idx;
             do {
-                captureMap[cur] = 1.0f;
+                board[cur / colSize][cur % colSize] = repl;
                 cur = stones[cur / colSize][cur % colSize].next;
             } while (cur != start);
         }
-        return {winner, captureMap};
+
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                scoreMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
+            }
+        }
+
+        return {winner, scoreMap};
     }
 
     return {EMPTY, {}};
