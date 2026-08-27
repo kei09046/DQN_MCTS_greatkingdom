@@ -224,7 +224,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::get<2>(data) = result;
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[idx];
-					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | CMAPHEAD | SMAPHEAD;
+					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | SMAPHEAD;
 					insertData(data);
 					result = -result; // switch color
 					score_diff = -score_diff;

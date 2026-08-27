@@ -520,6 +520,7 @@ void Node::deleteTree(Node* exception){
 void Node::addDirichletNoise(Evaluator* evaluator){
     if(N == 0){
         game.setPolicyMask();
+        N++;
     }
     if (!expanded) {
         expand();
