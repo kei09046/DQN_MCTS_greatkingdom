@@ -34,12 +34,12 @@ sc_fc1(2 * inputSize, 1),
 // score map head
 sc_map_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
 sc_map_bn3(torch::nn::BatchNorm2d(32)),
-sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
+sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false)),
 
 // capture head
-// cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-// cap_bn3(torch::nn::BatchNorm2d(32)),
-// cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
+cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
+cap_bn3(torch::nn::BatchNorm2d(32)),
+cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
@@ -75,9 +75,9 @@ sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
 	register_module("sc_map_bn3", sc_map_bn3);
 	register_module("sc_map_cv4", sc_map_cv4);
 
-	// register_module("cap_cv3", cap_cv3);
-	// register_module("cap_bn3", cap_bn3);
-	// register_module("cap_cv4", cap_cv4);
+	register_module("cap_cv3", cap_cv3);
+	register_module("cap_bn3", cap_bn3);
+	register_module("cap_cv4", cap_cv4);
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
@@ -113,11 +113,11 @@ NNOutput Net::forward(const torch::Tensor& state)
 	exp_score_map = sc_map_cv4(exp_score_map).tanh();
 	
 	// capture map head
-	// torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_bn3(cap_cv3(x)));
-	// cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
+	torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_bn3(cap_cv3(x)));
+	cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
 
 	//std::cerr << log_act << " " << val << " " << exp_score_diff << " " << exp_score_map << " " << cap_prob_map << std::endl;
-	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map);
+	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, cap_prob_map);
 }
 
 NNInput PolicyValueNet::getData(const Game& game){
@@ -279,7 +279,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
 		scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
 		scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
-		// captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
+		captureMapBatch = (std::get<4>(r) * stones).to(torch::kCPU); // [B, 1, 9, 9]
 	}
 	else{
 		auto r = policy_value_net->forward(inputBatch);
@@ -287,7 +287,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		valueBatch  = std::get<1>(r);
 		scoreBatch = std::get<2>(r);
 		scoreMapBatch = std::get<3>(r);
-		// captureMapBatch = std::get<4>(r) * stones;
+		captureMapBatch = std::get<4>(r) * stones;
 	}
 
 	//std::cerr << policyBatch.dtype() << " " << policyBatch.device() << " " << policyBatch.sizes() << std::endl;
@@ -296,7 +296,7 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 	float* pV = valueBatch.data_ptr<float>();
 	float* pS = scoreBatch.data_ptr<float>();
 	float* pSm = scoreMapBatch.data_ptr<float>();
-	// float* pCm = captureMapBatch.data_ptr<float>();
+	float* pCm = captureMapBatch.data_ptr<float>();
 	// float* pCc = capChanceBatch.data_ptr<float>();
 
 	for(int b = 0; b < B; ++b) {
@@ -310,12 +310,12 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		src = pSm + b * boardSize;
 		std::vector<float> scMap(src, src + boardSize);
 
-		// src = pCm + b * boardSize;
-		// std::vector<float> capMap(src, src + boardSize);
+		src = pCm + b * boardSize;
+		std::vector<float> capMap(src, src + boardSize);
 
 		// float capProb = pCc[b];
 
-		outputs.emplace_back(std::move(policy), value, s, std::move(scMap));
+		outputs.emplace_back(std::move(policy), value, s, std::move(scMap), std::move(capMap));
 	}
 	return outputs;
 }
@@ -371,7 +371,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		get<1>(res) = get<1>(r).to(torch::kCPU); // evaluation (scalar)
 		get<2>(res) = get<2>(r).to(torch::kCPU); // score differential (scalar)
 		get<3>(res) = get<3>(r).to(torch::kCPU); // score map
-		// get<4>(res) = get<4>(r).to(torch::kCPU); // capture map
+		get<4>(res) = get<4>(r).to(torch::kCPU); // capture map
 	}
 	else {
 		res = policy_value_net->forward(input);
@@ -395,14 +395,14 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 		scoremap.push_back(pt[i]);
 	}
 
-	// std::vector<float> capturemap;
-	// capturemap.reserve(boardSize);
-	// pt = get<4>(res).data_ptr<float>();
-	// for(int i=0; i<boardSize; ++i){
-	// 	capturemap.push_back(pt[i]);
-	// }
+	std::vector<float> capturemap;
+	capturemap.reserve(boardSize);
+	pt = get<4>(res).data_ptr<float>();
+	for(int i=0; i<boardSize; ++i){
+		capturemap.push_back(pt[i]);
+	}
 
-	return { policy, get<1>(res).index({0, 0}).item<float>(), get<2>(res).index({0, 0}).item<float>(), scoremap};
+	return { policy, get<1>(res).index({0, 0}).item<float>(), get<2>(res).index({0, 0}).item<float>(), scoremap, capturemap };
 }
 
 // std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 
@@ -637,7 +637,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4] = policy_value_net->forward(sb);
+		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb);
 		// if(cntr % 1 == 0){
 		// 	std::cout << "iter " << i << "\n";
 		// 	for(int j=0; j<B; ++j){
@@ -662,24 +662,24 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(masked_r4, smap, torch::nn::MSELossOptions().reduction(torch::kSum));
 		score_map_loss = score_map_loss / smap_active_elements;
 
-		// float pos_weight = 1.0f;
-		// auto masked_r5 = r5 * cap_mask;
-		// torch::Tensor loss_tensor = -(cmap * torch::log(masked_r5 + 1e-9) * pos_weight + (1 - cmap) * torch::log(1 - masked_r5 + 1e-9));
+		float pos_weight = 1.0f;
+		auto masked_r5 = r5 * cap_mask;
+		torch::Tensor loss_tensor = -(cmap * torch::log(masked_r5 + 1e-9) * pos_weight + (1 - cmap) * torch::log(1 - masked_r5 + 1e-9));
 		
 		// Mask the loss tensor explicitly to zero out non-capture samples
-		// loss_tensor = loss_tensor * cap_mask; 
-		// torch::Tensor capture_loss = loss_tensor.sum() / cap_active_elements;
+		loss_tensor = loss_tensor * cap_mask; 
+		torch::Tensor capture_loss = loss_tensor.sum() / cap_active_elements;
 		/////////////////////////
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss;
+		torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss + capture_loss;
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();
 		sLoss += score_loss.item<float>();
 		smLoss += score_map_loss.item<float>();
-		// cmLoss += capture_loss.item<float>();
+		cmLoss += capture_loss.item<float>();
 
 		loss.backward();
 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
@@ -786,7 +786,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 
 void PolicyValueNet::displayNNOutput(const NNOutput& modelOut){
 	// policyLogit : [82] winP : [1] scoreDiff : [1] scoreMap : [81] captureMap : [81]
- 	const auto [policyLogit, winP, scoreDiff, scoreMap] = modelOut;
+ 	const auto [policyLogit, winP, scoreDiff, scoreMap, captureMap] = modelOut;
 
 	const torch::Tensor policy = torch::softmax(policyLogit, 0);
 	
@@ -820,14 +820,14 @@ void PolicyValueNet::displayNNOutput(const NNOutput& modelOut){
 		std::cout << "\n";
 	}
 
-	// torch::Tensor captureGrid = to_printable(captureMap).view({9, 9});
-	// std::cout << "Capture Map:\n";
-	// for (int i = 0; i < 9; ++i) {
-	// 	for (int j = 0; j < 9; ++j) {
-	// 		std::printf("%.4f ", captureGrid[i][j].item<float>());
-	// 	}
-	// 	std::cout << "\n";
-	// }
+	torch::Tensor captureGrid = to_printable(captureMap).view({9, 9});
+	std::cout << "Capture Map:\n";
+	for (int i = 0; i < 9; ++i) {
+		for (int j = 0; j < 9; ++j) {
+			std::printf("%.4f ", captureGrid[i][j].item<float>());
+		}
+		std::cout << "\n";
+	}
 
 	
 	std::cout << "=====================================\n";
