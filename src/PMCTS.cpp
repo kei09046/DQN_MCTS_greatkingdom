@@ -447,30 +447,16 @@ Node* Node::jump(Move move){
         }
     }
 
-    // if no child matches the move, add one. Only happens when human opponent makes suboptimal move.
-    // std::cerr << "unexpected move!" << std::endl;
-    // addChild(move.first, move.second, nGame);
-    // return child.back();
-
-    std::cerr << "warning! jump to illegal location!" << std::endl;
-    std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
-    std::cerr << "expanded : " << expanded << std::endl;
-    std::cerr << "N : " << N << std::endl;
-    std::cerr << "forcedState : " << forcedState << std::endl;
-    std::cerr << "available options : " << std::endl;
-    for(auto p : game.getAvailableMoves())
-        std::cerr << static_cast<int>(p / colSize) << "," << static_cast<int>(p % colSize) << " ";
-
-    std::cerr << "node's state : " << std::endl;
-    ModelCompare::displayBoardGUI(true, game);
-    
-    std::cerr << "transfer table : " << std::endl;
-    for(int v : game.getTransferTable()){
-        std::cerr << v << " ";
-        std::cerr << std::endl;
-    }
-
-    return nullptr;
+    // The requested move isn't among this node's policy-restricted available moves -- e.g.
+    // Game::setPolicyMask (gamerules.cpp) only ever offers PASSMOVE when the current player is
+    // already ahead on score (or under its "opponent has a winning threat" branch), so a pass
+    // played outside that window is a real, engine-accepted move that this node's search simply
+    // never considered. It's still legal (the caller already validated it before calling jump),
+    // so graft it on as a fresh child instead of failing here: returning nullptr used to silently
+    // corrupt the MCTS root, which then crashed on the very next tree operation (jump/search/etc.)
+    // -- reproduced via a single "pass" during analysis mode segfaulting on the following command.
+    addChild(move, -1);
+    return child.back();
 }
 
 void Node::deleteTree(){
@@ -743,8 +729,17 @@ std::vector<Move> MCTS::followUpFrom(Node* node, int maxDepth){
             m = node->game.getAvailableMoves()[maxi];
         }
         else if(node->forcedState > 0){
-            for(int i=0; i<node->child.size(); ++i){
-                if(node->child[i]->forcedState < 0){
+            // A node's forcedState can be set at birth (Node::addChild, when the move that
+            // created it already ended the game) without ever going through expand() filling
+            // in `child` -- expand() deliberately skips that for any already-forced node, so
+            // `child` can be shorter than game.getAvailableMoves() (even empty) here. Bound by
+            // the smaller of the two so we never index past either array; an empty/partial
+            // child list just means no continuation to show, which the maxi==-1 check below
+            // already handles gracefully.
+            int limit = (int)node->child.size() < (int)node->game.getAvailableMoves().size()
+                ? (int)node->child.size() : (int)node->game.getAvailableMoves().size();
+            for(int i=0; i<limit; ++i){
+                if(node->child[i] != nullptr && node->child[i]->forcedState < 0){
                     m = node->game.getAvailableMoves()[i];
                     maxi = i;
                     break;
@@ -754,7 +749,9 @@ std::vector<Move> MCTS::followUpFrom(Node* node, int maxDepth){
                 break;
         }
         else{ // losing. Delay losing as much as possible.
-            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+            int limit = (int)node->child.size() < (int)node->game.getAvailableMoves().size()
+                ? (int)node->child.size() : (int)node->game.getAvailableMoves().size();
+            for(int i=0; i<limit; ++i){
                 if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
                     maxv = node->child[i]->forcedState;
                     maxi = i;
@@ -792,11 +789,35 @@ void MCTS::printAnalysis(){
     else
         std::cout << "winrate : 0" << std::endl;
     std::cout << "visits : " << root->N << std::endl;
+    // Once forcedState != 0 the engine has proven a win/loss and the "analyze" command's search
+    // loop (see ModelCompare::analyze) stops for good right here, well short of the requested
+    // playout target -- expose this explicitly so the GUI can tell "search is genuinely done"
+    // apart from "still climbing toward the target", instead of just comparing visits to target.
+    std::cout << "forced : " << root->forcedState << std::endl;
     // root->initQ is set exactly once, the first time this exact position is ever evaluated by
     // the network (calculateQ's blended-utility output) -- i.e. the raw value-head verdict before
     // any tree search refined it. Comparing it against the searched winrate above shows how much
     // search moved the evaluation away from the network's first guess.
     std::cout << "initQ : " << root->initQ << std::endl;
+
+    // scoreMap / captureMap are per-point NN outputs for the *current* root position, not
+    // per-child search stats -- fetch them directly (evaluator->evaluate hits the cache,
+    // since root was already evaluated by the very first playout, so this is cheap).
+    // scoreMap: tanh output in [-1, 1], matching the training label convention in
+    // Game::makeMove's end-of-game scoreMap (-1 = Black-owned point, +1 = White-owned point).
+    // captureMap: sigmoid output in [0, 1], probability that the stone at that point gets
+    // captured; already masked to 0 at empty points (see PolicyValueNet::batchEvaluate).
+    {
+        auto buf = std::make_shared<NNResultBuf>();
+        evaluator->evaluate(buf, &root->game, root->hashValue);
+        const auto& [policy, wp, sd, scoreMap, captureMap] = *buf->result;
+        std::cout << "scoreMap :";
+        for(float v : scoreMap) std::cout << " " << v;
+        std::cout << std::endl;
+        std::cout << "captureMap :";
+        for(float v : captureMap) std::cout << " " << v;
+        std::cout << std::endl;
+    }
 
     // per-move breakdown is only meaningful once the root has been expanded with real moves.
     if(root->forcedState == 0){
@@ -824,6 +845,56 @@ void MCTS::printAnalysis(){
                 for(const Move& fm : followUpFrom(root->child[i], 6)){
                     std::cout << " " << (int)fm.first << " " << (int)fm.second;
                 }
+            }
+            std::cout << std::endl;
+        }
+    }
+    // Once root is forced, every other child's search stats are stale (search stopped the
+    // instant forcedState flipped), so the full breakdown above doesn't apply -- but the GUI
+    // still wants to see *which* move wins/delays and how the line continues, instead of an
+    // empty move list. Find that single move the same way followUpFrom finds it one ply down
+    // (a child already proven losing for the opponent when winning, or the least-bad delaying
+    // child when losing), then print it as the lone "move" line with its own variation tail.
+    else{
+        const auto& moves = root->game.getAvailableMoves();
+        int limit = (int)root->child.size() < (int)moves.size() ? (int)root->child.size() : (int)moves.size();
+        int maxi = -1;
+        int maxv = -1;
+        if(root->forcedState > 0){
+            for(int i=0; i<limit; ++i){
+                if(root->child[i] != nullptr && root->child[i]->forcedState < 0){
+                    maxi = i;
+                    break;
+                }
+            }
+        }
+        else{
+            for(int i=0; i<limit; ++i){
+                if(root->child[i] != nullptr && root->child[i]->forcedState > maxv){
+                    maxv = root->child[i]->forcedState;
+                    maxi = i;
+                }
+            }
+        }
+
+        if(maxi != -1){
+            int r = moves[maxi] / colSize;
+            int c = moves[maxi] % colSize;
+            Node* chosen = root->child[maxi];
+
+            float visits = (maxi < (int)root->edgeN.size()) ? root->edgeN[maxi] : 0.0f;
+            float prior = (maxi < (int)root->edgeP.size()) ? root->edgeP[maxi] : 0.0f;
+            float winrate = (chosen->N > 0) ? chosen->Wp / chosen->N : 0.0f;
+            float q = (chosen->N > 0) ? chosen->W / chosen->N : 0.0f;
+
+            std::cout << "move " << r << " " << c
+                       << " visits " << visits
+                       << " prior " << prior
+                       << " winrate " << winrate
+                       << " q " << q
+                       << " variation";
+            for(const Move& fm : followUpFrom(chosen, 6)){
+                std::cout << " " << (int)fm.first << " " << (int)fm.second;
             }
             std::cout << std::endl;
         }

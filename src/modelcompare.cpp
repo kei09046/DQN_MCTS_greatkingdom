@@ -1,5 +1,7 @@
 #include <thread>
 #include <atomic>
+#include <poll.h>
+#include <cstdio>
 #include "modelcompare.h"
 #include "consts.h"
 #include "elo.h"
@@ -83,6 +85,15 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 }
 
 void ModelCompare::analyze(const std::string& model, bool gpu) {
+	// The "analyze" loop below peeks the raw stdin fd via poll() to detect a queued
+	// "pause" command without blocking. Buffered stdio can silently read ahead past the
+	// currently-parsed line (e.g. if the first getline() below runs late because model
+	// loading was slow, it can gulp up an already-written "pause" line together with the
+	// "analyze" line into its internal buffer), which would hide those bytes from a raw-fd
+	// poll() entirely. Unbuffering stdin makes every std::cin read match a real fd-level
+	// read, so poll() always sees exactly what's actually still unconsumed.
+	setvbuf(stdin, nullptr, _IONBF, 0);
+
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
@@ -138,11 +149,23 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 				player.runSimulation(PLAYOUT, std::min(chunk, remaining), 0);
 				player.printAnalysis();
 				ranAny = true;
+
+				// Let a queued command (e.g. "pause") interrupt a long-running search: peek
+				// stdin non-blockingly between chunks and stop early without consuming the
+				// line, so the outer REPL loop picks it up as the next command.
+				struct pollfd pfd = {0, POLLIN, 0};
+				if (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+					break;
 			}
 			if (!ranAny)
 				player.printAnalysis();
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "analyze time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
+		}
+		else if (cmd == "pause") {
+			// The in-progress "analyze" loop (if any) already stopped itself to read this
+			// line; nothing further to do here besides acknowledging it.
+			std::cout << "paused" << std::endl;
 		}
 		else {
 			std::cout << "unknown command" << std::endl;

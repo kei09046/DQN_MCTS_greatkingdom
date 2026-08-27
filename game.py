@@ -417,12 +417,24 @@ _ANALYSIS_WINRATE_RE = re.compile(r"^winrate\s*:\s*" + _FLOAT)
 _ANALYSIS_VISITS_RE = re.compile(r"^visits\s*:\s*(\d+)")
 # "initQ : <float>" -- the raw value-head output the first time this position was evaluated
 _ANALYSIS_INITQ_RE = re.compile(r"^initQ\s*:\s*" + _FLOAT)
+# "forced : <int>" -- 0 = undetermined, nonzero = proven win/loss. Once set, the engine's
+# analyze loop stops for good well short of the requested playout target; distinguishing this
+# from "still climbing toward the target" is what the visits status label uses to avoid getting
+# stuck showing "analyzing..." forever once the engine has actually finished.
+_ANALYSIS_FORCED_RE = re.compile(r"^forced\s*:\s*(-?\d+)")
 # "move <r> <c> visits <N> prior <P> winrate <W> q <Q> variation <r1> <c1> <r2> <c2> ..." --
 # one candidate move; the variation tail is 0 or more coordinate pairs, captured whole and
 # split separately since its length varies per move.
 _ANALYSIS_MOVE_RE = re.compile(
     r"^move\s+(-?\d+)\s+(-?\d+)\s+visits\s+" + _FLOAT + r"\s+prior\s+" + _FLOAT
     + r"\s+winrate\s+" + _FLOAT + r"\s+q\s+" + _FLOAT + r"\s+variation(.*)$")
+# "scoreMap : v0 v1 ... v80" -- row-major (r*9+c) per-point territory prediction, tanh output
+# in [-1, 1]: -1 = certain Black-owned point, +1 = certain White-owned point (see
+# Game::makeMove's end-of-game scoreMap in gamerules.cpp for the matching training label).
+_ANALYSIS_SCOREMAP_RE = re.compile(r"^scoreMap\s*:\s*(.*)$")
+# "captureMap : v0 v1 ... v80" -- row-major, sigmoid output in [0, 1]: probability the stone
+# at that point gets captured. Always 0 at empty points (masked in PolicyValueNet::batchEvaluate).
+_ANALYSIS_CAPTUREMAP_RE = re.compile(r"^captureMap\s*:\s*(.*)$")
 
 
 def list_models(models_dir=MODELS_DIR):
@@ -557,7 +569,8 @@ class AnalysisEngine:
 
             if line == "analysis begin":
                 in_block = True
-                current = {"winrate": None, "visits": None, "initQ": None, "moves": []}
+                current = {"winrate": None, "visits": None, "initQ": None, "moves": [],
+                           "scoreMap": None, "captureMap": None, "forced": 0}
                 continue
             if line == "analysis end":
                 in_block = False
@@ -598,6 +611,21 @@ class AnalysisEngine:
                 current["initQ"] = float(m.group(1))
                 continue
 
+            m = _ANALYSIS_FORCED_RE.match(line)
+            if m:
+                current["forced"] = int(m.group(1))
+                continue
+
+            m = _ANALYSIS_SCOREMAP_RE.match(line)
+            if m:
+                current["scoreMap"] = [float(x) for x in m.group(1).split()]
+                continue
+
+            m = _ANALYSIS_CAPTUREMAP_RE.match(line)
+            if m:
+                current["captureMap"] = [float(x) for x in m.group(1).split()]
+                continue
+
     def _send(self, cmd):
         if self.proc.poll() is not None or self.proc.stdin.closed:
             return
@@ -615,6 +643,9 @@ class AnalysisEngine:
 
     def request_analysis(self, playouts=None):
         self._send("analyze" if playouts is None else f"analyze {playouts}")
+
+    def send_pause(self):
+        self._send("pause")
 
     def get_result_nowait(self):
         try:
@@ -672,6 +703,7 @@ class Game:
         self.analysisEngine = None
         self.last_analysis_result = None
         self.selected_variation_move = None
+        self.analysis_paused = False
 
     def _build_setup_panel(self):
         panel = Frame(self.sideFrame)
@@ -794,6 +826,8 @@ class Game:
         self.analysis_limit_var = StringVar(value="4000")
         Entry(limit_row, textvariable=self.analysis_limit_var, width=8).pack(side=LEFT, padx=(5, 5))
         Button(limit_row, text="Apply", command=self.apply_analysis_limit).pack(side=LEFT)
+        self.analysisPauseButton = Button(limit_row, text="Pause", command=self.toggle_analysis_pause)
+        self.analysisPauseButton.pack(side=LEFT, padx=(5, 0))
 
         Label(panel, text="Board overlay:", anchor="w").pack(fill=X)
         overlay_row = Frame(panel)
@@ -803,6 +837,17 @@ class Game:
                               ("Visits", "visits"), ("Variation", "variation")):
             Radiobutton(overlay_row, text=label, variable=self.overlay_var, value=value,
                         command=self._on_overlay_mode_change).pack(side=LEFT)
+
+        # Territory/capture dots are drawn on top of whichever mode above is active (or on
+        # their own, with "No effect") -- independent checkboxes rather than more radio options.
+        nn_map_row = Frame(panel)
+        nn_map_row.pack(fill=X, pady=(0, 10))
+        self.show_territory_var = BooleanVar(value=False)
+        Checkbutton(nn_map_row, text="Territory (scoreMap)", variable=self.show_territory_var,
+                    command=self._on_overlay_mode_change).pack(side=LEFT)
+        self.show_capture_var = BooleanVar(value=False)
+        Checkbutton(nn_map_row, text="Capture risk (captureMap)", variable=self.show_capture_var,
+                    command=self._on_overlay_mode_change).pack(side=LEFT, padx=(10, 0))
 
         self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
         self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
@@ -934,6 +979,8 @@ class Game:
                 self.analysisEngine.send_play(x_cord, y_cord)
                 self.analysisEngine.request_analysis(self._get_analysis_limit())
                 self.selected_variation_move = None
+                self.analysis_paused = False
+                self.analysisPauseButton.configure(text="Pause")
             if res == 1 or res == -1 or res == -2:
                 self.on_end(res * self.rule.turn)
             else:
@@ -951,6 +998,8 @@ class Game:
                 self.analysisEngine.send_play(self.boardSize, 0)
                 self.analysisEngine.request_analysis(self._get_analysis_limit())
                 self.selected_variation_move = None
+                self.analysis_paused = False
+                self.analysisPauseButton.configure(text="Pause")
 
             if result == -2:
                 self.on_end(-2)
@@ -972,6 +1021,8 @@ class Game:
         self.canvas.delete("move_overlay")
         self.last_analysis_result = None
         self.selected_variation_move = None
+        self.analysis_paused = False
+        self.analysisPauseButton.configure(text="Pause")
         self.rule = RuleManager()
         self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
         self.turn = 0
@@ -1029,15 +1080,17 @@ class Game:
         self.root.after(100, self.poll_analysis)
 
     def _sync_analysis_position(self):
-        """Replay the current game's move sequence into the analysis engine and request a first pass."""
+        """Replay the current game's move sequence into the analysis engine, then leave it
+        paused -- analysis only actually starts once the user presses Resume."""
         self.selected_variation_move = None
+        self.analysis_paused = True
+        self.analysisPauseButton.configure(text="Resume")
         self.analysisEngine.send_reset()
         for x, y in self.rule.seq:
             if x == -1 or y == -1:
                 self.analysisEngine.send_play(self.boardSize, 0)
             else:
                 self.analysisEngine.send_play(x, y)
-        self.analysisEngine.request_analysis(self._get_analysis_limit())
 
     def _get_analysis_limit(self):
         try:
@@ -1049,12 +1102,31 @@ class Game:
         """Re-request analysis with whatever limit is currently in the entry box.
 
         The engine tracks visits cumulatively on the current position, so raising the
-        limit resumes search on the existing tree instead of restarting; lowering it
-        (or leaving it unchanged) is a cheap no-op re-print of the current snapshot.
+        limit resumes search on the existing tree instead of restarting; if the limit
+        is at or below what's already been searched, the engine just stops (or was
+        already stopped) and re-prints the current snapshot as-is -- it never resets.
         """
         if not self.analysis_mode or self.analysisEngine is None:
             return
+        self.analysis_paused = False
+        self.analysisPauseButton.configure(text="Pause")
         self.analysisEngine.request_analysis(self._get_analysis_limit())
+
+    def toggle_analysis_pause(self):
+        """Pause halts the engine's in-progress search after its current chunk, keeping
+        the tree as-is; Resume just re-sends the current limit, which continues search
+        on the existing (unreset) tree from wherever it left off.
+        """
+        if not self.analysis_mode or self.analysisEngine is None:
+            return
+        if self.analysis_paused:
+            self.analysis_paused = False
+            self.analysisPauseButton.configure(text="Pause")
+            self.analysisEngine.request_analysis(self._get_analysis_limit())
+        else:
+            self.analysis_paused = True
+            self.analysisPauseButton.configure(text="Resume")
+            self.analysisEngine.send_pause()
 
     def end_analysis_mode(self):
         self.analysis_mode = False
@@ -1089,68 +1161,126 @@ class Game:
     def _draw_move_overlay(self, result):
         self.canvas.delete("move_overlay")
 
+        # Territory/capture dots are independent checkboxes, layered under (territory) or over
+        # (capture) whichever candidate-move mode below is also active -- drawn unconditionally
+        # so they still show up even with overlay mode "none".
+        self._draw_territory_overlay(result)
+        self._draw_capture_overlay(result)
+
         mode = self.overlay_var.get()
-        if mode == "none":
-            return
-
         moves = result.get("moves", [])
-        if not moves:
-            return
-
         if mode == "variation":
-            self._draw_variation_overlay(moves)
-            return
+            if moves:
+                self._draw_variation_overlay(moves)
+        elif mode in ("policy", "visits") and moves:
+            if mode == "policy":
+                # prior is already a probability (fraction of 1); use it directly as the "share".
+                get_val = lambda mv: mv["prior"]
+                get_share = lambda mv: mv["prior"]
+                total_visits = None
+            else:
+                total_visits = result.get("visits") or 0
+                get_val = lambda mv: mv["visits"]
+                get_share = lambda mv: mv["visits"] / total_visits if total_visits else 0.0
 
-        if mode == "policy":
-            # prior is already a probability (fraction of 1); use it directly as the "share".
-            get_val = lambda mv: mv["prior"]
-            get_share = lambda mv: mv["prior"]
-        else:
-            total_visits = result.get("visits") or 0
-            if total_visits <= 0:
-                return
-            get_val = lambda mv: mv["visits"]
-            get_share = lambda mv: mv["visits"] / total_visits
+            max_val = max((get_val(mv) for mv in moves), default=0.0)
+            if max_val > 0 and (mode != "visits" or total_visits > 0):
+                r = int(self.stone_size * 0.42)
+                font_size = max(7, int(self.stone_size * 0.16))
+                for mv in moves:
+                    if get_share(mv) < 0.01:  # hide anything under 1% probability/visit share -- mostly noise
+                        continue
+                    val = get_val(mv)
+                    x, y = mv["move"]
+                    if x < 0 or x >= self.boardSize or y < 0 or y >= self.boardSize or self.on_stone[x][y]:
+                        continue
 
-        max_val = max((get_val(mv) for mv in moves), default=0.0)
-        if max_val <= 0:
-            return
+                    color = _blend_hex(BOARD_BG, OVERLAY_COLOR, val / max_val)
+                    text_color = "#ffffff" if _luminance(color) < 140 else "#000000"
+                    label = f"{val * 100:.0f}%" if mode == "policy" else f"{int(val)}"
 
-        r = int(self.stone_size * 0.42)
-        font_size = max(7, int(self.stone_size * 0.16))
-        for mv in moves:
-            if get_share(mv) < 0.01:  # hide anything under 1% probability/visit share -- mostly noise
-                continue
-            val = get_val(mv)
-            x, y = mv["move"]
-            if x < 0 or x >= self.boardSize or y < 0 or y >= self.boardSize or self.on_stone[x][y]:
-                continue
+                    cx = self.m + x * self.delta
+                    cy = self.m + y * self.delta
+                    self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline="",
+                                             tags=("move_overlay", "move_overlay_shape"))
+                    self.canvas.create_text(cx, cy, text=label, fill=text_color,
+                                             font=("Helvetica", font_size, "bold"),
+                                             tags=("move_overlay", "move_overlay_text"))
 
-            color = _blend_hex(BOARD_BG, OVERLAY_COLOR, val / max_val)
-            text_color = "#ffffff" if _luminance(color) < 140 else "#000000"
-            label = f"{val * 100:.0f}%" if mode == "policy" else f"{int(val)}"
+                    q_val = mv.get("q")
+                    if q_val is not None:
+                        self.canvas.create_text(cx, cy + r + max(8, int(font_size * 0.7)),
+                                                 text=f"{q_val:+.2f}", fill="#1a1a1a",
+                                                 font=("Helvetica", max(6, font_size - 2)),
+                                                 tags=("move_overlay", "move_overlay_text"))
 
-            cx = self.m + x * self.delta
-            cy = self.m + y * self.delta
-            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline="",
-                                     tags=("move_overlay", "move_overlay_shape"))
-            self.canvas.create_text(cx, cy, text=label, fill=text_color,
-                                     font=("Helvetica", font_size, "bold"),
-                                     tags=("move_overlay", "move_overlay_text"))
-
-            q_val = mv.get("q")
-            if q_val is not None:
-                self.canvas.create_text(cx, cy + r + max(8, int(font_size * 0.7)),
-                                         text=f"{q_val:+.2f}", fill="#1a1a1a",
-                                         font=("Helvetica", max(6, font_size - 2)),
-                                         tags=("move_overlay", "move_overlay_text"))
-
-        # stacking order (bottom to top): overlay circles, grid/star (board coordinates),
-        # stones, overlay numbers. Sink the circles below everything already on the board
+        # stacking order (bottom to top): territory dots / overlay circles, grid/star (board
+        # coordinates), stones, overlay numbers (including capture-risk labels, which sit on
+        # top of the stone they mark). Sink the shapes below everything already on the board
         # (grid/star/stones) instead of raising grid/star, which would otherwise climb above
-        # stones too; keep the numbers on top so they stay legible even over a star point.
+        # stones too; keep text on top of all of it so labels stay legible even over a star point.
         self.canvas.tag_lower("move_overlay_shape")
         self.canvas.tag_raise("move_overlay_text")
+
+    def _draw_territory_overlay(self, result):
+        """KataGo-style ownership dots: a small black dot on points the network expects to end
+        up as Black territory, white (outlined) dot for White -- dot radius scales with the
+        network's confidence (|scoreMap| toward the tanh range's ends). Only meaningful at
+        currently-empty points; a point with a stone on it isn't "territory".
+
+        scoreMap's sign is relative to whoever is to move (same convention as the win-probability
+        head), not an absolute Black/White sign -- calculateQ in PMCTS.cpp combines it directly
+        with a "-1 = current turn's own point" convention. So when White is to move, the raw sign
+        has to be flipped back to an absolute Black/White reading before picking dot color.
+        """
+        if not self.show_territory_var.get():
+            return
+        score_map = result.get("scoreMap")
+        if not score_map:
+            return
+
+        turn_sign = 1 if self.turn == 0 else -1  # self.turn: 0 = Black, 1 = White to move
+        max_r = max(3, int(self.stone_size * 0.20))
+        for i, val in enumerate(score_map):
+            if abs(val) < 0.08:  # too uncertain to bother marking
+                continue
+            x, y = divmod(i, self.boardSize)
+            if x >= self.boardSize or y >= self.boardSize or self.on_stone[x][y]:
+                continue
+
+            abs_val = val * turn_sign  # canonicalize to absolute Black(-)/White(+)
+            rad = max(2, int(max_r * min(abs(abs_val), 1.0)))
+            fill = "#111111" if abs_val < 0 else "#f5f5f5"  # < 0 -> Black, > 0 -> White
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=fill,
+                                     outline="#000000", tags=("move_overlay", "move_overlay_shape"))
+
+    def _draw_capture_overlay(self, result):
+        """Numeric capture-chance label (2 decimals) drawn inside any stone the network gives
+        meaningful capture odds, colored red for visibility. Only meaningful at occupied points
+        (captureMap is masked to 0 at empty points on the engine side already)."""
+        if not self.show_capture_var.get():
+            return
+        capture_map = result.get("captureMap")
+        if not capture_map:
+            return
+
+        font_size = max(7, int(self.stone_size * 0.26))
+        for i, val in enumerate(capture_map):
+            if val < 0.05:  # negligible capture risk
+                continue
+            x, y = divmod(i, self.boardSize)
+            if x >= self.boardSize or y >= self.boardSize or not self.on_stone[x][y]:
+                continue
+
+            stone_color = self.rule.board[x + 1][y + 1]  # RuleManager board: 1 = Black, -1 = White
+            text_color = "#ff5252" if stone_color == 1 else "#b71c1c"  # readable red on dark/light stones
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_text(cx, cy, text=f"{val:.2f}", fill=text_color,
+                                     font=("Helvetica", font_size, "bold"),
+                                     tags=("move_overlay", "move_overlay_text"))
 
     def _draw_variation_overlay(self, moves):
         """KataGo-style principal-variation overlay: numbered stone-colored markers tracing the
@@ -1216,7 +1346,23 @@ class Game:
         visits = result.get("visits")
         if visits is not None:
             limit = self._get_analysis_limit()
-            status = "analyzing..." if visits < limit else "done"
+            forced = result.get("forced") or 0
+            # A proven win/loss (forced != 0) makes the engine's analyze loop stop for good
+            # right there, well short of the playout target -- and once the child a move jumps
+            # into already carries a high visit count from earlier search, the very first
+            # request can likewise already be at/past the target. Both cases are genuinely done,
+            # not stuck; without checking them explicitly the label would say "analyzing..."
+            # forever even though no further update will ever arrive, which looks like a freeze.
+            if self.analysis_paused:
+                status = "paused"
+            elif forced > 0:
+                status = "done, forced win"
+            elif forced < 0:
+                status = "done, forced loss"
+            elif visits >= limit:
+                status = "done"
+            else:
+                status = "analyzing..."
             self.analysisVisitsLabel.configure(text=f"Visits: {visits} / {limit} ({status})")
 
         self._update_candidate_listbox(result)
