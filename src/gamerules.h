@@ -190,7 +190,7 @@ private:
 
     Color captureResultbyMove(uint8_t r, uint8_t c);
 
-    std::pair<Color, std::vector<float>> captureResultWithStat(uint8_t r, uint8_t c);
+    Color captureResultWithStat(uint8_t r, uint8_t c);
 
     // score related functions
     void updateScore(uint8_t r, uint8_t c);

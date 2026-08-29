@@ -158,21 +158,22 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
     switchTurn();
     moveCount++;
 
-    auto [clr, scoreMap] = captureResultWithStat(r, c);
-    if(clr != EMPTY)
-        return {clr, CAPTURE, scoreMap};
+    auto clr = captureResultWithStat(r, c);
         
     if(moveCount >= 2)
         updateScore(r, c);
 
-    if(getLegalMoveCount() == 0 || moveCount > boardSize){
-        std::vector<float> scoreMap(boardSize);
+    if(clr != EMPTY || getLegalMoveCount() == 0 || moveCount > boardSize){
+        std::vector<float> occupyMap(boardSize);
         for(int i=0; i<rowSize; ++i){
             for(int j=0; j<colSize; ++j){
-                scoreMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
+                occupyMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
             }
         }
-        return {scoreWinner(), SCORE, scoreMap};
+        if(clr != EMPTY)
+            return {clr, CAPTURE, occupyMap};
+        else
+            return {scoreWinner(), SCORE, occupyMap};
     }
     return {EMPTY, NONE, {}};
 }
@@ -547,7 +548,7 @@ Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     return EMPTY;
 }
 
-std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint8_t c){
+Color Game::captureResultWithStat(uint8_t r, uint8_t c){
     Color winner = EMPTY;
     std::vector<uint8_t> capturedChainIdx;
 
@@ -584,8 +585,6 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
     }
 
     if(winner != EMPTY){
-        std::vector<float> scoreMap(boardSize, 0.0f);
-
         for(auto idx : capturedChainIdx){
             int v = (winner == BLACK) ? 0 : 1;
             uint8_t repl = (winner == BLACK) ? BSCORE : WSCORE;
@@ -604,17 +603,10 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
                 cur = stones[cr][cc].next;
             } while (cur != start);
         }
-
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                scoreMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
-            }
-        }
-
-        return {winner, scoreMap};
+        return winner;
     }
 
-    return {EMPTY, {}};
+    return EMPTY;
 }
 
 
