@@ -80,7 +80,8 @@ public:
 
     bool jump(Move move);
 
-    void reset();
+    // resets MCTS tree and set root to startPosition.
+    void reset(const Game& startPos);
 
     // exposes the root node's internal game state, for debugging desyncs against an external mirror (e.g. TrainPipeline::game_manager).
     inline const Game& currentGame() const{

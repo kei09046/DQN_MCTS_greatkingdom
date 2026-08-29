@@ -56,8 +56,12 @@ public:
         return legal;
     }
 
+    uint8_t getLegalMoveCount() const;
+
     void onGameEnd(Color winner);
 
+    // 'makeMove' does not support game continuation after the capture; Which follows the rule. 
+    // For continued play after the capture, 'makeMoveWithStat' should be called.
     std::pair<Color, Wintype> makeMove(Move move);
 
     Color makeMoveGivenScore(const Move& move);
@@ -210,8 +214,6 @@ private:
     // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
     std::vector<int> candidatesWhenThreat(const std::bitset<boardSize>& potScore) const;
     /////////////////////////////////////////////////////////////////////////
-
-    uint8_t getLegalMoveCount() const;
 };
 
 #endif

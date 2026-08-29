@@ -912,13 +912,13 @@ bool MCTS::jump(Move move){
     return root != nullptr;
 }
 
-void MCTS::reset(){
+void MCTS::reset(const Game& startPos){
     root->deleteTree();
-    root = new Node(Game(), hash.baseHash(), transposTable);
+    root = new Node(startPos, hash.computeHash(startPos), transposTable);
 
     if(globalConfig.transTable){
         transposTable->clear();
-        transposTable->emplace(hash.baseHash(), std::make_pair(root, 1));
+        transposTable->emplace(hash.computeHash(startPos), std::make_pair(root, 1));
     }
 }
 
@@ -1004,7 +1004,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             // enqueue evaluation
             auto buf = std::make_shared<NNResultBuf>();
 
-            // TODO : move game.getAvailableMoves(), transferTable into game object. They are used both in NN evaluation & expansion.
             bool cacheHit = evaluator->asyncEvaluate(buf, &(cur->game), cur->hashValue); // check cacheHit, also request eval
             if(!cacheHit){
                 resultBuffer.push_back(buf);

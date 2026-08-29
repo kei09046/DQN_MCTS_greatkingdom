@@ -617,7 +617,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 
 	auto pmask = (mask & POLICYHEAD).to(torch::kBool);
 	auto smask = (mask & SCOREHEAD).to(torch::kBool);
-	auto sm_mask = (mask & SMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
+	auto sm_mask = (mask & OCCUPYHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
 	auto cap_mask = (mask & CMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
 
 	auto policy_active_elements = pmask.sum().item<float>() + 1e-8f;

@@ -18,6 +18,7 @@ public:
     Hash();
 
     HashValue baseHash() const;
+    HashValue computeHash(const Game& game) const;
     HashValue computeHashAfterMove(const Game& game, const std::pair<int, int>& move, const HashValue prevHash) const;
 };
 

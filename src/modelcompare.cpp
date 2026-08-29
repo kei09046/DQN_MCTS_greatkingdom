@@ -32,8 +32,8 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 			continue;
 		}
 		
-        player_list[0]->reset();
-        player_list[1]->reset();
+        player_list[0]->reset(Game());
+        player_list[1]->reset(Game());
 		//std::cerr << std::endl;
 
 		// if (is_shown) {
@@ -111,7 +111,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 		}
 		else if (cmd == "reset") {
 			game_manager = Game();
-			player.reset();
+			player.reset(Game());
 			std::cout << "reset ok" << std::endl;
 		}
 		else if (cmd == "play") {
@@ -255,7 +255,7 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
         else if (cmd == "boardsize") ok(std::to_string(boardSize));
         else if (cmd == "clear_board") {
             game_manager = Game();
-            player.reset();
+            player.reset(game_manager);
             ok();
         }
 		else if(cmd == "evaluate"){
@@ -461,17 +461,17 @@ void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
         std::cout << std::endl;
     }
 
-	const auto nnInput = PolicyValueNet::getData(game);
-	int cnt = rowSize * colSize * 18 ;
-	for(int i=18; i<=21; ++i){
-		std::cout << "\n channel " << i << "\n";
+	// const auto nnInput = PolicyValueNet::getData(game);
+	// int cnt = rowSize * colSize * 18;
+	// for(int i=18; i<=21; ++i){
+	// 	std::cout << "\n channel " << i << "\n";
 		
-		for(int j=0; j<rowSize; ++j){
-			for(int k=0; k<colSize; ++k)
-				std::cout << nnInput[cnt++] << " ";
-			std::cout << "\n";
-		}
-	}
+	// 	for(int j=0; j<rowSize; ++j){
+	// 		for(int k=0; k<colSize; ++k)
+	// 			std::cout << nnInput[cnt++] << " ";
+	// 		std::cout << "\n";
+	// 	}
+	// }
 }
 
 

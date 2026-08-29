@@ -14,8 +14,10 @@ int Hash::colorToIndex(Color c){
 }
 
 Hash::Hash() {
-    std::mt19937_64 rng(42); // fixed seed for reproducibility
+    std::mt19937_64 rng(42);
     std::uniform_int_distribution<HashValue> dist;
+
+    // for empty square, zobrist table has 0 value.
     for (int r = 0; r < rowSize; ++r)
         for (int c = 0; c < colSize; ++c)
             for (int color = 0; color < 3; ++color){
@@ -32,6 +34,20 @@ HashValue Hash::baseHash() const{
         for(const auto& neutral : globalConfig.neutrals)
             h ^= zobristTable[neutral.first][neutral.second][2];
     }
+    return h;
+}
+
+HashValue Hash::computeHash(const Game& game) const{
+    HashValue h = 0;
+
+    if(game.getTurn() == WHITE)
+        h ^= zobristToPlay;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            h ^= zobristTable[i][j][colorToIndex(game.getBoard({i, j}))];
+        }
+    }
+
     return h;
 }
 

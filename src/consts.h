@@ -51,7 +51,7 @@ constexpr uint8_t SCOREMASK = BSCORE | WSCORE;
 constexpr Trainhead POLICYHEAD = 1U;
 constexpr Trainhead VALUEHEAD = 2U;
 constexpr Trainhead SCOREHEAD = 4U;
-constexpr Trainhead SMAPHEAD = 8U;
+constexpr Trainhead OCCUPYHEAD = 8U;
 constexpr Trainhead CMAPHEAD = 16U;
 constexpr Trainhead ALL = 255U;
 

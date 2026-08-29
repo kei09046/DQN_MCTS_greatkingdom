@@ -45,63 +45,18 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		game_manager.setPolicyMask();
 		state = PolicyValueNet::getData(game_manager);
 
-		// debug: dump game_manager vs MCTS root state when root is stuck in a terminated forcedState
-		// if(player->rootForcedState() == -1 || player->rootForcedState() == 1){
-		// 	std::cerr << "==== about to hit \"terminated position\" assertion, root forcedState : " << player->rootForcedState() << " ====" << std::endl;
-
-		// 	std::cerr << "--- game_manager state ---" << std::endl;
-		// 	ModelCompare::displayBoardGUI(true, game_manager);
-
-		// 	std::cerr << "--- MCTS root's internal game state ---" << std::endl;
-		// 	ModelCompare::displayBoardGUI(true, player->currentGame());
-
-		// 	std::cerr << "root available moves : ";
-		// 	for(int mv : player->currentGame().getAvailableMoves())
-		// 		std::cerr << mv << " ";
-		// 	std::cerr << std::endl;
-
-		// 	std::cerr << "root transfer table : ";
-		// 	for(int g : player->currentGame().getTransferTable())
-		// 		std::cerr << g << " ";
-		// 	std::cerr << std::endl;
-		// }
-
 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
 		//printMove(m);
 
-		// debug: dump game_manager vs MCTS root state when the chosen move is illegal on game_manager
-		// if(m != RESIGNMOVE && m != PASSMOVE && !game_manager.isLegal(m.first, m.second)){
-		// 	std::cerr << "==== about to play illegal move : " << static_cast<int>(m.first) << "," << static_cast<int>(m.second) << " ====" << std::endl;
-
-		// 	std::cerr << "--- game_manager state ---" << std::endl;
-		// 	ModelCompare::displayBoardGUI(true, game_manager);
-
-		// 	const Game& rootGame = player->currentGame();
-		// 	std::cerr << "--- MCTS root's internal game state ---" << std::endl;
-		// 	ModelCompare::displayBoardGUI(true, rootGame);
-
-		// 	std::cerr << "root available moves : ";
-		// 	for(int mv : rootGame.getAvailableMoves())
-		// 		std::cerr << mv << " ";
-		// 	std::cerr << std::endl;
-
-		// 	std::cerr << "root transfer table : ";
-		// 	for(int g : rootGame.getTransferTable())
-		// 		std::cerr << g << " ";
-		// 	std::cerr << std::endl;
-		// }
-
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
 
+		assert(m != RESIGNMOVE);
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
 			// add placeHolder value to buffer
 			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
 			forced.push_back(forcedState);
 			only.push_back(isOnlyMove);
-		}
-		else{ // Agent only resigns when capture is unavoidable.
-			wintype = CAPTURE;
 		}
 
 		if (winner == EMPTY) {
@@ -113,7 +68,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 				}
 				std::cerr << "\n";
-				player->reset();
+				player->reset(Game());
 				#ifdef measureTime
 				player->resetTimeStats();
 				#endif
@@ -137,104 +92,48 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 				}
 				std::cout << "\n";
+				ModelCompare::displayBoardGUI(true, game_manager);
 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << " score diff : " << score_diff << "\n\n";
-				
-				#ifdef measureTime
-				std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-				std::vector<int> timeStats = player->getTimeStats();
-				
-				std::cout << "average expand time : " << timeStats[0] / sequence.size() << "[us]\n";
-				std::cout << "average evaluate time : " << timeStats[1] / sequence.size() << "[us]\n";
-				std::cout << "average makeMove time : " << timeStats[4] / sequence.size() << "[us]\n";
-				std::cout << "average extra time : " << timeStats[5] / sequence.size() << "[us]\n";
-				std::cout << "average cache insert time : " << timeStats[8] / sequence.size() << "[us]\n";
-				std::cout << "average cache find time : " << timeStats[9] / sequence.size() << "[us]\n";
-				std::cout << "eval cache hit rate : " << static_cast<float>(timeStats[6]) / (sequence.size() * nPlayout) << "\n";
-				std::cout << "terminal hit rate : " << static_cast<float>(timeStats[7]) / (sequence.size() * nPlayout) << "\n";
-				std::cout << "average move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() / sequence.size() << "[ms]\n";
-				std::cout << "move time : " << std::chrono::duration_cast<std::chrono::milliseconds>(middle - begin).count() << "[ms]\n";
-				std::cout << "total time : " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";
-				#endif
 			}
 
-			#ifdef measureTime
-			player->resetTimeStats();
-			#endif
-
-			// if(wintype == CAPTURE){
-			// 	std::vector<float> maskedMap(boardSize, 0.0f);
-			// 	int idx = 0;
-			// 	for(const auto& move : sequence){
-			// 		std::get<2>(buffer[idx]) = result;
-			// 		std::get<3>(buffer[idx]) = score_diff;
-			// 		std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
-
-			// 		insertData(buffer[idx]);
-
-			// 		// set up data after move.
-			// 		idx++;
-			// 		result = -result; // switch color
-			// 		score_diff = -score_diff;
-			// 		if(move != PASSMOVE){
-			// 			int mv = move.first * colSize + move.second;
-			// 			maskedMap[mv] = map[mv];
-			// 			if(map[mv] != 0.0f)
-			// 				break;
-			// 		}
-
-			// 		// std::cerr << idx << " ";
-			// 		// printMove(move);
-			// 	}
-
-			// 	// if(idx % 2 != 0){
-			// 	// 	result = -result;
-			// 	// 	score_diff = -score_diff;
-			// 	// }
-			// 	while(true){
-			// 		// std::cerr << idx << " ";
-			// 		// printMove(sequence[idx]);
-
-			// 		std::get<2>(buffer[idx]) = result;
-			// 		std::get<3>(buffer[idx]) = score_diff;
-			// 		std::get<4>(buffer[idx]) = maskedMap;
-			// 		std::get<5>(buffer[idx]) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
-			// 		insertData(buffer[idx]);
-
-			// 		// set up data after move. Terminal state is not included.
-			// 		result = -result; // switch color
-			// 		score_diff = -score_diff;
-			// 		if(sequence[idx] != PASSMOVE){
-			// 			int mv = sequence[idx].first * colSize + sequence[idx].second;
-			// 			maskedMap[mv] = map[mv];
-			// 		}
-			// 		if(++idx >= buffer.size())
-			// 			break;
-			// 	}
-			// }
-
-			
-			// else
 			std::vector<float> maps[2];
 			maps[0] = std::move(map);
 			maps[1].reserve(boardSize);
 			for(auto v : maps[0])
 				maps[1].push_back(-v);
-
 			int idx = 0;
-			for(TrainData& data : buffer){
-				std::get<2>(data) = result;
-				std::get<3>(data) = score_diff;
-				std::get<4>(data) = maps[idx];
-				std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | SMAPHEAD;
-				insertData(data);
-				result = -result; // switch color
-				score_diff = -score_diff;
-				idx = 1 - idx;
-			}
-			
 
-			player->reset();
-			return;
+			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
+				for(TrainData& data : buffer){
+					std::get<2>(data) = result;
+					std::get<3>(data) = score_diff;
+					std::get<4>(data) = maps[idx % 2];
+					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+					insertData(data, forced.at(idx), only.at(idx));
+					result = -result; // switch color
+					score_diff = -score_diff;
+					idx++;
+				}
+				player->reset(Game());
+				return;
+			}
+			// play until score termination.
+			else if(wintype == CAPTURE){
+				for(TrainData& data : buffer){
+					std::get<2>(data) = result;
+					std::get<3>(data) = score_diff;
+					std::get<4>(data) = maps[idx % 2];
+					std::get<5>(data) = POLICYHEAD | VALUEHEAD;
+					insertData(data, forced.at(idx), only.at(idx));
+					result = -result; // switch color
+					score_diff = -score_diff;
+					idx++;
+				}
+				player->reset(game_manager);
+				buffer.clear();
+				forced.clear();
+				only.clear();
+			}
 		}
 	}
 }

@@ -131,24 +131,6 @@ Color Game::makeMoveGivenScore(const Move& move){
 std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
-    // if(move == RESIGNMOVE){ // If resign, find the stones that have 1 liberties + single liberty is not territory; add all of them to captureMap.
-    //     std::vector<float> captureMap(boardSize, 0.0f);
-    //     for(int i=0; i<rowSize; ++i){
-    //         for(int j=0; j<colSize; ++j){
-    //             if((board[i][j] & currentTurn)){
-    //                 const Chain& c = chains[findHead(i, j)];
-    //                 if(c.liberties.count() == 1){
-    //                     int libIdx = c.liberties._Find_first();
-    //                     if(!(board[libIdx / colSize][libIdx % colSize] & SCOREMASK))
-    //                         captureMap[i * colSize + j] = 1.0f;
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     switchTurn();
-    //     return {currentTurn, RESIGN, captureMap};
-    // }
 
     if(move == PASSMOVE){ // pass
         switchTurn();
@@ -173,15 +155,15 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
         }
     }
 
+    switchTurn();
+    moveCount++;
+
     auto [clr, scoreMap] = captureResultWithStat(r, c);
     if(clr != EMPTY)
         return {clr, CAPTURE, scoreMap};
         
     if(moveCount >= 2)
         updateScore(r, c);
-    
-    switchTurn();
-    moveCount++;
 
     if(getLegalMoveCount() == 0 || moveCount > boardSize){
         std::vector<float> scoreMap(boardSize);
@@ -612,8 +594,14 @@ std::pair<Color, std::vector<float>> Game::captureResultWithStat(uint8_t r, uint
 
             uint8_t cur = idx, start = idx;
             do {
-                board[cur / colSize][cur % colSize] = repl;
-                cur = stones[cur / colSize][cur % colSize].next;
+                uint8_t cr = cur / colSize;
+                uint8_t cc = cur % colSize;
+                board[cr][cc] = repl;
+                for(int i=0; i<4; ++i){
+                    if(inbound(cr + dr[i], cc + dc[i]))
+                        chains[findHead(cr + dr[i], cc + dc[i])].liberties.set(cur, true);
+                }
+                cur = stones[cr][cc].next;
             } while (cur != start);
         }
 
