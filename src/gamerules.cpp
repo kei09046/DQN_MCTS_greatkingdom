@@ -773,7 +773,7 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segmentTab
     std::vector<SegInfo> segInfos;
     // maximum possible number of segments
     // Absolutely essential to prevent memory reallocation.
-    segInfos.reserve(boardSize - moveCount);
+    segInfos.reserve(boardSize);
     segMap.fill(255U);
 
     std::vector<Move> terrCandidate;
