@@ -167,6 +167,16 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 			// line; nothing further to do here besides acknowledging it.
 			std::cout << "paused" << std::endl;
 		}
+		else if (cmd == "debug") {
+			// "debug on"/"debug off" -- toggles per-playout search-path + NN-eval logging (see
+			// MCTS::setDebugMode/printPlayoutDebugLine). While on, each playout's line is
+			// printed the moment it finishes -- nothing is stored or batched here; the GUI
+			// (Python) is what accumulates and manages the resulting stream.
+			std::string state;
+			iss >> state;
+			player.setDebugMode(state == "on");
+			std::cout << "debug " << (player.getDebugMode() ? "on" : "off") << std::endl;
+		}
 		else {
 			std::cout << "unknown command" << std::endl;
 		}

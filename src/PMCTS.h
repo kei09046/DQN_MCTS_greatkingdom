@@ -96,9 +96,22 @@ public:
         return static_cast<int>(root->N);
     }
 
+    // Debug mode: while on, every playout's search path and leaf NN evaluation is printed to
+    // stdout the moment that playout finishes (see printPlayoutDebugLine in PMCTS.cpp) --
+    // nothing is stored or accumulated on the C++ side; the GUI (Python) owns collecting and
+    // displaying the resulting stream. Off by default, and always off for every MCTS instance
+    // training ever touches (nothing in train.cpp calls this), so training performance is
+    // unaffected. reset()/jump() moving the root to a new position don't need to clear anything
+    // here for the same reason -- there's nothing accumulated to clear.
+    void setDebugMode(bool on);
+
+    inline bool getDebugMode() const{
+        return debugMode;
+    }
+
     #ifdef measureTime
     std::vector<int> getTimeStats() const;
-    
+
     void resetTimeStats();
     #endif
 
@@ -106,6 +119,8 @@ private:
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
     TransTable* transposTable;
+
+    bool debugMode = false;
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation,
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
@@ -119,5 +134,14 @@ private:
     void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
 
     void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
+
+    // Debug mode only (see setDebugMode above): prints one playout's search path and leaf NN
+    // evaluation straight to stdout, without storing anything -- the GUI (Python) is what
+    // accumulates/manages the resulting stream of lines. `path` is exactly playout()'s
+    // root->leaf node chain, already computed for search/backprop regardless of debug mode, so
+    // recovering the actual moves just means, for each consecutive pair, finding which of the
+    // parent's children the next node is -- no extra bookkeeping needed on the hot path to
+    // make this possible. Only ever called when debugMode is on.
+    void printPlayoutDebugLine(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState);
 };
 #endif

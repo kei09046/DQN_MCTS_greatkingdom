@@ -333,12 +333,18 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 
-# engine Color enum (src/consts.h): BLACK = 1, WHITE = 2
-ENGINE_BLACK = 1
-ENGINE_WHITE = 2
-
 BOARD_BG = "#DCB35C"
 OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit intensity
+
+# A Node only gets its own per-move breakdown (edgeP/edgeN -- see MCTS::printAnalysis in
+# src/PMCTS.cpp) once *something* has searched through it as an internal node, not merely
+# visited it once as a leaf to evaluate it; a freshly jumped-to child can need up to 2 fresh
+# playouts to reach that point (1 to evaluate it, 1 more to expand it). Requesting this many
+# after a paused move is enough to make its own children's real prior/stats visible instead of
+# a blank all-zero breakdown, while still being a no-op (see the "analyze" protocol's
+# cumulative-target semantics) for any child that already had more visits than this from
+# before -- so it never grows into a real "resume search".
+_PAUSED_MOVE_MIN_VISITS = 2
 
 
 def _blend_hex(c1, c2, t):
@@ -399,17 +405,6 @@ def _sorted_candidate_moves(result):
 
 _FLOAT = r"(-?\d+\.?\d*(?:[eE][+-]?\d+)?)"
 
-# "move : <r> <c>" -- the engine's chosen move
-_MOVE_RE = re.compile(r"^move\s*:\s*(-?\d+)\s+(-?\d+)")
-# "move time : <microseconds>[µs]"
-_MOVETIME_RE = re.compile(r"^move time\s*:\s*(\d+)")
-# one line of MCTS::printVariation(): "<r> <c> <visit> forced <fs> Q: ..."
-_VARIATION_RE = re.compile(r"^(-?\d+) (-?\d+) (\d+) forced (-?\d+) Q:")
-# "winprob : <float>" (-1 = 0%, 1 = 100%, from the engine's perspective)
-_WINPROB_RE = re.compile(r"^winprob\s*:\s*" + _FLOAT)
-# "scoreEXP : <float>" expected score difference
-_SCOREEXP_RE = re.compile(r"^scoreEXP\s*:\s*" + _FLOAT)
-
 # ---- ModelCompare::analyze() protocol (see MCTS::printAnalysis in src/PMCTS.cpp) ----
 # "winrate : <float>" (-1 = 0%, 1 = 100%, from the perspective of whoever is to move)
 _ANALYSIS_WINRATE_RE = re.compile(r"^winrate\s*:\s*" + _FLOAT)
@@ -428,13 +423,29 @@ _ANALYSIS_FORCED_RE = re.compile(r"^forced\s*:\s*(-?\d+)")
 _ANALYSIS_MOVE_RE = re.compile(
     r"^move\s+(-?\d+)\s+(-?\d+)\s+visits\s+" + _FLOAT + r"\s+prior\s+" + _FLOAT
     + r"\s+winrate\s+" + _FLOAT + r"\s+q\s+" + _FLOAT + r"\s+variation(.*)$")
+# "scoreSearch : <float>" -- search-refined score-head estimate: same backup mechanism as
+# winrate (root->S accumulates a scoreExp contribution from every playout along the tree), so
+# this moves as search deepens -- the scoreExp/initQ pair's counterpart to winrate/scoreSearch.
+_ANALYSIS_SCORESEARCH_RE = re.compile(r"^scoreSearch\s*:\s*" + _FLOAT)
+# "scoreExp : <float>" -- the score head's raw scalar output the first time this position was
+# evaluated (mirrors initQ, but for the score head): net (Black - White) territory/capture
+# margin, from the perspective of whoever is to move (same turn-relative convention as
+# winrate/scoreMap), without komi applied (see the PolicyValueOutput comment in src/consts.h).
+_ANALYSIS_SCOREEXP_RE = re.compile(r"^scoreExp\s*:\s*" + _FLOAT)
 # "scoreMap : v0 v1 ... v80" -- row-major (r*9+c) per-point territory prediction, tanh output
 # in [-1, 1]: -1 = certain Black-owned point, +1 = certain White-owned point (see
 # Game::makeMove's end-of-game scoreMap in gamerules.cpp for the matching training label).
 _ANALYSIS_SCOREMAP_RE = re.compile(r"^scoreMap\s*:\s*(.*)$")
-# "captureMap : v0 v1 ... v80" -- row-major, sigmoid output in [0, 1]: probability the stone
-# at that point gets captured. Always 0 at empty points (masked in PolicyValueNet::batchEvaluate).
-_ANALYSIS_CAPTUREMAP_RE = re.compile(r"^captureMap\s*:\s*(.*)$")
+# "playout forced <F> winp <W> score <S> path <r1> <c1> <r2> <c2> ..." -- one playout's search
+# path (root -> leaf, as the moves selected along the way) and leaf NN evaluation, only sent
+# while debug mode is on (see MCTS::setDebugMode/printPlayoutDebugLine in src/PMCTS.h/.cpp).
+# F != 0 means the leaf was a proven win/loss, never evaluated by the net -- winp/score are then
+# 0 and meaningless. Streamed live, one line per playout the moment it finishes -- nothing is
+# stored on the engine side, so this can arrive interleaved with, and outside of, any "analysis
+# begin"/"analysis end" block; AnalysisEngine recognizes it independent of that block state, and
+# Game is what accumulates the resulting stream into a persistent list (see Game.playout_log).
+_ANALYSIS_PLAYOUT_RE = re.compile(
+    r"^playout\s+forced\s+(-?\d+)\s+winp\s+" + _FLOAT + r"\s+score\s+" + _FLOAT + r"\s+path(.*)$")
 
 
 def list_models(models_dir=MODELS_DIR):
@@ -443,105 +454,16 @@ def list_models(models_dir=MODELS_DIR):
     return sorted(f for f in os.listdir(models_dir) if f.endswith(".pt"))
 
 
-class EngineProcess:
-    """Wraps `./play play <model> <humanColor>` and talks to it over stdin/stdout.
-
-    The engine blocks on stdin only while it's the human's turn; once it becomes
-    the engine's turn it computes and prints "move : r c" on its own, so moves
-    coming back from the engine are picked up asynchronously via a reader thread.
-    """
-
-    def __init__(self, model, human_color, build_dir=BUILD_DIR):
-        self.proc = subprocess.Popen(
-            ["./play", "play", model, str(human_color)],
-            cwd=build_dir,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-        )
-        # moves: (x, y, move_time_us) tuples for engine-chosen moves
-        self.moves = queue.Queue()
-        # stats: dicts {"variation": [(r,c), ...], "winprob": float, "score": float},
-        # pushed progressively as the engine deepens its search for the current move
-        self.stats = queue.Queue()
-        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader_thread.start()
-
-    def _read_loop(self):
-        variation_buf = []
-        pending_winprob = None
-        pending_move = None
-
-        for line in self.proc.stdout:
-            line = line.rstrip("\n")
-
-            m = _VARIATION_RE.match(line)
-            if m:
-                variation_buf.append((int(m.group(1)), int(m.group(2))))
-                continue
-
-            m = _WINPROB_RE.match(line)
-            if m:
-                pending_winprob = float(m.group(1))
-                continue
-
-            m = _SCOREEXP_RE.match(line)
-            if m:
-                self.stats.put({
-                    "variation": variation_buf,
-                    "winprob": pending_winprob,
-                    "score": float(m.group(1)),
-                })
-                variation_buf = []
-                pending_winprob = None
-                continue
-
-            m = _MOVETIME_RE.match(line)
-            if m and pending_move is not None:
-                self.moves.put(pending_move + (int(m.group(1)),))
-                pending_move = None
-                continue
-
-            m = _MOVE_RE.match(line)
-            if m:
-                pending_move = (int(m.group(1)), int(m.group(2)))
-                continue
-
-    def send_move(self, x, y):
-        if self.proc.poll() is not None or self.proc.stdin.closed:
-            return
-        try:
-            self.proc.stdin.write(f"{x} {y}\n")
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError):
-            pass
-
-    def get_move_nowait(self):
-        try:
-            return self.moves.get_nowait()
-        except queue.Empty:
-            return None
-
-    def get_stats_nowait(self):
-        try:
-            return self.stats.get_nowait()
-        except queue.Empty:
-            return None
-
-    def close(self):
-        if self.proc.poll() is None:
-            self.proc.terminate()
-
-
 class AnalysisEngine:
     """Wraps `./play analyze <model>` (ModelCompare::analyze in src/modelcompare.cpp).
 
-    Unlike EngineProcess, this never moves on its own: the caller drives the position
-    with reset()/play() and explicitly asks for a winrate/policy/visit-count breakdown
-    of every candidate move via request_analysis(). Results stream back asynchronously
-    through a reader thread, same pattern as EngineProcess.
+    This never moves on its own: the caller drives the position with reset()/play()
+    and explicitly asks for a winrate/policy/visit-count breakdown of every candidate
+    move via request_analysis(). Results stream back asynchronously through a reader
+    thread. Play-vs-engine is layered on top of this in Game: the GUI itself watches
+    the streamed results and, whenever it's a color the engine has been told to play,
+    picks the top candidate move (see Game._auto_play_move) and feeds it back in via
+    send_play -- there is no separate "engine plays itself" process/protocol anymore.
     """
 
     def __init__(self, model, build_dir=BUILD_DIR):
@@ -557,6 +479,12 @@ class AnalysisEngine:
         # results: dicts {"winrate": float, "visits": int,
         #                 "moves": [{"move": (r,c), "visits": float, "prior": float, "winrate": float}, ...]}
         self.results = queue.Queue()
+        # playouts: individual debug-mode playout dicts {"forced": int, "winp": float,
+        # "score": float, "path": [(r,c), ...]}, one per line, streamed live and independent of
+        # the "analysis begin"/"analysis end" block cycle -- the engine doesn't accumulate these
+        # itself (see printPlayoutDebugLine in src/PMCTS.cpp), so building up the growing list a
+        # debug session looks at is entirely on the Python/GUI side; see Game.playout_log.
+        self.playouts = queue.Queue()
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
 
@@ -567,10 +495,25 @@ class AnalysisEngine:
         for line in self.proc.stdout:
             line = line.rstrip("\n")
 
+            # Checked unconditionally, before the in_block gate below -- unlike every other
+            # line here, a "playout ..." line isn't part of any analysis snapshot and can show
+            # up interleaved with, or outside of, an "analysis begin"/"analysis end" block.
+            m = _ANALYSIS_PLAYOUT_RE.match(line)
+            if m:
+                forced, winp, score, path_tail = m.groups()
+                path_ints = [int(x) for x in path_tail.split()]
+                self.playouts.put({
+                    "forced": int(forced),
+                    "winp": float(winp),
+                    "score": float(score),
+                    "path": list(zip(path_ints[0::2], path_ints[1::2])),
+                })
+                continue
+
             if line == "analysis begin":
                 in_block = True
                 current = {"winrate": None, "visits": None, "initQ": None, "moves": [],
-                           "scoreMap": None, "captureMap": None, "forced": 0}
+                           "scoreExp": None, "scoreSearch": None, "scoreMap": None, "forced": 0}
                 continue
             if line == "analysis end":
                 in_block = False
@@ -616,14 +559,19 @@ class AnalysisEngine:
                 current["forced"] = int(m.group(1))
                 continue
 
+            m = _ANALYSIS_SCORESEARCH_RE.match(line)
+            if m:
+                current["scoreSearch"] = float(m.group(1))
+                continue
+
+            m = _ANALYSIS_SCOREEXP_RE.match(line)
+            if m:
+                current["scoreExp"] = float(m.group(1))
+                continue
+
             m = _ANALYSIS_SCOREMAP_RE.match(line)
             if m:
                 current["scoreMap"] = [float(x) for x in m.group(1).split()]
-                continue
-
-            m = _ANALYSIS_CAPTUREMAP_RE.match(line)
-            if m:
-                current["captureMap"] = [float(x) for x in m.group(1).split()]
                 continue
 
     def _send(self, cmd):
@@ -647,9 +595,18 @@ class AnalysisEngine:
     def send_pause(self):
         self._send("pause")
 
+    def send_debug(self, on):
+        self._send("debug on" if on else "debug off")
+
     def get_result_nowait(self):
         try:
             return self.results.get_nowait()
+        except queue.Empty:
+            return None
+
+    def get_playout_nowait(self):
+        try:
+            return self.playouts.get_nowait()
         except queue.Empty:
             return None
 
@@ -680,10 +637,8 @@ class Game:
         self.sideFrame = Frame(self.root, width=420, height=900)
         self.sideFrame.pack_propagate(False)
         self.setupPanel = None
-        self.analysisPanel = None
         self.analysisResultPanel = None
         self._build_setup_panel()
-        self._build_analysis_panel()
         self._build_analysis_result_panel()
 
         self.stones = []
@@ -695,15 +650,26 @@ class Game:
             ImageTk.PhotoImage(Image.open("images/neu_stone.png").resize((self.stone_size, self.stone_size))))
         self.turn = 0
         self.on_stone = [[False for i in range(self.boardSize)] for j in range(self.boardSize)]
-        self.against_ai = False
-        self.engine = None
-        self.human_color = 0
         self.game_over = False
+        # analysis_mode: a session (AnalysisEngine process) is live for the current position.
+        # Which side(s), if any, the engine auto-plays for is tracked independently by
+        # engine_plays_black_var/engine_plays_white_var so it can be toggled freely mid-session --
+        # unchecking both drops back to pure hands-on analysis without ending the session.
         self.analysis_mode = False
         self.analysisEngine = None
         self.last_analysis_result = None
         self.selected_variation_move = None
         self.analysis_paused = False
+        # Guards _maybe_auto_play from re-triggering multiple times for the same position while
+        # several analysis result blocks stream in as the search climbs toward the playout limit.
+        self._auto_move_seq_len = -1
+        # Debug mode: the engine streams individual playout lines the moment each one finishes
+        # (see AnalysisEngine.playouts) and stores none of it itself -- playout_log is *this*
+        # side's accumulation of that stream (drained in poll_analysis), an ordinary growing
+        # list. selected_playout_index indexes into it directly, or is None; only meaningful
+        # while debug_mode_var is checked. See _on_debug_mode_change / _draw_playout_path_overlay.
+        self.playout_log = []
+        self.selected_playout_index = None
 
     def _build_setup_panel(self):
         panel = Frame(self.sideFrame)
@@ -711,10 +677,14 @@ class Game:
 
         Label(panel, text="Great Kingdom", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
 
-        Label(panel, text="Play vs an engine", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+        Label(panel, text="Start a session", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+        Label(panel, text="Analyze the current position, and optionally have\n"
+                          "the engine play one or both sides. You can flip who's\n"
+                          "playing which color at any time from the session panel.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(4, 10))
 
         models = list_models()
-        Label(panel, text="Model:", anchor="w").pack(fill=X, pady=(10, 0))
+        Label(panel, text="Model:", anchor="w").pack(fill=X, pady=(0, 0))
         self.setup_model_var = StringVar(value=models[0] if models else "")
         if models:
             model_row = Frame(panel)
@@ -726,32 +696,25 @@ class Game:
             Label(panel, text=f"(no .pt files found in {MODELS_DIR})", fg="red",
                   wraplength=260, justify=LEFT, anchor="w").pack(fill=X, pady=(0, 10))
 
-        Label(panel, text="Play as:", anchor="w").pack(fill=X)
-        self.setup_color_var = StringVar(value="black")
-        Radiobutton(panel, text="Black", variable=self.setup_color_var, value="black", anchor="w") \
-            .pack(fill=X)
-        Radiobutton(panel, text="White", variable=self.setup_color_var, value="white", anchor="w") \
-            .pack(fill=X)
+        Label(panel, text="Engine plays:", anchor="w").pack(fill=X)
+        self.setup_color_var = StringVar(value="analysis")
+        Radiobutton(panel, text="Black (you play White)", variable=self.setup_color_var,
+                    value="engine_black", anchor="w").pack(fill=X)
+        Radiobutton(panel, text="White (you play Black)", variable=self.setup_color_var,
+                    value="engine_white", anchor="w").pack(fill=X)
+        Radiobutton(panel, text="Neither -- analysis only", variable=self.setup_color_var,
+                    value="analysis", anchor="w").pack(fill=X)
 
-        self.start_ai_button = Button(panel, text="Start Engine Game", command=self.start_ai_game)
-        self.start_ai_button.pack(fill=X, pady=(15, 0))
+        self.start_session_button = Button(panel, text="Start Session", command=self.start_session)
+        self.start_session_button.pack(fill=X, pady=(15, 0))
         if not models:
-            self.start_ai_button.configure(state=DISABLED)
+            self.start_session_button.configure(state=DISABLED)
 
         Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
 
-        Label(panel, text="No engine selected: the board is\nfree to play locally, move by move.",
+        Label(panel, text="No engine: the board is free to\nplay locally, move by move.",
               wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
         Button(panel, text="New Local Game", command=self.reset_board).pack(fill=X)
-
-        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
-
-        Label(panel, text="See what the selected model thinks of\nthe position currently on the board.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
-        self.analyze_button = Button(panel, text="Analyze Position", command=self.start_position_analysis)
-        self.analyze_button.pack(fill=X)
-        if not models:
-            self.analyze_button.configure(state=DISABLED)
 
     def _open_model_picker(self):
         models = list_models()
@@ -797,28 +760,21 @@ class Game:
         Button(btn_row, text="Select", command=choose).pack(side=RIGHT)
         Button(btn_row, text="Cancel", command=picker.destroy).pack(side=RIGHT, padx=(0, 5))
 
-    def _build_analysis_panel(self):
-        panel = Frame(self.sideFrame)
-        self.analysisPanel = panel
-
-        Label(panel, text="Engine Analysis", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
-        self.variationLabel = Label(panel, text="Top line: -", font=("Helvetica", 11),
-                                     wraplength=260, justify=LEFT, anchor="w")
-        self.variationLabel.pack(fill=X, pady=5, anchor="w")
-        self.winProbLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
-        self.winProbLabel.pack(fill=X, pady=5, anchor="w")
-        self.scoreLabel = Label(panel, text="Expected score diff: -", font=("Helvetica", 12), anchor="w")
-        self.scoreLabel.pack(fill=X, pady=5, anchor="w")
-        self.moveTimeLabel = Label(panel, text="Move time: -", font=("Helvetica", 12), anchor="w")
-        self.moveTimeLabel.pack(fill=X, pady=5, anchor="w")
-
-        Button(panel, text="End Game / Back to Setup", command=self.end_ai_game).pack(fill=X, pady=(20, 0))
-
     def _build_analysis_result_panel(self):
         panel = Frame(self.sideFrame)
         self.analysisResultPanel = panel
 
-        Label(panel, text="Position Analysis", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+        Label(panel, text="Session", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+
+        Label(panel, text="Engine plays:", anchor="w").pack(fill=X)
+        engine_plays_row = Frame(panel)
+        engine_plays_row.pack(fill=X, pady=(2, 10))
+        self.engine_plays_black_var = BooleanVar(value=False)
+        Checkbutton(engine_plays_row, text="Black", variable=self.engine_plays_black_var,
+                    command=self._on_engine_plays_change).pack(side=LEFT)
+        self.engine_plays_white_var = BooleanVar(value=False)
+        Checkbutton(engine_plays_row, text="White", variable=self.engine_plays_white_var,
+                    command=self._on_engine_plays_change).pack(side=LEFT, padx=(10, 0))
 
         limit_row = Frame(panel)
         limit_row.pack(fill=X, pady=(0, 10))
@@ -838,21 +794,22 @@ class Game:
             Radiobutton(overlay_row, text=label, variable=self.overlay_var, value=value,
                         command=self._on_overlay_mode_change).pack(side=LEFT)
 
-        # Territory/capture dots are drawn on top of whichever mode above is active (or on
-        # their own, with "No effect") -- independent checkboxes rather than more radio options.
+        # Territory dots are drawn on top of whichever mode above is active (or on their own,
+        # with "No effect") -- an independent checkbox rather than another radio option.
         nn_map_row = Frame(panel)
         nn_map_row.pack(fill=X, pady=(0, 10))
         self.show_territory_var = BooleanVar(value=False)
         Checkbutton(nn_map_row, text="Territory (scoreMap)", variable=self.show_territory_var,
                     command=self._on_overlay_mode_change).pack(side=LEFT)
-        self.show_capture_var = BooleanVar(value=False)
-        Checkbutton(nn_map_row, text="Capture risk (captureMap)", variable=self.show_capture_var,
-                    command=self._on_overlay_mode_change).pack(side=LEFT, padx=(10, 0))
 
         self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
         self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
         self.analysisInitQLabel = Label(panel, text="Initial value (initQ): -", font=("Helvetica", 12), anchor="w")
         self.analysisInitQLabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisScoreExpLabel = Label(panel, text="Score head (initial): -", font=("Helvetica", 12), anchor="w")
+        self.analysisScoreExpLabel.pack(fill=X, pady=5, anchor="w")
+        self.analysisScoreSearchLabel = Label(panel, text="Score head (search): -", font=("Helvetica", 12), anchor="w")
+        self.analysisScoreSearchLabel.pack(fill=X, pady=5, anchor="w")
         self.analysisValueMSELabel = Label(panel, text="Value MSE loss: -", font=("Helvetica", 12), anchor="w")
         self.analysisValueMSELabel.pack(fill=X, pady=5, anchor="w")
         self.analysisPolicyCELabel = Label(panel, text="Policy CE loss: -", font=("Helvetica", 12), anchor="w")
@@ -860,28 +817,58 @@ class Game:
         self.analysisVisitsLabel = Label(panel, text="Visits: -", font=("Helvetica", 12), anchor="w")
         self.analysisVisitsLabel.pack(fill=X, pady=5, anchor="w")
 
-        self.candidateListHeader = Label(panel, text="Candidate moves, by visit count:",
+        self.debug_mode_var = BooleanVar(value=False)
+        Checkbutton(panel, text="Debug mode (log every playout's search path + NN eval)",
+                    variable=self.debug_mode_var, command=self._on_debug_mode_change,
+                    wraplength=260, justify=LEFT, anchor="w").pack(fill=X, pady=(0, 10))
+
+        # candidateFrame (ordinary per-move breakdown) and debugFrame (per-playout log) occupy
+        # the same spot and are never both visible -- _on_debug_mode_change toggles between them.
+        list_area = Frame(panel)
+        list_area.pack(fill=BOTH, expand=True)
+
+        self.candidateFrame = Frame(list_area)
+        self.candidateListHeader = Label(self.candidateFrame, text="Candidate moves, by visit count:",
                                           font=("Helvetica", 10, "bold"), anchor="w",
                                           wraplength=260, justify=LEFT)
-        self.candidateListHeader.pack(fill=X, pady=(10, 0))
-        self.candidateColumnHeader = Label(panel, text="move       visits   policy  winrate     Q",
+        self.candidateListHeader.pack(fill=X)
+        self.candidateColumnHeader = Label(self.candidateFrame, text="move       visits   policy  winrate     Q",
                                             font=("Courier", 9), fg="#555555", anchor="w")
         self.candidateColumnHeader.pack(fill=X, pady=(2, 2))
 
-        list_frame = Frame(panel)
-        list_frame.pack(fill=BOTH, expand=True)
-        scrollbar = Scrollbar(list_frame, orient=VERTICAL)
-        self.analysisListbox = Listbox(list_frame, yscrollcommand=scrollbar.set,
+        candidate_list_frame = Frame(self.candidateFrame)
+        candidate_list_frame.pack(fill=BOTH, expand=True)
+        candidate_scrollbar = Scrollbar(candidate_list_frame, orient=VERTICAL)
+        self.analysisListbox = Listbox(candidate_list_frame, yscrollcommand=candidate_scrollbar.set,
                                         font=("Courier", 10), height=20, exportselection=False)
-        scrollbar.configure(command=self.analysisListbox.yview)
-        scrollbar.pack(side=RIGHT, fill=Y)
+        candidate_scrollbar.configure(command=self.analysisListbox.yview)
+        candidate_scrollbar.pack(side=RIGHT, fill=Y)
         self.analysisListbox.pack(side=LEFT, fill=BOTH, expand=True)
         self.analysisListbox.bind("<<ListboxSelect>>", self._on_candidate_listbox_select)
+        self.candidateFrame.pack(fill=BOTH, expand=True)
 
-        Button(panel, text="Stop Analysis / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(10, 0))
+        self.debugFrame = Frame(list_area)
+        Label(self.debugFrame, text="Playouts, in search order -- select one to trace its\n"
+                                     "path on the board (Variation overlay mode):",
+              font=("Helvetica", 10, "bold"), anchor="w", wraplength=260, justify=LEFT).pack(fill=X)
+        Label(self.debugFrame, text="#     path                              winp   score",
+              font=("Courier", 9), fg="#555555", anchor="w").pack(fill=X, pady=(2, 2))
+
+        debug_list_frame = Frame(self.debugFrame)
+        debug_list_frame.pack(fill=BOTH, expand=True)
+        debug_scrollbar = Scrollbar(debug_list_frame, orient=VERTICAL)
+        self.debugListbox = Listbox(debug_list_frame, yscrollcommand=debug_scrollbar.set,
+                                     font=("Courier", 9), height=20, exportselection=False)
+        debug_scrollbar.configure(command=self.debugListbox.yview)
+        debug_scrollbar.pack(side=RIGHT, fill=Y)
+        self.debugListbox.pack(side=LEFT, fill=BOTH, expand=True)
+        self.debugListbox.bind("<<ListboxSelect>>", self._on_debug_listbox_select)
+        # debugFrame starts unpacked -- candidateFrame is the default view.
+
+        Button(panel, text="End Session / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(10, 0))
 
     def _show_panel(self, panel):
-        for p in (self.setupPanel, self.analysisPanel, self.analysisResultPanel):
+        for p in (self.setupPanel, self.analysisResultPanel):
             p.pack_forget()
         panel.pack(fill=BOTH, expand=True)
 
@@ -942,78 +929,123 @@ class Game:
     def _update_status(self):
         if self.game_over:
             return
-        if not self.against_ai:
+        if not self.analysis_mode:
             self.statusLabel.configure(text="Black to move" if self.turn == 0 else "White to move")
-        elif self.human_color == self.turn:
-            self.statusLabel.configure(text="your turn")
+            return
+        color = "Black" if self.turn == 0 else "White"
+        if self._is_engine_turn():
+            self.statusLabel.configure(text=f"Engine is thinking... ({color} to move)")
         else:
-            self.statusLabel.configure(text="engine is thinking ...")
+            self.statusLabel.configure(text=f"Your turn ({color} to move)")
+
+    def _is_engine_turn(self):
+        """Whether the engine has been told to auto-play whoever is currently to move --
+        independent of analysis_mode's on/off state, this is itself freely toggled at any
+        time via the "Engine plays" checkboxes, so a session can move between the engine
+        playing a side, the human playing it, and pure hands-on analysis of both sides."""
+        if not self.analysis_mode:
+            return False
+        if self.turn == 0:
+            return self.engine_plays_black_var.get()
+        return self.engine_plays_white_var.get()
+
+    def _commit_move(self, x, y):
+        """Applies one move -- a stone at (x, y), or a pass when (x, y) == (boardSize, 0) --
+        to the local rule engine and, if a session is live, forwards it to the analysis
+        engine and re-requests analysis for the resulting position. Shared by human clicks/
+        pass and the engine's own auto-played moves (_auto_play_move); callers are
+        responsible for any legality/turn gating before calling this.
+
+        If search was paused, moving doesn't resume it: the move still jumps the analysis
+        engine's tree to that child (send_play), but the analysis re-request asks for only
+        _PAUSED_MOVE_MIN_VISITS playouts -- per the "analyze" protocol's cumulative-target
+        semantics, a no-op for any child that already has more visits than that, so a child
+        with real prior search just reports its current stats as-is; only a barely-touched
+        child gets the couple of playouts it needs to show a real (non-blank) per-move
+        breakdown instead of one big resumed search. Pause stays engaged either way.
+        """
+        is_pass = (x == self.boardSize and y == 0)
+        if is_pass:
+            result = self.rule.make_move(-1, 0)
+        else:
+            self._place_stone(x, y, self.turn)
+            self.turn = 1 - self.turn
+            result = self.rule.make_move(x, y)
+
+        if self.analysis_mode:
+            self.analysisEngine.send_play(x, y)
+            self.analysisEngine.request_analysis(
+                _PAUSED_MOVE_MIN_VISITS if self.analysis_paused else self._get_analysis_limit())
+            self.selected_variation_move = None
+            # A new position means the old playout log's tree no longer applies (it described
+            # search on the position we just left); AnalysisEngine doesn't track this on its
+            # own end at all now, so clearing our own accumulated copy is entirely on us.
+            self.playout_log = []
+            self.selected_playout_index = None
+            if self.debug_mode_var.get():
+                self._update_debug_listbox()
+            if not self.analysis_paused:
+                self.analysisPauseButton.configure(text="Pause")
+
+        if is_pass:
+            if result == -2:
+                self.on_end(-2)
+                return
+            self.turn = 1 - self.turn
+            self._update_status()
+        else:
+            if result == 1 or result == -1 or result == -2:
+                self.on_end(result * self.rule.turn)
+            else:
+                self._update_status()
 
     def on_click(self, event):
         if self.game_over:
             return
-        if not self.against_ai or (self.human_color == self.turn):
-            x_cord = int((event.x - self.m) / self.delta + 0.5)
-            y_cord = int((event.y - self.m) / self.delta + 0.5)
-            x_loc = self.m + x_cord * self.delta
-            y_loc = self.m + y_cord * self.delta
+        if self._is_engine_turn():
+            return  # the engine auto-plays this color right now; ignore board clicks
 
-            if x_cord < 0 or x_cord >= self.boardSize or y_cord < 0 or y_cord >= self.boardSize:
-                return
+        x_cord = int((event.x - self.m) / self.delta + 0.5)
+        y_cord = int((event.y - self.m) / self.delta + 0.5)
+        x_loc = self.m + x_cord * self.delta
+        y_loc = self.m + y_cord * self.delta
 
-            if not (abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl):
-                return
-            if self.on_stone[x_cord][y_cord]:
-                return
-            # playing into the opponent's already-settled territory is illegal
-            if self.rule.terr_board[x_cord + 1][y_cord + 1] * self.rule.turn == -1:
-                return
+        if x_cord < 0 or x_cord >= self.boardSize or y_cord < 0 or y_cord >= self.boardSize:
+            return
 
-            self._place_stone(x_cord, y_cord, self.turn)
-            self.turn = 1 - self.turn
+        if not (abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl):
+            return
+        if self.on_stone[x_cord][y_cord]:
+            return
+        # playing into the opponent's already-settled territory is illegal
+        if self.rule.terr_board[x_cord + 1][y_cord + 1] * self.rule.turn == -1:
+            return
 
-            res = self.rule.make_move(x_cord, y_cord)
-            if self.against_ai:
-                self.engine.send_move(x_cord, y_cord)
-            elif self.analysis_mode:
-                self.analysisEngine.send_play(x_cord, y_cord)
-                self.analysisEngine.request_analysis(self._get_analysis_limit())
-                self.selected_variation_move = None
-                self.analysis_paused = False
-                self.analysisPauseButton.configure(text="Pause")
-            if res == 1 or res == -1 or res == -2:
-                self.on_end(res * self.rule.turn)
-            else:
-                self._update_status()
-        return
+        self._commit_move(x_cord, y_cord)
 
     def on_pass(self):
         if self.game_over:
             return
-        if not self.against_ai or (self.human_color == self.turn):
-            result = self.rule.make_move(-1, 0)
-            if self.against_ai:
-                self.engine.send_move(self.boardSize, 0)
-            elif self.analysis_mode:
-                self.analysisEngine.send_play(self.boardSize, 0)
-                self.analysisEngine.request_analysis(self._get_analysis_limit())
-                self.selected_variation_move = None
-                self.analysis_paused = False
-                self.analysisPauseButton.configure(text="Pause")
+        if self._is_engine_turn():
+            return  # the engine auto-plays this color right now; ignore the pass button
 
-            if result == -2:
-                self.on_end(-2)
-                return
+        self._commit_move(self.boardSize, 0)
 
-            self.turn = 1 - self.turn
-            self._update_status()
-            return
+    def _reset_debug_mode(self):
+        """Local GUI-side reset to match a fresh (or about-to-be-replaced) AnalysisEngine
+        process, which always starts with debug mode off -- used whenever a session ends or a
+        new one starts, so a checkbox left ticked from a previous session doesn't look enabled
+        while actually talking to a process that was never told to turn debug mode on.
+        """
+        self.debug_mode_var.set(False)
+        self.playout_log = []
+        self.selected_playout_index = None
+        self.debugListbox.delete(0, END)
+        self.debugFrame.pack_forget()
+        self.candidateFrame.pack(fill=BOTH, expand=True)
 
     def reset_board(self):
-        """Clear the board and start a fresh local (no engine) game."""
-        if self.engine is not None:
-            self.engine.close()
-            self.engine = None
+        """Clear the board, end any live session, and start a fresh local (no engine) game."""
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
@@ -1021,58 +1053,44 @@ class Game:
         self.canvas.delete("move_overlay")
         self.last_analysis_result = None
         self.selected_variation_move = None
+        self._reset_debug_mode()
         self.analysis_paused = False
+        self._auto_move_seq_len = -1
         self.analysisPauseButton.configure(text="Pause")
         self.rule = RuleManager()
         self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
         self.turn = 0
         self.game_over = False
-        self.against_ai = False
         self.analysis_mode = False
-        self.human_color = 0
+        self.engine_plays_black_var.set(False)
+        self.engine_plays_white_var.set(False)
         self.statusLabel.configure(text="")
         self._show_panel(self.setupPanel)
         self._update_status()
 
-    # human_color: 0 for black, 1 for white
-    def start_ai_game(self, human_color=None, model=None, build_dir=BUILD_DIR):
-        if model is None:
-            model = self.setup_model_var.get()
-        if not model:
-            return
-        if human_color is None:
-            human_color = 0 if self.setup_color_var.get() == "black" else 1
-
-        self.reset_board()
-        self.human_color = human_color
-        engine_color = ENGINE_BLACK if human_color == 0 else ENGINE_WHITE
-        self.engine = EngineProcess(model, engine_color, build_dir=build_dir)
-        self.against_ai = True
-
-        self._show_panel(self.analysisPanel)
-        self._update_status()
-        self.root.after(100, self.poll_engine)
-        self.root.after(100, self.poll_stats)
-
-    def end_ai_game(self):
-        self.reset_board()
-
-    def start_position_analysis(self, model=None):
-        """Launch (or restart) the analysis engine and evaluate the position currently on the board."""
+    def start_session(self, model=None):
+        """Launch (or restart) the analysis engine on the position currently on the board,
+        and set which side(s) -- if any -- it auto-plays for, per the setup panel's choice.
+        Since this doesn't clear the board first, it doubles as both "analyze this position"
+        and "play a game against the engine from here"; which one it feels like is entirely
+        down to the Engine plays checkboxes, freely changeable afterwards from the session
+        panel without ending the session.
+        """
         if model is None:
             model = self.setup_model_var.get()
         if not model:
             return
 
-        if self.engine is not None:
-            self.engine.close()
-            self.engine = None
-        self.against_ai = False
         if self.analysisEngine is not None:
             self.analysisEngine.close()
 
         self.analysisEngine = AnalysisEngine(model, build_dir=BUILD_DIR)
         self.analysis_mode = True
+
+        choice = self.setup_color_var.get()
+        self.engine_plays_black_var.set(choice == "engine_black")
+        self.engine_plays_white_var.set(choice == "engine_white")
+
         self._sync_analysis_position()
 
         self._show_panel(self.analysisResultPanel)
@@ -1083,6 +1101,8 @@ class Game:
         """Replay the current game's move sequence into the analysis engine, then leave it
         paused -- analysis only actually starts once the user presses Resume."""
         self.selected_variation_move = None
+        self._reset_debug_mode()
+        self._auto_move_seq_len = -1
         self.analysis_paused = True
         self.analysisPauseButton.configure(text="Resume")
         self.analysisEngine.send_reset()
@@ -1130,11 +1150,14 @@ class Game:
 
     def end_analysis_mode(self):
         self.analysis_mode = False
+        self.engine_plays_black_var.set(False)
+        self.engine_plays_white_var.set(False)
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
         self.canvas.delete("move_overlay")
         self.last_analysis_result = None
+        self._reset_debug_mode()
         self._show_panel(self.setupPanel)
 
     def poll_analysis(self):
@@ -1146,8 +1169,22 @@ class Game:
             if r is None:
                 break
             latest = r
+
+        # Debug-mode playout records stream independently of the above (see AnalysisEngine.
+        # playouts) -- the engine stores none of this itself, so accumulating the growing list
+        # a debug session looks at is entirely on us; drain whatever's arrived since last tick.
+        got_playout = False
+        while True:
+            p = self.analysisEngine.get_playout_nowait()
+            if p is None:
+                break
+            self.playout_log.append(p)
+            got_playout = True
+
         if latest is not None:
             self._update_analysis_result_panel(latest)
+        if got_playout and self.debug_mode_var.get():
+            self._update_debug_listbox()
         if self.analysis_mode and not self.game_over:
             self.root.after(200, self.poll_analysis)
 
@@ -1161,16 +1198,19 @@ class Game:
     def _draw_move_overlay(self, result):
         self.canvas.delete("move_overlay")
 
-        # Territory/capture dots are independent checkboxes, layered under (territory) or over
-        # (capture) whichever candidate-move mode below is also active -- drawn unconditionally
-        # so they still show up even with overlay mode "none".
+        # Territory dots are an independent checkbox, layered under whichever candidate-move
+        # mode below is also active -- drawn unconditionally so it still shows up even with
+        # overlay mode "none".
         self._draw_territory_overlay(result)
-        self._draw_capture_overlay(result)
 
         mode = self.overlay_var.get()
         moves = result.get("moves", [])
         if mode == "variation":
-            if moves:
+            # A selected playout (debug mode) takes over the Variation overlay -- its actual
+            # search path, instead of the top/selected candidate's engine-line continuation.
+            if self.debug_mode_var.get() and self.selected_playout_index is not None:
+                self._draw_playout_path_overlay()
+            elif moves:
                 self._draw_variation_overlay(moves)
         elif mode in ("policy", "visits") and moves:
             if mode == "policy":
@@ -1215,10 +1255,10 @@ class Game:
                                                  tags=("move_overlay", "move_overlay_text"))
 
         # stacking order (bottom to top): territory dots / overlay circles, grid/star (board
-        # coordinates), stones, overlay numbers (including capture-risk labels, which sit on
-        # top of the stone they mark). Sink the shapes below everything already on the board
-        # (grid/star/stones) instead of raising grid/star, which would otherwise climb above
-        # stones too; keep text on top of all of it so labels stay legible even over a star point.
+        # coordinates), stones, overlay numbers. Sink the shapes below everything already on the
+        # board (grid/star/stones) instead of raising grid/star, which would otherwise climb
+        # above stones too; keep text on top of all of it so labels stay legible even over a
+        # star point.
         self.canvas.tag_lower("move_overlay_shape")
         self.canvas.tag_raise("move_overlay_text")
 
@@ -1256,32 +1296,6 @@ class Game:
             self.canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=fill,
                                      outline="#000000", tags=("move_overlay", "move_overlay_shape"))
 
-    def _draw_capture_overlay(self, result):
-        """Numeric capture-chance label (2 decimals) drawn inside any stone the network gives
-        meaningful capture odds, colored red for visibility. Only meaningful at occupied points
-        (captureMap is masked to 0 at empty points on the engine side already)."""
-        if not self.show_capture_var.get():
-            return
-        capture_map = result.get("captureMap")
-        if not capture_map:
-            return
-
-        font_size = max(7, int(self.stone_size * 0.26))
-        for i, val in enumerate(capture_map):
-            if val < 0.05:  # negligible capture risk
-                continue
-            x, y = divmod(i, self.boardSize)
-            if x >= self.boardSize or y >= self.boardSize or not self.on_stone[x][y]:
-                continue
-
-            stone_color = self.rule.board[x + 1][y + 1]  # RuleManager board: 1 = Black, -1 = White
-            text_color = "#ff5252" if stone_color == 1 else "#b71c1c"  # readable red on dark/light stones
-            cx = self.m + x * self.delta
-            cy = self.m + y * self.delta
-            self.canvas.create_text(cx, cy, text=f"{val:.2f}", fill=text_color,
-                                     font=("Helvetica", font_size, "bold"),
-                                     tags=("move_overlay", "move_overlay_text"))
-
     def _draw_variation_overlay(self, moves):
         """KataGo-style principal-variation overlay: numbered stone-colored markers tracing the
         expected continuation for the selected candidate (or the top/highest-visit move if none
@@ -1296,6 +1310,21 @@ class Game:
             return
 
         seq = [target["move"]] + target.get("variation", [])
+        self._draw_numbered_path_overlay(seq)
+
+    def _draw_playout_path_overlay(self):
+        """Debug mode's Variation-overlay override: the selected playout's actual root->leaf
+        search path (from our own accumulated playout_log -- see poll_analysis), drawn the same
+        way as the ordinary engine-line variation above -- just from a different, per-playout
+        source."""
+        if self.selected_playout_index is None or self.selected_playout_index >= len(self.playout_log):
+            return
+        self._draw_numbered_path_overlay(self.playout_log[self.selected_playout_index]["path"])
+
+    def _draw_numbered_path_overlay(self, seq):
+        """Numbered stone-colored markers tracing a move sequence starting from whoever is
+        currently to move, alternating color by ply -- the shared drawing routine behind both
+        the ordinary engine-line variation and debug mode's per-playout path."""
         if not seq:
             return
 
@@ -1335,6 +1364,14 @@ class Game:
         if init_q is not None:
             self.analysisInitQLabel.configure(text=f"Initial value (initQ): {init_q:+.4f}")
 
+        # scoreExp/scoreSearch mirror initQ/winrate for the score head: scoreExp is the network's
+        # one-shot raw guess the first time this position was evaluated, unmoved by search;
+        # scoreSearch is the same figure refined by search (root->S, backed up every playout the
+        # same way root->Wp is) -- so it's expected to differ from scoreExp once visits pick up,
+        # same as winrate typically differs from initQ.
+        self._update_score_head_label(self.analysisScoreExpLabel, "Score head (initial)", result.get("scoreExp"))
+        self._update_score_head_label(self.analysisScoreSearchLabel, "Score head (search)", result.get("scoreSearch"))
+
         mse = _value_mse(result)
         if mse is not None:
             self.analysisValueMSELabel.configure(text=f"Value MSE loss: {mse:.4f}")
@@ -1343,29 +1380,48 @@ class Game:
         if ce is not None:
             self.analysisPolicyCELabel.configure(text=f"Policy CE loss: {ce:.4f}")
 
+        status = self._compute_analysis_status(result)
         visits = result.get("visits")
-        if visits is not None:
+        if visits is not None and status is not None:
             limit = self._get_analysis_limit()
-            forced = result.get("forced") or 0
-            # A proven win/loss (forced != 0) makes the engine's analyze loop stop for good
-            # right there, well short of the playout target -- and once the child a move jumps
-            # into already carries a high visit count from earlier search, the very first
-            # request can likewise already be at/past the target. Both cases are genuinely done,
-            # not stuck; without checking them explicitly the label would say "analyzing..."
-            # forever even though no further update will ever arrive, which looks like a freeze.
-            if self.analysis_paused:
-                status = "paused"
-            elif forced > 0:
-                status = "done, forced win"
-            elif forced < 0:
-                status = "done, forced loss"
-            elif visits >= limit:
-                status = "done"
-            else:
-                status = "analyzing..."
             self.analysisVisitsLabel.configure(text=f"Visits: {visits} / {limit} ({status})")
 
         self._update_candidate_listbox(result)
+        self._maybe_auto_play(status)
+
+    def _update_score_head_label(self, label, prefix, score):
+        if score is None:
+            return
+        # Turn-relative (same convention as winrate/scoreMap): positive favors whoever is to
+        # move, negative favors their opponent. Also spelled out in absolute Black/White terms
+        # since that's what the raw net-margin number actually means on the board.
+        leader = "Black" if (score > 0) == (self.turn == 0) else "White"
+        label.configure(text=f"{prefix}: {score:+.2f} ({leader} by {abs(score):.1f})")
+
+    def _compute_analysis_status(self, result):
+        """"paused" / "analyzing..." / "done"[, forced win/loss] -- also doubles as the signal
+        _maybe_auto_play watches to know the engine is finished "thinking" about its move.
+
+        A proven win/loss (forced != 0) makes the engine's analyze loop stop for good right
+        there, well short of the playout target -- and once the child a move jumps into
+        already carries a high visit count from earlier search, the very first request can
+        likewise already be at/past the target. Both cases are genuinely done, not stuck;
+        without checking them explicitly the label would say "analyzing..." forever even
+        though no further update will ever arrive, which looks like a freeze.
+        """
+        visits = result.get("visits")
+        if visits is None:
+            return None
+        if self.analysis_paused:
+            return "paused"
+        forced = result.get("forced") or 0
+        if forced > 0:
+            return "done, forced win"
+        if forced < 0:
+            return "done, forced loss"
+        if visits >= self._get_analysis_limit():
+            return "done"
+        return "analyzing..."
 
     def _update_candidate_listbox(self, result):
         show_variation = self.overlay_var.get() == "variation"
@@ -1409,70 +1465,111 @@ class Game:
         self.selected_variation_move = moves[idx]["move"]
         self._draw_move_overlay(self.last_analysis_result)
 
-    def poll_engine(self):
-        if not self.against_ai or self.game_over:
+    def _on_debug_mode_change(self):
+        """Debug mode only streams playouts run *after* it's turned on -- the engine keeps
+        nothing from before, so a stale "done" position would otherwise show an empty playout
+        list until the user separately bumped the playout limit. Force a small fresh burst of
+        search right away instead, so turning debug mode on always produces something to look
+        at. Toggling either way also starts us over locally: our own accumulated playout_log
+        described whatever was captured under the *previous* on/off state, which the freshly
+        (un)toggled engine process's stream no longer matches.
+        """
+        self.playout_log = []
+        self.selected_playout_index = None
+        on = self.debug_mode_var.get()
+
+        self.debugFrame.pack_forget()
+        self.candidateFrame.pack_forget()
+        (self.debugFrame if on else self.candidateFrame).pack(fill=BOTH, expand=True)
+
+        if self.analysisEngine is None:
             return
-        move = self.engine.get_move_nowait()
-        if move is not None:
-            self.apply_engine_move(move)
-        if not self.game_over:
-            self.root.after(100, self.poll_engine)
+        self.analysisEngine.send_debug(on)
+        if on:
+            current_visits = (self.last_analysis_result or {}).get("visits") or 0
+            target = max(self._get_analysis_limit(), current_visits + 200)
+            self.analysis_limit_var.set(str(target))
+            self.analysis_paused = False
+            self.analysisPauseButton.configure(text="Pause")
+            self.analysisEngine.request_analysis(target)
+        if self.last_analysis_result is not None:
+            self._draw_move_overlay(self.last_analysis_result)
+        self._update_debug_listbox()
 
-    def poll_stats(self):
-        if not self.against_ai or self.game_over:
-            return
-        latest = None
-        while True:
-            s = self.engine.get_stats_nowait()
-            if s is None:
-                break
-            latest = s
-        if latest is not None:
-            self._update_stats_panel(latest)
-        if not self.game_over:
-            self.root.after(100, self.poll_stats)
-
-    def _update_stats_panel(self, stats, move_time_us=None):
-        variation = stats.get("variation") or []
-        if variation:
-            var_text = " → ".join(f"({r},{c})" for r, c in variation[:6])
-        else:
-            var_text = "-"
-        self.variationLabel.configure(text=f"Top line: {var_text}")
-
-        winprob = stats.get("winprob")
-        if winprob is not None:
-            pct = (winprob + 1) / 2 * 100
-            self.winProbLabel.configure(text=f"Win probability: {pct:.1f}%")
-
-        score = stats.get("score")
-        if score is not None:
-            self.scoreLabel.configure(text=f"Expected score diff: {score:+.2f}")
-
-        if move_time_us is not None:
-            self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
-
-    def apply_engine_move(self, move):
-        x, y, move_time_us = move
-        if x == self.boardSize and y == 0:  # PASSMOVE = (boardSize, 0)
-            result = self.rule.make_move(-1, 0)
-            self.turn = 1 - self.turn
-            self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
-            if result == -2:
-                self.on_end(-2)
+    def _update_debug_listbox(self):
+        self.debugListbox.delete(0, END)
+        selected_row = None
+        for row, rec in enumerate(self.playout_log):
+            if row == self.selected_playout_index:
+                selected_row = row
+            path_text = " ".join(f"({r},{c})" for r, c in rec["path"]) or "(root)"
+            if rec["forced"] != 0:
+                stat_text = "forced win" if rec["forced"] > 0 else "forced loss"
             else:
-                self._update_status()
+                stat_text = f"{rec['winp']:+.2f}  {rec['score']:+.2f}"
+            self.debugListbox.insert(END, f"{row:<5} {path_text:<34} {stat_text}")
+        if selected_row is not None:
+            self.debugListbox.selection_set(selected_row)
+            self.debugListbox.see(selected_row)
+
+    def _on_debug_listbox_select(self, event=None):
+        sel = self.debugListbox.curselection()
+        if not sel:
             return
+        idx = sel[0]
+        if idx >= len(self.playout_log):
+            return
+        self.selected_playout_index = idx
+        if self.last_analysis_result is not None:
+            self._draw_move_overlay(self.last_analysis_result)
 
-        self._place_stone(x, y, self.turn)
-        self.turn = 1 - self.turn
-        self.moveTimeLabel.configure(text=f"Move time: {move_time_us / 1e6:.2f}s")
+    def _on_engine_plays_change(self):
+        """Called when either "Engine plays" checkbox is toggled. The color assignment can
+        change at any moment -- including right after the engine already finished thinking
+        about the position on the board -- so re-check immediately instead of waiting for
+        the next streamed result, which may not come until something re-requests analysis.
+        """
+        self._update_status()
+        if self.last_analysis_result is not None:
+            self._maybe_auto_play(self._compute_analysis_status(self.last_analysis_result))
 
-        res = self.rule.make_move(x, y)
-        if res == 1 or res == -1 or res == -2:
-            self.on_end(res * self.rule.turn)
-        else:
-            self._update_status()
+    def _maybe_auto_play(self, status):
+        """Once the engine is done "thinking" (status is a "done..." status) about a position
+        whose turn it's been told to auto-play, pick and commit its move. Guarded by
+        _auto_move_seq_len so this fires exactly once per position -- several streamed
+        results can report "done" for the same position (this callback re-runs on ordinary
+        checkbox toggles too), and _commit_move's own re-request would otherwise reopen the
+        window for a second, stale trigger.
+        """
+        if status is None or not status.startswith("done"):
+            return
+        if self.game_over or not self._is_engine_turn():
+            return
+        seq_len = len(self.rule.seq)
+        if self._auto_move_seq_len == seq_len:
+            return
+        self._auto_move_seq_len = seq_len
+        self.root.after(250, self._auto_play_move)
+
+    def _auto_play_move(self):
+        """Commits the engine's chosen move: the current candidate with the most search
+        visits, same top-of-the-list move already shown in the candidate panel (a forced
+        win/loss position has exactly one candidate -- the proven winning/best-delaying
+        move surfaced by MCTS::printAnalysis, so the same "most visits" pick applies there
+        too). Re-checks everything since this runs after an after() delay, by which time the
+        checkbox could have been unticked or the position could have moved on already.
+        """
+        if self.game_over or not self.analysis_mode or not self._is_engine_turn():
+            return
+        result = self.last_analysis_result
+        if not result or not result.get("moves"):
+            return
+        if len(self.rule.seq) != self._auto_move_seq_len:
+            return
+        best = max(result["moves"], key=lambda mv: mv["visits"])
+        if best["visits"] <= 0:
+            return
+        self._commit_move(*best["move"])
 
     def on_end(self, winner):
         self.game_over = True
@@ -1489,15 +1586,11 @@ class Game:
             else:
                 self.statusLabel.configure(text="draw")
 
-        if self.engine is not None:
-            self.engine.close()
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
 
     def on_close(self):
-        if self.engine is not None:
-            self.engine.close()
         if self.analysisEngine is not None:
             self.analysisEngine.close()
         self.root.destroy()

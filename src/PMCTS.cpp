@@ -771,6 +771,25 @@ std::vector<Move> MCTS::followUpFrom(Node* node, int maxDepth){
     return seq;
 }
 
+void MCTS::setDebugMode(bool on){
+    debugMode = on;
+}
+
+void MCTS::printPlayoutDebugLine(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState){
+    std::cout << "playout forced " << forcedState << " winp " << winP << " score " << scoreEXP << " path";
+    for(size_t i=0; i+1<path.size(); ++i){
+        const std::vector<Node*>& child = path[i]->child;
+        for(size_t a=0; a<child.size(); ++a){
+            if(child[a] == path[i+1]){
+                int m = path[i]->game.getAvailableMoves()[a];
+                std::cout << " " << (m / colSize) << " " << (m % colSize);
+                break;
+            }
+        }
+    }
+    std::cout << std::endl;
+}
+
 void MCTS::printAnalysis(){
     std::cout << "analysis begin" << std::endl;
 
@@ -801,23 +820,35 @@ void MCTS::printAnalysis(){
     // any tree search refined it. Comparing it against the searched winrate above shows how much
     // search moved the evaluation away from the network's first guess.
     std::cout << "initQ : " << root->initQ << std::endl;
+    // Search-refined score-head estimate: root->S accumulates a scoreEXP contribution from every
+    // playout along the search tree (MCTS::propagate), negated per ply exactly like W/Wp above --
+    // same backup mechanism, same "root->S/root->N is the negated weighted average of the moves
+    // below" relationship, and same visit-count denominator. Unlike scoreExp printed further down
+    // (always just the network's untouched one-shot guess at the current position), this one moves
+    // as search deepens, so together the pair mirrors initQ/winrate for the score head.
+    if(root->N > 0)
+        std::cout << "scoreSearch : " << (-root->S / root->N) << std::endl;
+    else
+        std::cout << "scoreSearch : 0" << std::endl;
 
-    // scoreMap / captureMap are per-point NN outputs for the *current* root position, not
-    // per-child search stats -- fetch them directly (evaluator->evaluate hits the cache,
-    // since root was already evaluated by the very first playout, so this is cheap).
+    // scoreExp / scoreMap are per-point (or, for scoreExp, whole-board) NN outputs for the
+    // *current* root position, not per-child search stats -- fetch them directly
+    // (evaluator->evaluate hits the cache, since root was already evaluated by the very first
+    // playout, so this is cheap). (There used to be a third, captureMap, per-point capture-risk
+    // head here too; it's been removed from the model, so PolicyValueOutput is just these two.)
+    // scoreExp: the score head's raw scalar output -- net (Black - White) territory/capture
+    // margin, from whoever is to move at root's perspective (turn-relative, same convention as
+    // winrate/scoreMap below), without komi applied (see PolicyValueOutput in consts.h and the
+    // training label in train.cpp, `-scoreDiff(startingTurn)`).
     // scoreMap: tanh output in [-1, 1], matching the training label convention in
     // Game::makeMove's end-of-game scoreMap (-1 = Black-owned point, +1 = White-owned point).
-    // captureMap: sigmoid output in [0, 1], probability that the stone at that point gets
-    // captured; already masked to 0 at empty points (see PolicyValueNet::batchEvaluate).
     {
         auto buf = std::make_shared<NNResultBuf>();
         evaluator->evaluate(buf, &root->game, root->hashValue);
         const auto& [policy, wp, sd, scoreMap] = *buf->result;
+        std::cout << "scoreExp : " << sd << std::endl;
         std::cout << "scoreMap :";
         for(float v : scoreMap) std::cout << " " << v;
-        std::cout << std::endl;
-        // std::cout << "captureMap :";
-        // for(float v : captureMap) std::cout << " " << v;
         std::cout << std::endl;
     }
 
@@ -902,6 +933,12 @@ void MCTS::printAnalysis(){
         }
     }
 
+    // Debug mode's per-playout lines (see printPlayoutDebugLine) are NOT printed here -- they
+    // stream individually, straight from playout()/updateEval(), the moment each one finishes,
+    // rather than being batched up and dumped once per chunk. So they can appear interleaved
+    // with, and outside of, any "analysis begin"/"analysis end" block; the GUI's reader just
+    // recognizes "playout ..." lines wherever they show up and accumulates them itself.
+
     std::cout << "analysis end" << std::endl;
 }
 
@@ -922,7 +959,7 @@ void MCTS::reset(const Game& startPos){
     }
 }
 
-void MCTS::playout(int& searchCounter, int& evaluateCounter, 
+void MCTS::playout(int& searchCounter, int& evaluateCounter,
     std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
     std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
     const int playMode, const int nPlayout, const int timeLimit) {
@@ -999,6 +1036,9 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 else
                     propagate(path, 1.0f);
             }
+
+            if(debugMode)
+                printPlayoutDebugLine(path, 0.0f, 0.0f, forced);
         }
         else{ // if final search node is non-determined node, ask for evaluation
             // enqueue evaluation
@@ -1030,7 +1070,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
         for(int i=0; i<inEvaluation.size(); ++i){
             std::shared_ptr<NNResultBuf> buf = resultBuffer[i];
             std::vector<Node*> path = updateQueue[i];
-            Node* cur = inEvaluation[i]; 
+            Node* cur = inEvaluation[i];
 
             updateEval(buf, path, cur);
         }
@@ -1054,6 +1094,9 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
         std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
         evalS = std::get<2>(*(buf->result));
         evalQ = cur->initQ;
+
+        if(debugMode)
+            printPlayoutDebugLine(path, evalW, evalS, 0);
     }
     else{
         evalQ = calculateQ(buf->result, cur->game).first;
