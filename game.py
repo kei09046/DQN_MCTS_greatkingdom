@@ -323,8 +323,13 @@ import subprocess
 import threading
 import queue
 import math
+import time
+import random
+import json
+from datetime import datetime
 
 from tkinter import *
+from tkinter import ttk
 from PIL import Image, ImageTk
 
 # 실제 게임이 실행되는 파일 GUI 담당이기도 함
@@ -332,12 +337,20 @@ from PIL import Image, ImageTk
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
+MATCHES_DIR = os.path.join(REPO_ROOT, "matches")
 
 BOARD_BG = "#DCB35C"
 OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit intensity
+# A proven win/loss (root->forcedState != 0, see Analysis::printAnalysis in src/analysis.cpp) leaves
+# exactly one candidate in "moves" -- the winning move (forced > 0) or the best delaying move
+# (forced < 0). Flat, unblended colors (not run through _blend_hex like the ordinary
+# visit-share gradient) so a proven result reads as categorically different from "just happens
+# to currently hold 100% of the visits" rather than another shade of the same gradient.
+FORCED_WIN_COLOR = "#1b8a3a"
+FORCED_LOSS_COLOR = "#b23b3b"
 
-# A Node only gets its own per-move breakdown (edgeP/edgeN -- see MCTS::printAnalysis in
-# src/PMCTS.cpp) once *something* has searched through it as an internal node, not merely
+# A Node only gets its own per-move breakdown (edgeP/edgeN -- see Analysis::printAnalysis in
+# src/analysis.cpp) once *something* has searched through it as an internal node, not merely
 # visited it once as a leaf to evaluate it; a freshly jumped-to child can need up to 2 fresh
 # playouts to reach that point (1 to evaluate it, 1 more to expand it). Requesting this many
 # after a paused move is enough to make its own children's real prior/stats visible instead of
@@ -405,7 +418,7 @@ def _sorted_candidate_moves(result):
 
 _FLOAT = r"(-?\d+\.?\d*(?:[eE][+-]?\d+)?)"
 
-# ---- ModelCompare::analyze() protocol (see MCTS::printAnalysis in src/PMCTS.cpp) ----
+# ---- ModelCompare::analyze() protocol (see Analysis::printAnalysis in src/analysis.cpp) ----
 # "winrate : <float>" (-1 = 0%, 1 = 100%, from the perspective of whoever is to move)
 _ANALYSIS_WINRATE_RE = re.compile(r"^winrate\s*:\s*" + _FLOAT)
 # "visits : <int>" total root visit count
@@ -438,7 +451,8 @@ _ANALYSIS_SCOREEXP_RE = re.compile(r"^scoreExp\s*:\s*" + _FLOAT)
 _ANALYSIS_SCOREMAP_RE = re.compile(r"^scoreMap\s*:\s*(.*)$")
 # "playout forced <F> winp <W> score <S> path <r1> <c1> <r2> <c2> ..." -- one playout's search
 # path (root -> leaf, as the moves selected along the way) and leaf NN evaluation, only sent
-# while debug mode is on (see MCTS::setDebugMode/printPlayoutDebugLine in src/PMCTS.h/.cpp).
+# while debug mode is on (see Analysis::setDebugMode/printPlayoutDebugLine in
+# src/analysis.hpp/.cpp).
 # F != 0 means the leaf was a proven win/loss, never evaluated by the net -- winp/score are then
 # 0 and meaningless. Streamed live, one line per playout the moment it finishes -- nothing is
 # stored on the engine side, so this can arrive interleaved with, and outside of, any "analysis
@@ -482,7 +496,7 @@ class AnalysisEngine:
         # playouts: individual debug-mode playout dicts {"forced": int, "winp": float,
         # "score": float, "path": [(r,c), ...]}, one per line, streamed live and independent of
         # the "analysis begin"/"analysis end" block cycle -- the engine doesn't accumulate these
-        # itself (see printPlayoutDebugLine in src/PMCTS.cpp), so building up the growing list a
+        # itself (see printPlayoutDebugLine in src/analysis.cpp), so building up the growing list a
         # debug session looks at is entirely on the Python/GUI side; see Game.playout_log.
         self.playouts = queue.Queue()
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
@@ -615,6 +629,211 @@ class AnalysisEngine:
             self.proc.terminate()
 
 
+class MatchRunner:
+    """Drives an engine-vs-engine match for the "Engine Match" dialog: two independently
+    configured AnalysisEngine processes (each its own `./play analyze <model>` subprocess, so
+    each genuinely runs its own model at its own playout budget -- there is no shared engine
+    state between them) alternate turns on a position tracked locally by a plain headless
+    RuleManager, the same rules implementation used for local play. RuleManager is the sole
+    authority on legality/scoring here -- the match doesn't depend on parsing "game over"/score
+    text out of either engine process at all, just its own make_move()/end_game() the same way
+    Game._commit_move already does for the interactive board. Each engine is only ever asked
+    "what would you play here" (via analyze) and then told the resulting move back (send_play,
+    to both engines -- including the one that didn't choose it) to keep its own tree in sync.
+
+    Runs entirely on a background thread; progress and finished-game records are handed to the
+    caller thread-safely through `events` (a queue.Queue), which the GUI drains with
+    root.after() -- same reader-thread-plus-queue pattern AnalysisEngine itself uses.
+    """
+
+    def __init__(self, engine_a_cfg, engine_b_cfg, n_games, build_dir=BUILD_DIR):
+        # each cfg: {"model": str, "playouts": int, "temp": float}
+        self.cfg = {"A": engine_a_cfg, "B": engine_b_cfg}
+        self.n_games = n_games
+        self.build_dir = build_dir
+        self.events = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    @staticmethod
+    def _wait_for_analysis(engine, target, stop_event, poll_interval=0.05, timeout=600):
+        """Blocks (on the background thread only) until a streamed analysis result reaches the
+        requested visit target or the position is proven (forced != 0) -- the same "done"
+        condition the GUI's own status label uses, see Game._compute_analysis_status."""
+        deadline = time.monotonic() + timeout
+        latest = None
+        while time.monotonic() < deadline:
+            if stop_event.is_set():
+                return latest
+            r = engine.get_result_nowait()
+            if r is not None:
+                latest = r
+                if r.get("forced") or (r.get("visits") or 0) >= target:
+                    # Drain anything else already queued (a chunk or two can land in a burst)
+                    # so the next request starts from an empty queue.
+                    while engine.get_result_nowait() is not None:
+                        pass
+                    return latest
+            else:
+                time.sleep(poll_interval)
+        return latest
+
+    @staticmethod
+    def _select_move(result, temp, move_count):
+        """Same move-selection rule as Node::selectMoveProb in src/PMCTS.cpp (weight ∝
+        visits**temp, sampled; forced fully greedy once temp >= 5.0 or move_count >= 10) --
+        reimplemented here in Python rather than exposed as a new engine command, since the
+        "analyze" protocol already hands over the full visit-count breakdown this needs, and
+        every other piece of per-engine configuration in this match feature is likewise owned
+        client-side. Note this codebase's temp convention is inverted from the usual: LOW temp
+        means MORE random (near-uniform over visited moves), HIGH temp means MORE greedy.
+        """
+        moves = [mv for mv in result.get("moves", []) if mv["visits"] > 0]
+        if not moves:
+            moves = result.get("moves", [])
+        if not moves:
+            return None
+        if temp >= 5.0 or move_count >= 10:
+            return max(moves, key=lambda mv: mv["visits"])
+
+        weights = [mv["visits"] ** temp if mv["visits"] > 0 else 0.0 for mv in moves]
+        total = sum(weights)
+        if total <= 0:
+            return max(moves, key=lambda mv: mv["visits"])
+        pick = random.uniform(0, total)
+        upto = 0.0
+        for mv, w in zip(moves, weights):
+            upto += w
+            if upto >= pick:
+                return mv
+        return moves[-1]
+
+    def _run(self):
+        engines = {}
+        try:
+            engines["A"] = AnalysisEngine(self.cfg["A"]["model"], build_dir=self.build_dir)
+            engines["B"] = AnalysisEngine(self.cfg["B"]["model"], build_dir=self.build_dir)
+
+            for game_idx in range(self.n_games):
+                if self._stop.is_set():
+                    break
+
+                # Alternates colors game to game, same "each engine plays both sides" spirit as
+                # ModelCompare::play_match in src/modelcompare.cpp (used for training-time model
+                # comparison), just one game per color-assignment instead of a whole half-batch.
+                black = "A" if game_idx % 2 == 0 else "B"
+                white = "B" if black == "A" else "A"
+                self.events.put({"type": "game_start", "index": game_idx, "black": black, "white": white})
+
+                for eng in engines.values():
+                    eng.send_reset()
+
+                rm = RuleManager()
+                move_log = []
+                winner_color, margin, by = None, None, None
+
+                while True:
+                    if self._stop.is_set():
+                        break
+                    # Safety valve: a real game always ends via capture, suicide, or double-pass
+                    # scoring well before this -- this only guards against an unforeseen rules
+                    # desync leaving the two sides passing the loop back and forth forever.
+                    if len(rm.seq) > 4 * RuleManager.boardSize * RuleManager.boardSize:
+                        by = "move limit"
+                        break
+
+                    mover = black if rm.turn == 1 else white
+                    cfg = self.cfg[mover]
+                    engines[mover].request_analysis(cfg["playouts"])
+                    result = self._wait_for_analysis(engines[mover], cfg["playouts"], self._stop)
+                    if self._stop.is_set():
+                        break
+                    if result is None:
+                        by = "aborted (no analysis result)"
+                        break
+
+                    chosen = self._select_move(result, cfg["temp"], len(rm.seq))
+                    if chosen is None:
+                        # Only reachable once forced (see the "per-move breakdown is only
+                        # meaningful..." comment in Analysis::printAnalysis): the position is a
+                        # proven win/loss but this particular forced child happened to still be
+                        # unexpanded (root->child[i] == nullptr) at whatever low visit count
+                        # search stopped at, so the engine had no single move to single out
+                        # either -- rather than aborting the game with no result, resolve it
+                        # directly from forcedState (positive = whoever's on the move here wins,
+                        # matching Node::selectMove's own convention).
+                        if result.get("forced"):
+                            winner_color = rm.turn if result["forced"] > 0 else -rm.turn
+                            by = "forced (no move data)"
+                        else:
+                            by = "aborted (no candidate move)"
+                        break
+
+                    r, c = chosen["move"]
+                    is_pass = (r, c) == (RuleManager.boardSize, 0)
+
+                    move_log.append({
+                        "ply": len(rm.seq),
+                        "by": mover,
+                        "move": None if is_pass else [r, c],
+                        "visits": chosen["visits"],
+                        "prior": chosen["prior"],
+                        "move_winrate": chosen["winrate"],
+                        "move_q": chosen["q"],
+                        "root_winrate": result.get("winrate"),
+                        "root_visits": result.get("visits"),
+                        "root_initQ": result.get("initQ"),
+                        "root_scoreExp": result.get("scoreExp"),
+                        "root_scoreSearch": result.get("scoreSearch"),
+                    })
+
+                    for eng in engines.values():
+                        eng.send_play(r, c)
+
+                    if is_pass:
+                        code = rm.make_move(-1, 0)
+                        if code == -2:
+                            winner_color, margin = rm.end_game()
+                            by = "score"
+                            break
+                    else:
+                        code = rm.make_move(r, c)
+                        if code == 1 or code == -1:
+                            # Read immediately: rm.turn hasn't flipped yet for either the
+                            # capture-win or self-capture/illegal-territory path (same
+                            # `result * rm.turn` reconstruction Game._commit_move uses).
+                            winner_color = code * rm.turn
+                            by = "capture" if code == 1 else "suicide"
+                            break
+
+                winner = None
+                if winner_color == 1:
+                    winner = black
+                elif winner_color == -1:
+                    winner = white
+                elif winner_color == 0:
+                    winner = "draw"
+                # else: aborted/move-limit -- winner stays None
+
+                record = {
+                    "index": game_idx, "black": black, "white": white,
+                    "winner": winner, "winner_color": winner_color,
+                    "margin": margin, "by": by, "moves": move_log,
+                }
+                self.events.put({"type": "game_end", "record": record})
+
+        finally:
+            for eng in engines.values():
+                eng.close()
+            self.events.put({"type": "done"})
+
+
 class Game:
     def __init__(self, margin=50):
         self.rule = RuleManager()
@@ -627,14 +846,14 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        self.root.geometry("1420x1000")
+        self.root.geometry("1760x1000")
 
         self.boardFrame = Frame(self.root)
         self.canvas = Canvas(self.boardFrame, width=900, height=900, bg=BOARD_BG, highlightthickness=0)
         self.passButton = Button(self.boardFrame, text="pass")
         self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
 
-        self.sideFrame = Frame(self.root, width=420, height=900)
+        self.sideFrame = Frame(self.root, width=760, height=900)
         self.sideFrame.pack_propagate(False)
         self.setupPanel = None
         self.analysisResultPanel = None
@@ -670,6 +889,43 @@ class Game:
         # while debug_mode_var is checked. See _on_debug_mode_change / _draw_playout_path_overlay.
         self.playout_log = []
         self.selected_playout_index = None
+
+        # Every move committed via _commit_move (human click, pass, or engine auto-play) is
+        # logged here regardless of session state -- see _commit_move and _save_session_game.
+        # Only ever written to matches/ if session_used_engine ends up true for the game (i.e.
+        # a live analysis session -- see start_session -- touched it at some point); a pure
+        # "New Local Game" leaves this accumulating harmlessly but unsaved. Kept in lock-step
+        # with self.rule.seq (same length, same moves) at all times -- see _commit_move's
+        # divergence-truncation -- so it doubles as "the move list to browse" in the Moves tab
+        # (see _current_moves_list) whenever no recorded game is loaded for reference.
+        self.session_move_log = []
+        self.session_used_engine = False
+        self.session_model = None
+
+        # A previously recorded game (auto-saved session, or a loaded engine-match game -- see
+        # _load_game_for_reference) used as the Moves tab's reference data: review_mode locks
+        # out board clicks/pass (browsing a fixed, already-finished game, not playing a new one)
+        # and review_moves becomes what the Moves tab/position navigation browse instead of
+        # session_move_log. review_index counts moves played so far in whichever of the two is
+        # current (0 = empty board, len(moves) = final position) -- see _jump_to_ply.
+        self.review_mode = False
+        self.review_record = None
+        self.review_moves = []
+        self.review_index = 0
+
+        # Per-ply "Current evaluation" data for the Moves tab (see _update_moves_tab): keyed by
+        # ply (== len(self.rule.seq) at the moment a streamed analysis result arrives -- see
+        # _update_analysis_result_panel), so re-visiting a former position during live analysis
+        # (_jump_to_ply) naturally refreshes that ply's entry instead of only ever recording
+        # whatever a move happened to be chosen with the first time through. Cleared whenever a
+        # session starts fresh (start_session) -- see its own comment.
+        self.position_eval_log = {}
+
+        # The exact ply/status text on_end last produced, for _render_review_position to restore
+        # verbatim when a free-play (no game loaded) jump lands back on the position where the
+        # actual game ended -- game_over itself doesn't carry the "who won and how" text.
+        self.game_over_ply = None
+        self.game_over_text = None
 
     def _build_setup_panel(self):
         panel = Frame(self.sideFrame)
@@ -716,6 +972,26 @@ class Game:
               wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
         Button(panel, text="New Local Game", command=self.reset_board).pack(fill=X)
 
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
+
+        Label(panel, text="Play two independently-configured engines\nagainst each other for a number of games,\n"
+                          "recording every move, evaluation, and result.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
+        match_button = Button(panel, text="Engine vs Engine Match...", command=self._open_match_dialog)
+        match_button.pack(fill=X)
+        if not models:
+            match_button.configure(state=DISABLED)
+
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
+
+        Label(panel, text="Load a previously played game -- an\n"
+                          "auto-saved human/engine game, or one game\n"
+                          "out of a saved engine match -- into the\n"
+                          "Analysis window's Moves tab, for move-by-\n"
+                          "move review and analysis with any engine.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
+        Button(panel, text="Load Game...", command=self._open_load_game_dialog).pack(fill=X)
+
     def _open_model_picker(self):
         models = list_models()
         if not models:
@@ -761,12 +1037,37 @@ class Game:
         Button(btn_row, text="Cancel", command=picker.destroy).pack(side=RIGHT, padx=(0, 5))
 
     def _build_analysis_result_panel(self):
+        """The merged Analysis window: a "Position" column (the ordinary live candidate-move/
+        overlay/debug controls) and a "Moves" column (_build_moves_tab -- the former standalone
+        "Load Game" window's move-list/navigation, now living alongside it instead of as a
+        separate panel/dialog -- see _load_game_for_reference and _jump_to_ply) side by side, so
+        both are visible at once with nothing to click through to see the other. "End Session /
+        Back to Setup" sits above both, spanning the full width.
+        """
         panel = Frame(self.sideFrame)
         self.analysisResultPanel = panel
 
-        Label(panel, text="Session", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
+        Label(panel, text="Session", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 10))
+        Button(panel, text="End Session / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(0, 10))
 
-        Label(panel, text="Engine plays:", anchor="w").pack(fill=X)
+        columns_row = Frame(panel)
+        columns_row.pack(fill=BOTH, expand=True)
+
+        position_col = Frame(columns_row)
+        position_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 8))
+        Frame(columns_row, width=1, bg="#999999").pack(side=LEFT, fill=Y)
+        moves_col = Frame(columns_row)
+        moves_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(8, 0))
+        self.movesColumn = moves_col
+
+        Label(position_col, text="Position", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+        Label(moves_col, text="Moves", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+
+        self._build_position_tab(position_col)
+        self._build_moves_tab(moves_col)
+
+    def _build_position_tab(self, panel):
+        Label(panel, text="Engine plays:", anchor="w").pack(fill=X, pady=(10, 0))
         engine_plays_row = Frame(panel)
         engine_plays_row.pack(fill=X, pady=(2, 10))
         self.engine_plays_black_var = BooleanVar(value=False)
@@ -865,7 +1166,67 @@ class Game:
         self.debugListbox.bind("<<ListboxSelect>>", self._on_debug_listbox_select)
         # debugFrame starts unpacked -- candidateFrame is the default view.
 
-        Button(panel, text="End Session / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(10, 0))
+    def _build_moves_tab(self, panel):
+        """The former standalone "Load Game for Review" window's content, now a tab of the
+        merged Analysis window: an optional loaded game's info, position navigation, the move
+        table itself (see _update_moves_tab for the B eval/W eval/Current eval convention), and
+        a way to attach a live engine at whatever position is currently shown -- reusing
+        start_session exactly as the setup panel's own "Start Session" does.
+        """
+        self.movesInfoLabel = Label(panel, text="", font=("Helvetica", 11), anchor="w",
+                                     wraplength=260, justify=LEFT)
+        self.movesInfoLabel.pack(fill=X, pady=(10, 8))
+
+        Button(panel, text="Load Game...", command=self._open_load_game_dialog).pack(fill=X, pady=(0, 8))
+
+        nav_row = Frame(panel)
+        nav_row.pack(fill=X, pady=(0, 2))
+        Button(nav_row, text="|<", width=3, command=lambda: self._jump_to_ply(0)).pack(side=LEFT)
+        Button(nav_row, text="<", width=3,
+               command=lambda: self._jump_to_ply(self.review_index - 1)).pack(side=LEFT)
+        Button(nav_row, text=">", width=3,
+               command=lambda: self._jump_to_ply(self.review_index + 1)).pack(side=LEFT)
+        Button(nav_row, text=">|", width=3,
+               command=lambda: self._jump_to_ply(len(self._current_moves_coords()))).pack(side=LEFT)
+        self.movesPositionLabel = Label(nav_row, text="", anchor="w")
+        self.movesPositionLabel.pack(side=LEFT, padx=(10, 0))
+
+        Label(panel, text="Moves (click a row to jump there):", font=("Helvetica", 10, "bold"),
+              anchor="w").pack(fill=X, pady=(8, 0))
+        tree_frame = Frame(panel)
+        tree_frame.pack(fill=BOTH, expand=True, pady=(2, 10))
+        tree_scrollbar = Scrollbar(tree_frame, orient=VERTICAL)
+        columns = ("ply", "move", "b_eval", "w_eval", "cur_eval")
+        self.movesTree = ttk.Treeview(tree_frame, columns=columns, show="headings",
+                                       yscrollcommand=tree_scrollbar.set, selectmode="browse")
+        for col, heading, width in (("ply", "#", 40), ("move", "Move", 75), ("b_eval", "B eval", 70),
+                                     ("w_eval", "W eval", 70), ("cur_eval", "Current", 75)):
+            self.movesTree.heading(col, text=heading)
+            self.movesTree.column(col, width=width, anchor=CENTER, stretch=(col == "move"))
+        tree_scrollbar.configure(command=self.movesTree.yview)
+        tree_scrollbar.pack(side=RIGHT, fill=Y)
+        self.movesTree.pack(side=LEFT, fill=BOTH, expand=True)
+        self.movesTree.bind("<<TreeviewSelect>>", self._on_moves_tree_select)
+
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=10)
+
+        Label(panel, text="Start analyzing this position:", font=("Helvetica", 11, "bold"),
+              anchor="w").pack(fill=X)
+        Label(panel, text="With any engine you like -- not necessarily the one(s) that played\n"
+                          "a loaded game, if one is loaded.",
+              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(2, 8))
+
+        model_row = Frame(panel)
+        model_row.pack(fill=X, pady=(0, 8))
+        Label(model_row, textvariable=self.setup_model_var, anchor="w",
+              relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X, expand=True)
+        Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
+
+        models = list_models()
+        self.moves_analyze_button = Button(panel, text="Start Analyzing", command=self._start_analysis_from_panel)
+        self.moves_analyze_button.pack(fill=X)
+        if not models:
+            self.moves_analyze_button.configure(state=DISABLED)
 
     def _show_panel(self, panel):
         for p in (self.setupPanel, self.analysisResultPanel):
@@ -942,8 +1303,12 @@ class Game:
         """Whether the engine has been told to auto-play whoever is currently to move --
         independent of analysis_mode's on/off state, this is itself freely toggled at any
         time via the "Engine plays" checkboxes, so a session can move between the engine
-        playing a side, the human playing it, and pure hands-on analysis of both sides."""
-        if not self.analysis_mode:
+        playing a side, the human playing it, and pure hands-on analysis of both sides.
+        Always false while a loaded game is being browsed (review_mode) -- auto-play only
+        makes sense for a live game actually being played out, never for stepping through a
+        fixed, already-finished recorded one, regardless of what the checkboxes (left over
+        from some earlier, unrelated session) happen to show."""
+        if not self.analysis_mode or self.review_mode:
             return False
         if self.turn == 0:
             return self.engine_plays_black_var.get()
@@ -965,6 +1330,64 @@ class Game:
         breakdown instead of one big resumed search. Pause stays engaged either way.
         """
         is_pass = (x == self.boardSize and y == 0)
+
+        # Logged regardless of session state (see session_move_log's own comment in __init__) --
+        # this is the single mutation point for both human clicks/pass and engine auto-play
+        # (_auto_play_move), so it's the natural place to record "the entire sequence of the
+        # game" that the Moves tab later browses (see _current_moves_list). Captured before the
+        # move is applied below, since last_analysis_result describes the position we're still
+        # in (the one the move being committed right now was chosen from/for).
+        matched = None
+        if self.analysis_mode and self.last_analysis_result is not None:
+            matched = next((mv for mv in self.last_analysis_result.get("moves", [])
+                             if mv["move"] == (x, y)), None)
+        root = self.last_analysis_result if self.analysis_mode else None
+        ply = len(self.rule.seq)
+
+        # Locks in the Moves tab's "Current evaluation" for the position being left, synchronously
+        # and unconditionally -- rather than relying solely on a streamed analysis result arriving
+        # for it before poll_analysis's next tick, which can race with the "send_play" a few lines
+        # down: that resets the engine onto the *next* position, and any result already in flight
+        # for this one that lands in the queue afterward would otherwise get mis-attributed to the
+        # new ply (see _update_analysis_result_panel, which keys purely off len(self.rule.seq) at
+        # whenever a result happens to be drained). last_analysis_result is already trusted for
+        # this same position just above (matched/root), so reusing it here is exactly "whatever
+        # was last known about the position now being left."
+        if root is not None:
+            self.position_eval_log[ply] = {
+                "winrate": root.get("winrate"),
+                "visits": root.get("visits"),
+                "forced": root.get("forced"),
+            }
+
+        if ply < len(self.session_move_log):
+            # Only reachable via _jump_to_ply rewinding this session's own history (review_mode
+            # blocks clicks entirely, so a loaded game's fixed moves never hit this path) and
+            # then playing a move that diverges from what was there before -- drop the old
+            # "future" so session_move_log stays exactly in step with self.rule.seq, index for
+            # index, the way _current_moves_list/_jump_to_ply both assume.
+            self.session_move_log = self.session_move_log[:ply]
+        self.session_move_log.append({
+            "ply": ply,
+            "color": "black" if self.turn == 0 else "white",
+            "mover": "engine" if self._is_engine_turn() else "human",
+            "move": None if is_pass else [x, y],
+            "visits": matched["visits"] if matched else None,
+            "prior": matched["prior"] if matched else None,
+            "move_winrate": matched["winrate"] if matched else None,
+            "move_q": matched["q"] if matched else None,
+            "root_winrate": (root or {}).get("winrate"),
+            "root_visits": (root or {}).get("visits"),
+            "root_initQ": (root or {}).get("initQ"),
+            "root_scoreExp": (root or {}).get("scoreExp"),
+            "root_scoreSearch": (root or {}).get("scoreSearch"),
+        })
+        # review_record is never set here in practice -- review_mode (loaded game) blocks both
+        # clicks/pass and auto-play (see on_click/on_pass/_is_engine_turn) -- but update
+        # unconditionally regardless, since it's cheap and this is the single mutation point.
+        self.review_index = ply + 1
+        self._update_moves_tab()
+
         if is_pass:
             result = self.rule.make_move(-1, 0)
         else:
@@ -1000,7 +1423,7 @@ class Game:
                 self._update_status()
 
     def on_click(self, event):
-        if self.game_over:
+        if self.game_over or self.review_mode:
             return
         if self._is_engine_turn():
             return  # the engine auto-plays this color right now; ignore board clicks
@@ -1024,7 +1447,7 @@ class Game:
         self._commit_move(x_cord, y_cord)
 
     def on_pass(self):
-        if self.game_over:
+        if self.game_over or self.review_mode:
             return
         if self._is_engine_turn():
             return  # the engine auto-plays this color right now; ignore the pass button
@@ -1064,9 +1487,20 @@ class Game:
         self.analysis_mode = False
         self.engine_plays_black_var.set(False)
         self.engine_plays_white_var.set(False)
+        self.session_move_log = []
+        self.session_used_engine = False
+        self.session_model = None
+        self.review_mode = False
+        self.review_record = None
+        self.review_moves = []
+        self.review_index = 0
+        self.position_eval_log = {}
+        self.game_over_ply = None
+        self.game_over_text = None
         self.statusLabel.configure(text="")
         self._show_panel(self.setupPanel)
         self._update_status()
+        self._update_moves_tab()
 
     def start_session(self, model=None):
         """Launch (or restart) the analysis engine on the position currently on the board,
@@ -1074,7 +1508,12 @@ class Game:
         Since this doesn't clear the board first, it doubles as both "analyze this position"
         and "play a game against the engine from here"; which one it feels like is entirely
         down to the Engine plays checkboxes, freely changeable afterwards from the session
-        panel without ending the session.
+        panel without ending the session. Also reachable from the Moves tab
+        (_start_analysis_from_panel), where self.rule already holds whatever position was being
+        browsed (possibly review_mode-locked to a loaded game) -- game_over is reset
+        unconditionally since browsing can leave it set for a finished game's last position, and
+        position_eval_log is cleared since a freshly (re)started engine's opinions of positions
+        shouldn't mix with whatever an earlier engine/session already recorded there.
         """
         if model is None:
             model = self.setup_model_var.get()
@@ -1086,15 +1525,24 @@ class Game:
 
         self.analysisEngine = AnalysisEngine(model, build_dir=BUILD_DIR)
         self.analysis_mode = True
+        self.session_used_engine = True
+        self.session_model = model
+        self.game_over = False
+        self.position_eval_log = {}
 
-        choice = self.setup_color_var.get()
-        self.engine_plays_black_var.set(choice == "engine_black")
-        self.engine_plays_white_var.set(choice == "engine_white")
+        if not self.review_mode:
+            # A loaded/locked game never auto-plays (see _is_engine_turn) regardless of these --
+            # leave them (and whatever a prior, unrelated session set them to) alone rather than
+            # re-deriving from the setup panel's choice, which wasn't made with this game in mind.
+            choice = self.setup_color_var.get()
+            self.engine_plays_black_var.set(choice == "engine_black")
+            self.engine_plays_white_var.set(choice == "engine_white")
 
         self._sync_analysis_position()
 
         self._show_panel(self.analysisResultPanel)
         self._update_status()
+        self._update_moves_tab()
         self.root.after(100, self.poll_analysis)
 
     def _sync_analysis_position(self):
@@ -1161,7 +1609,10 @@ class Game:
         self._show_panel(self.setupPanel)
 
     def poll_analysis(self):
-        if not self.analysis_mode or self.game_over:
+        # game_over is ignored while browsing a loaded game (review_mode): _jump_to_ply can
+        # leave it set (or stale) for that game's final position, but analysis on a loaded game
+        # should keep running regardless of where in its history is currently being viewed.
+        if not self.analysis_mode or (self.game_over and not self.review_mode):
             return
         latest = None
         while True:
@@ -1211,7 +1662,7 @@ class Game:
             if self.debug_mode_var.get() and self.selected_playout_index is not None:
                 self._draw_playout_path_overlay()
             elif moves:
-                self._draw_variation_overlay(moves)
+                self._draw_variation_overlay(moves, result.get("forced") or 0)
         elif mode in ("policy", "visits") and moves:
             if mode == "policy":
                 # prior is already a probability (fraction of 1); use it directly as the "share".
@@ -1224,6 +1675,7 @@ class Game:
                 get_share = lambda mv: mv["visits"] / total_visits if total_visits else 0.0
 
             max_val = max((get_val(mv) for mv in moves), default=0.0)
+            forced = result.get("forced") or 0
             if max_val > 0 and (mode != "visits" or total_visits > 0):
                 r = int(self.stone_size * 0.42)
                 font_size = max(7, int(self.stone_size * 0.16))
@@ -1235,9 +1687,20 @@ class Game:
                     if x < 0 or x >= self.boardSize or y < 0 or y >= self.boardSize or self.on_stone[x][y]:
                         continue
 
-                    color = _blend_hex(BOARD_BG, OVERLAY_COLOR, val / max_val)
+                    # Once forced, "moves" holds exactly this one candidate -- the proven
+                    # winning (or best-delaying) move -- so on the Visits overlay it gets a flat
+                    # categorical color instead of the usual visit-share gradient, which would
+                    # otherwise render it identically to any other move that happened to hold
+                    # 100% of the visits without actually being proven.
+                    if mode == "visits" and forced > 0:
+                        color = FORCED_WIN_COLOR
+                    elif mode == "visits" and forced < 0:
+                        color = FORCED_LOSS_COLOR
+                    else:
+                        color = _blend_hex(BOARD_BG, OVERLAY_COLOR, val / max_val)
                     text_color = "#ffffff" if _luminance(color) < 140 else "#000000"
-                    label = f"{val * 100:.0f}%" if mode == "policy" else f"{int(val)}"
+                    star = " ★" if (mode == "visits" and forced > 0) else ""
+                    label = f"{val * 100:.0f}%" if mode == "policy" else f"{int(val)}{star}"
 
                     cx = self.m + x * self.delta
                     cy = self.m + y * self.delta
@@ -1296,10 +1759,18 @@ class Game:
             self.canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=fill,
                                      outline="#000000", tags=("move_overlay", "move_overlay_shape"))
 
-    def _draw_variation_overlay(self, moves):
+    def _draw_variation_overlay(self, moves, forced=0):
         """KataGo-style principal-variation overlay: numbered stone-colored markers tracing the
         expected continuation for the selected candidate (or the top/highest-visit move if none
-        has been clicked in the list yet), alternating color by ply."""
+        has been clicked in the list yet), alternating color by ply.
+
+        Once forced (proven win/loss), "moves" holds exactly the one proven move (see
+        Analysis::printAnalysis), so it's already both the highest-visit AND the only candidate --
+        "target" below picks it out the same way it always does, with no special-casing needed
+        to make it come first. highlight_first then just makes that fact visible on the board:
+        marker #1 (the winning move itself) gets FORCED_WIN_COLOR's ring instead of black,
+        instead of looking like an ordinary variation.
+        """
         target = None
         if self.selected_variation_move is not None:
             target = next((mv for mv in moves if mv["move"] == self.selected_variation_move
@@ -1310,7 +1781,7 @@ class Game:
             return
 
         seq = [target["move"]] + target.get("variation", [])
-        self._draw_numbered_path_overlay(seq)
+        self._draw_numbered_path_overlay(seq, highlight_first=(forced > 0))
 
     def _draw_playout_path_overlay(self):
         """Debug mode's Variation-overlay override: the selected playout's actual root->leaf
@@ -1321,10 +1792,12 @@ class Game:
             return
         self._draw_numbered_path_overlay(self.playout_log[self.selected_playout_index]["path"])
 
-    def _draw_numbered_path_overlay(self, seq):
+    def _draw_numbered_path_overlay(self, seq, highlight_first=False):
         """Numbered stone-colored markers tracing a move sequence starting from whoever is
         currently to move, alternating color by ply -- the shared drawing routine behind both
-        the ordinary engine-line variation and debug mode's per-playout path."""
+        the ordinary engine-line variation and debug mode's per-playout path. highlight_first
+        rings marker #1 in FORCED_WIN_COLOR instead of black -- used only for a proven winning
+        move (see _draw_variation_overlay), never for an ordinary/debug-playout path."""
         if not seq:
             return
 
@@ -1339,11 +1812,13 @@ class Game:
             black_to_play = (mover + idx) % 2 == 0
             fill = "#111111" if black_to_play else "#f2f2f2"
             text_color = "#ffffff" if black_to_play else "#000000"
+            outline = FORCED_WIN_COLOR if (highlight_first and idx == 0) else "#000000"
+            outline_width = 3 if (highlight_first and idx == 0) else 1
 
             cx = self.m + x * self.delta
             cy = self.m + y * self.delta
-            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=fill, outline="#000000",
-                                     tags=("move_overlay", "move_overlay_shape"))
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill=fill, outline=outline,
+                                     width=outline_width, tags=("move_overlay", "move_overlay_shape"))
             self.canvas.create_text(cx, cy, text=str(idx + 1), fill=text_color,
                                      font=("Helvetica", font_size, "bold"),
                                      tags=("move_overlay", "move_overlay_text"))
@@ -1354,6 +1829,19 @@ class Game:
     def _update_analysis_result_panel(self, result):
         self.last_analysis_result = result
         self._draw_move_overlay(result)
+
+        # The Moves tab's "Current evaluation" column (see _update_moves_tab): every streamed
+        # result updates the entry for whatever ply is currently on the board (len(self.rule.
+        # seq) -- the number of moves already played, matching session_move_log's own "ply"
+        # convention), so re-visiting a former position (_jump_to_ply) during live analysis
+        # refreshes its entry here exactly the same way as an ordinary new move does.
+        ply = len(self.rule.seq)
+        self.position_eval_log[ply] = {
+            "winrate": result.get("winrate"),
+            "visits": result.get("visits"),
+            "forced": result.get("forced"),
+        }
+        self._update_moves_tab()
 
         winrate = result.get("winrate")
         if winrate is not None:
@@ -1435,6 +1923,10 @@ class Game:
 
         self.analysisListbox.delete(0, END)
         moves = _sorted_candidate_moves(result)
+        # Once forced, "moves" holds exactly the one proven move (see Analysis::printAnalysis) --
+        # already the sole/first row below with no extra sorting needed; itemconfig just flags
+        # that row's text color so it reads as "proven", not merely "currently on top".
+        forced = result.get("forced") or 0
         selected_row = None
         for idx, mv in enumerate(moves):
             r, c = mv["move"]
@@ -1442,12 +1934,18 @@ class Game:
                 selected_row = idx
             if show_variation:
                 seq = [(r, c)] + mv.get("variation", [])
-                self.analysisListbox.insert(END, " → ".join(f"({sr},{sc})" for sr, sc in seq))
+                text = " → ".join(f"({sr},{sc})" for sr, sc in seq)
+                if forced > 0:
+                    text = "★ " + text
             else:
                 pct = (mv["winrate"] + 1) / 2 * 100
-                self.analysisListbox.insert(
-                    END, f"({r},{c})".ljust(10) + f"{int(mv['visits']):<8}"
-                         f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}")
+                text = (f"({r},{c})".ljust(10) + f"{int(mv['visits']):<8}"
+                        f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}")
+            self.analysisListbox.insert(END, text)
+            if forced > 0:
+                self.analysisListbox.itemconfig(idx, fg=FORCED_WIN_COLOR)
+            elif forced < 0:
+                self.analysisListbox.itemconfig(idx, fg=FORCED_LOSS_COLOR)
 
         if show_variation and selected_row is not None:
             self.analysisListbox.selection_set(selected_row)
@@ -1555,7 +2053,7 @@ class Game:
         """Commits the engine's chosen move: the current candidate with the most search
         visits, same top-of-the-list move already shown in the candidate panel (a forced
         win/loss position has exactly one candidate -- the proven winning/best-delaying
-        move surfaced by MCTS::printAnalysis, so the same "most visits" pick applies there
+        move surfaced by Analysis::printAnalysis, so the same "most visits" pick applies there
         too). Re-checks everything since this runs after an after() delay, by which time the
         checkbox could have been unticked or the position could have moved on already.
         """
@@ -1571,24 +2069,600 @@ class Game:
             return
         self._commit_move(*best["move"])
 
+    def _open_match_dialog(self):
+        """Engine-vs-engine match dialog: two independently configured engines (model, playout
+        budget, move-selection temperature -- see MatchRunner) play a requested number of games
+        against each other, alternating colors, with every move/evaluation/result recorded and
+        saved to a JSON file under matches/. Fully separate from the interactive board/session
+        above -- the match runs its own AnalysisEngine processes on a background thread and
+        never touches self.analysisEngine or self.rule.
+        """
+        models = list_models()
+        if not models:
+            return
+
+        dialog = Toplevel(self.root)
+        dialog.title("Engine vs Engine Match")
+        dialog.transient(self.root)
+        dialog.runner = None
+        dialog.records = []
+        dialog.tally = {"A": 0, "B": 0, "draw": 0}
+        dialog.match_filename = None
+        dialog.match_done = True
+
+        config_frame = Frame(dialog)
+        config_frame.pack(padx=10, pady=10, fill=X)
+
+        def build_engine_column(parent, label):
+            col = Frame(parent, padx=10)
+            Label(col, text=label, font=("Helvetica", 11, "bold")).pack(anchor="w")
+            model_var = StringVar(value=models[0])
+            OptionMenu(col, model_var, *models).pack(fill=X, pady=(2, 6))
+            Label(col, text="Playouts:", anchor="w").pack(fill=X)
+            playouts_var = StringVar(value="800")
+            Entry(col, textvariable=playouts_var, width=10).pack(anchor="w", pady=(0, 6))
+            Label(col, text="Temperature:", anchor="w").pack(fill=X)
+            temp_var = StringVar(value="1.0")
+            Entry(col, textvariable=temp_var, width=10).pack(anchor="w")
+            return col, model_var, playouts_var, temp_var
+
+        col_a, dialog.model_a, dialog.playouts_a, dialog.temp_a = build_engine_column(config_frame, "Engine A")
+        col_a.pack(side=LEFT)
+        col_b, dialog.model_b, dialog.playouts_b, dialog.temp_b = build_engine_column(config_frame, "Engine B")
+        col_b.pack(side=LEFT)
+
+        Label(dialog, text="(Temperature: low = more random move choice, >= 5 = always the "
+                            "most-visited move; same convention as MCTS::getMove.)",
+              wraplength=420, justify=LEFT, fg="#555555").pack(padx=10, anchor="w")
+
+        games_row = Frame(dialog)
+        games_row.pack(padx=10, pady=(8, 0), fill=X)
+        Label(games_row, text="Number of games:").pack(side=LEFT)
+        dialog.n_games_var = StringVar(value="10")
+        Entry(games_row, textvariable=dialog.n_games_var, width=6).pack(side=LEFT, padx=(5, 0))
+
+        btn_row = Frame(dialog)
+        btn_row.pack(padx=10, pady=10, fill=X)
+        dialog.start_button = Button(btn_row, text="Start Match", command=lambda: self._start_match(dialog))
+        dialog.start_button.pack(side=LEFT)
+        dialog.stop_button = Button(btn_row, text="Stop", state=DISABLED, command=lambda: self._stop_match(dialog))
+        dialog.stop_button.pack(side=LEFT, padx=(5, 0))
+        Button(btn_row, text="Close", command=lambda: self._close_match_dialog(dialog)).pack(side=RIGHT)
+
+        dialog.status_label = Label(dialog, text="Configure both engines and press Start.",
+                                     anchor="w", wraplength=420, justify=LEFT)
+        dialog.status_label.pack(padx=10, fill=X)
+        dialog.tally_label = Label(dialog, text="", anchor="w")
+        dialog.tally_label.pack(padx=10, fill=X)
+
+        list_frame = Frame(dialog)
+        list_frame.pack(padx=10, pady=(5, 10), fill=BOTH, expand=True)
+        scrollbar = Scrollbar(list_frame, orient=VERTICAL)
+        dialog.games_listbox = Listbox(list_frame, yscrollcommand=scrollbar.set,
+                                        font=("Courier", 9), width=60, height=12, exportselection=False)
+        scrollbar.configure(command=dialog.games_listbox.yview)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        dialog.games_listbox.pack(side=LEFT, fill=BOTH, expand=True)
+        dialog.games_listbox.bind("<Double-Button-1>", lambda e: self._load_match_game_from_dialog(dialog))
+
+        Label(dialog, text="Double-click a finished game to load it onto the main board for review.",
+              fg="#555555", anchor="w").pack(padx=10, pady=(0, 10), fill=X)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_match_dialog(dialog))
+
+    def _start_match(self, dialog):
+        try:
+            playouts_a = max(1, int(dialog.playouts_a.get()))
+            playouts_b = max(1, int(dialog.playouts_b.get()))
+            temp_a = max(0.0, float(dialog.temp_a.get()))
+            temp_b = max(0.0, float(dialog.temp_b.get()))
+            n_games = max(1, int(dialog.n_games_var.get()))
+        except ValueError:
+            dialog.status_label.configure(text="Playouts/temperature/games must be numbers.")
+            return
+
+        cfg_a = {"model": dialog.model_a.get(), "playouts": playouts_a, "temp": temp_a}
+        cfg_b = {"model": dialog.model_b.get(), "playouts": playouts_b, "temp": temp_b}
+
+        dialog.records = []
+        dialog.tally = {"A": 0, "B": 0, "draw": 0}
+        dialog.games_listbox.delete(0, END)
+        dialog.cfg_a, dialog.cfg_b, dialog.n_games = cfg_a, cfg_b, n_games
+
+        os.makedirs(MATCHES_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        a_tag = os.path.splitext(cfg_a["model"])[0]
+        b_tag = os.path.splitext(cfg_b["model"])[0]
+        dialog.match_filename = os.path.join(MATCHES_DIR, f"match_{a_tag}_vs_{b_tag}_{stamp}.json")
+
+        dialog.start_button.configure(state=DISABLED)
+        dialog.stop_button.configure(state=NORMAL)
+        dialog.status_label.configure(text=f"Starting match -- {n_games} game(s)...")
+
+        dialog.runner = MatchRunner(cfg_a, cfg_b, n_games, build_dir=BUILD_DIR)
+        dialog.match_done = False
+        dialog.runner.start()
+        self.root.after(150, self._poll_match, dialog)
+
+    def _stop_match(self, dialog):
+        if dialog.runner is not None:
+            dialog.runner.stop()
+            dialog.status_label.configure(text="Stopping after the current move...")
+
+    def _close_match_dialog(self, dialog):
+        if dialog.runner is not None:
+            dialog.runner.stop()
+        dialog.destroy()
+
+    @staticmethod
+    def _match_row_text(rec):
+        black, white = rec["black"], rec["white"]
+        if rec["winner"] == "draw":
+            res = "draw"
+        elif rec["winner"] is None:
+            res = f"unresolved ({rec['by']})"
+        else:
+            loser = white if rec["winner"] == black else black
+            margin_txt = f" by {rec['margin']:.1f}" if rec.get("margin") else ""
+            res = f"{rec['winner']} beat {loser}{margin_txt} ({rec['by']})"
+        return f"Game {rec['index'] + 1:>3}: {black}(black) vs {white}(white) -- {res}"
+
+    @staticmethod
+    def _resolve_match_names(rec, model_a, model_b):
+        """Returns a shallow copy of a MatchRunner-produced game record with the internal "A"/
+        "B" engine tags -- in black/white, winner, and each move's "by" -- resolved to the
+        actual model filenames, for display purposes only. The original record (what MatchRunner
+        itself produces, what the live match dialog's tally keys off of, and what
+        _save_match_records writes to disk) is left untouched; only this copy, handed to
+        _match_row_text/_review_row_text/_update_moves_tab, is touched. Passing None for
+        either name leaves that tag as-is (e.g. a match file saved before this existed and
+        missing engineA/engineB "model").
+        """
+        names = {"A": model_a or "A", "B": model_b or "B"}
+        out = dict(rec)
+        out["black"] = names.get(rec.get("black"), rec.get("black"))
+        out["white"] = names.get(rec.get("white"), rec.get("white"))
+        out["winner"] = names.get(rec.get("winner"), rec.get("winner"))
+        out["moves"] = [dict(mv, by=names.get(mv.get("by"), mv.get("by"))) if "by" in mv else mv
+                         for mv in rec.get("moves", [])]
+        return out
+
+    @staticmethod
+    def _display_side_label(tag):
+        """Maps a stored mover/side tag to what's actually shown to the user: "human" (the
+        internal tag _commit_move/_save_session_game write -- see session_move_log) reads as
+        "player" everywhere in the UI instead. Everything else -- a model filename, "engine",
+        "mixed", or an "A"/"B" match tag already resolved by _resolve_match_names -- passes
+        through unchanged. The stored value itself stays "human"; only display goes through this.
+        """
+        return "player" if tag == "human" else tag
+
+    @staticmethod
+    def _review_row_text(rec):
+        """One-line result summary for a record shown in review mode -- unlike _match_row_text
+        above (which is specific to the live match dialog's listbox), this only relies on
+        winner_color/margin/by/black/white, fields both MatchRunner's match records and
+        _save_session_game's auto-saved session records carry, so it works uniformly on either
+        (record["winner"] itself isn't: it's an engine tag ("A"/"B") on a match record but a
+        color ("black"/"white") on a session record -- winner_color sidesteps that entirely).
+        """
+        black = Game._display_side_label(rec.get("black", "?"))
+        white = Game._display_side_label(rec.get("white", "?"))
+        wc = rec.get("winner_color")
+        by = rec.get("by")
+        if wc == 1:
+            res = f"black ({black}) wins ({by})"
+        elif wc == -1:
+            res = f"white ({white}) wins ({by})"
+        elif wc == 0:
+            res = f"draw ({by})"
+        else:
+            res = f"unresolved ({by})"
+        margin = rec.get("margin")
+        if margin:
+            res += f", by {margin:.1f}"
+        return f"black: {black}, white: {white} -- {res}"
+
+    def _poll_match(self, dialog):
+        if not dialog.winfo_exists():
+            return  # dialog was closed; _close_match_dialog already stopped the runner
+
+        while True:
+            try:
+                event = dialog.runner.events.get_nowait()
+            except queue.Empty:
+                break
+
+            if event["type"] == "game_start":
+                dialog.status_label.configure(
+                    text=f"Game {event['index'] + 1}/{dialog.n_games} running "
+                         f"({event['black']} black, {event['white']} white)...")
+            elif event["type"] == "game_end":
+                rec = event["record"]
+                dialog.records.append(rec)
+                if rec["winner"] in dialog.tally:
+                    dialog.tally[rec["winner"]] += 1
+                display_rec = self._resolve_match_names(rec, dialog.cfg_a["model"], dialog.cfg_b["model"])
+                dialog.games_listbox.insert(END, self._match_row_text(display_rec))
+                dialog.games_listbox.see(END)
+                dialog.tally_label.configure(
+                    text=f"A wins: {dialog.tally['A']}   B wins: {dialog.tally['B']}   "
+                         f"draws: {dialog.tally['draw']}")
+                self._save_match_records(dialog)
+            elif event["type"] == "done":
+                dialog.match_done = True
+                dialog.start_button.configure(state=NORMAL)
+                dialog.stop_button.configure(state=DISABLED)
+                finished = len(dialog.records)
+                saved = f" Saved to {dialog.match_filename}." if dialog.match_filename else ""
+                dialog.status_label.configure(text=f"Match finished -- {finished}/{dialog.n_games} game(s).{saved}")
+
+        if not dialog.match_done:
+            self.root.after(150, self._poll_match, dialog)
+
+    def _save_match_records(self, dialog):
+        data = {
+            "engineA": dialog.cfg_a,
+            "engineB": dialog.cfg_b,
+            "n_games_requested": dialog.n_games,
+            "tally": dialog.tally,
+            "games": dialog.records,
+        }
+        with open(dialog.match_filename, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def _load_match_game_from_dialog(self, dialog):
+        sel = dialog.games_listbox.curselection()
+        if not sel or sel[0] >= len(dialog.records):
+            return
+        rec = dialog.records[sel[0]]
+        display_rec = self._resolve_match_names(rec, dialog.cfg_a["model"], dialog.cfg_b["model"])
+        self._load_game_for_reference(display_rec)
+
+    def _open_load_game_dialog(self):
+        """Entry point for loading any previously recorded game -- an auto-saved human/engine
+        session (see _save_session_game) or one game out of a saved engine-match file (see
+        MatchRunner) -- as the Moves tab's reference data (_load_game_for_reference). Reachable
+        both from the setup panel (nothing running yet) and from the Moves tab itself (to swap
+        in a different game mid-session). Distinct from the live match dialog's own
+        double-click-to-load (_load_match_game_from_dialog): this one reads back off disk, so it
+        also reaches games from past sessions of the program, not just the current one.
+        """
+        entries = self._scan_matches_dir()
+
+        dialog = Toplevel(self.root)
+        dialog.title("Load Game")
+        dialog.transient(self.root)
+
+        Label(dialog, text="Games found under matches/ (newest first):",
+              font=("Helvetica", 11, "bold")).pack(anchor="w", padx=10, pady=(10, 5))
+
+        list_frame = Frame(dialog)
+        list_frame.pack(fill=BOTH, expand=True, padx=10)
+        scrollbar = Scrollbar(list_frame, orient=VERTICAL)
+        listbox = Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Courier", 9),
+                           width=72, height=18, exportselection=False)
+        scrollbar.configure(command=listbox.yview)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        listbox.pack(side=LEFT, fill=BOTH, expand=True)
+
+        if not entries:
+            listbox.insert(END, "(no games found under matches/)")
+            listbox.configure(state=DISABLED)
+        else:
+            for text, _record, _mtime in entries:
+                listbox.insert(END, text)
+
+        def load(event=None):
+            sel = listbox.curselection()
+            if not sel or sel[0] >= len(entries):
+                return
+            record = entries[sel[0]][1]
+            dialog.destroy()
+            self._load_game_for_reference(record)
+
+        listbox.bind("<Double-Button-1>", load)
+
+        btn_row = Frame(dialog)
+        btn_row.pack(fill=X, padx=10, pady=10)
+        Button(btn_row, text="Load", command=load).pack(side=LEFT)
+        Button(btn_row, text="Close", command=dialog.destroy).pack(side=RIGHT)
+
+    def _scan_matches_dir(self):
+        """Every individually-loadable game found under matches/: match files (MatchRunner's
+        output -- one file, many games) are expanded to one entry per game; auto-saved session
+        files (_save_session_game -- one game per file) are one entry each. Returns a list of
+        (display_text, record, mtime) tuples, newest file first."""
+        entries = []
+        if not os.path.isdir(MATCHES_DIR):
+            return entries
+        for fname in sorted(os.listdir(MATCHES_DIR)):
+            if not fname.endswith(".json"):
+                continue
+            path = os.path.join(MATCHES_DIR, fname)
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            mtime = os.path.getmtime(path)
+            if "games" in data:
+                model_a = data.get("engineA", {}).get("model")
+                model_b = data.get("engineB", {}).get("model")
+                for rec in data["games"]:
+                    display_rec = self._resolve_match_names(rec, model_a, model_b)
+                    entries.append((f"{fname} -- {self._match_row_text(display_rec)}", display_rec, mtime))
+            elif "moves" in data:
+                entries.append((f"{fname} -- {self._review_row_text(data)}", data, mtime))
+        entries.sort(key=lambda e: e[2], reverse=True)
+        return entries
+
+    def _load_game_for_reference(self, record):
+        """Loads a recorded game as the Moves tab's reference data (its B eval/W eval columns --
+        see _update_moves_tab) and jumps the board to its final position. review_mode locks out
+        board clicks/pass while a game is loaded (see on_click/on_pass/_is_engine_turn) -- it's
+        fixed, already-finished history to browse and analyze, not something to play new moves
+        into. If a live analysis session is already running, it's kept (and resynced to the new
+        position by _jump_to_ply below) rather than closed, so swapping which game is being
+        browsed mid-session doesn't interrupt analysis; if none is running yet, the board/rule
+        are simply rebuilt and the B/W columns show up immediately, ready for "Start Analyzing"
+        (with any model) whenever you like.
+        """
+        self.engine_plays_black_var.set(False)
+        self.engine_plays_white_var.set(False)
+        self.position_eval_log = {}
+
+        self.review_mode = True
+        self.review_record = record
+        self.review_moves = [mv["move"] for mv in record.get("moves", [])]
+
+        self._show_panel(self.analysisResultPanel)
+        self._jump_to_ply(len(self.review_moves))
+
+    def _start_analysis_from_panel(self):
+        """"Start Analyzing" in the Moves tab: attaches a live engine (self.setup_model_var,
+        shared with the setup panel's own model picker) at whatever position is currently on the
+        board -- typically reached right after loading a game for reference
+        (_load_game_for_reference) and jumping to whichever of its positions is of interest, but
+        works the same with no game loaded too (equivalent to the setup panel's own "Start
+        Session", just reachable from inside an already-open Analysis window).
+        """
+        model = self.setup_model_var.get()
+        if not model:
+            return
+        self.start_session(model)
+
+    def _current_moves_list(self):
+        """The move-record list the Moves tab/board navigation currently browse: a loaded game's
+        recorded moves (self.review_record -- fixed, read-only) if one is loaded, else this
+        session's own move history (self.session_move_log -- grows as moves are played, and can
+        be rewound/diverged from, see _commit_move's truncation). Each entry has at least "ply"
+        and "move"; loaded-game entries additionally carry "root_winrate" (that game's own
+        recorded evaluation -- see _update_moves_tab's B eval/W eval column).
+        """
+        if self.review_record is not None:
+            return self.review_record.get("moves", [])
+        return self.session_move_log
+
+    def _current_moves_coords(self):
+        return [mv["move"] for mv in self._current_moves_list()]
+
+    def _jump_to_ply(self, idx):
+        """Moves the board to the position after `idx` moves of whichever move list is currently
+        being browsed (_current_moves_coords) -- rebuilding self.rule/the board from scratch
+        (_render_review_position) rather than trying to incrementally undo capture/territory
+        bookkeeping (simple, and at this board size/move count cheap enough not to matter) -- and,
+        if a live analysis session is attached, resyncing the engine to the same position
+        (_sync_analysis_position, the same reset-and-replay it already does on session start)
+        and immediately requesting fresh analysis there, so re-visiting a former position during
+        live analysis is how its "Current evaluation" (position_eval_log, updated by
+        _update_analysis_result_panel) gets (re-)filled in.
+        """
+        moves = self._current_moves_coords()
+        idx = max(0, min(idx, len(moves)))
+        self._render_review_position(idx, moves)
+
+        if self.analysis_mode and self.analysisEngine is not None:
+            self.last_analysis_result = None
+            self.canvas.delete("move_overlay")
+            self._sync_analysis_position()
+            self.apply_analysis_limit()
+
+        self._update_moves_tab()
+
+    def _render_review_position(self, idx, moves=None):
+        if moves is None:
+            moves = self._current_moves_coords()
+        self.review_index = idx
+        self.rule = RuleManager()
+        self.canvas.delete("stone")
+        self.canvas.delete("move_overlay")
+        self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
+        self.turn = 0
+        for mv in moves[:idx]:
+            self._apply_review_move(mv)
+        self._mark_last_review_move(moves)
+
+        if self.review_record is not None:
+            if idx == len(moves):
+                self.statusLabel.configure(
+                    text=f"Reviewing final position -- {self._review_row_text(self.review_record)}")
+            else:
+                mover = "Black" if self.turn == 0 else "White"
+                self.statusLabel.configure(text=f"Reviewing move {idx} / {len(moves)} -- {mover} to move next")
+        else:
+            # Free play (no game loaded): game_over only reflects reality at the exact ply the
+            # actual game ended on (see on_end) -- jumping away from it means the game isn't
+            # over from here, jumping back onto it restores the exact "who won and how" text.
+            self.game_over = (self.game_over_ply is not None and idx == self.game_over_ply)
+            if self.game_over:
+                self.statusLabel.configure(text=self.game_over_text or "")
+            elif self.analysis_mode:
+                self._update_status()
+            else:
+                self.statusLabel.configure(text="Black to move" if self.turn == 0 else "White to move")
+
+    def _apply_review_move(self, mv):
+        """Replays one recorded move onto self.rule/the board, mirroring exactly what
+        _commit_move does for a live move (pass-vs-stone turn bookkeeping included) but with
+        none of the analysis-engine/logging/game-over side effects -- _render_review_position
+        already knows (or doesn't need) the final result and just wants the board/rule state
+        rebuilt to match the position right after mv."""
+        if mv is None:
+            result = self.rule.make_move(-1, 0)
+            if result != -2:
+                self.turn = 1 - self.turn
+        else:
+            x, y = mv
+            self._place_stone(x, y, self.turn)
+            self.turn = 1 - self.turn
+            self.rule.make_move(x, y)
+
+    def _mark_last_review_move(self, moves):
+        """Small marker on the most recently replayed stone, so it's obvious at a glance which
+        move a jump just landed on -- skipped for a pass, which has no board point to mark."""
+        if self.review_index == 0:
+            return
+        mv = moves[self.review_index - 1]
+        if mv is None:
+            return
+        x, y = mv
+        cx, cy = self.m + x * self.delta, self.m + y * self.delta
+        r = max(3, int(self.stone_size * 0.12))
+        self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="#e53935", outline="",
+                                 tags=("move_overlay", "move_overlay_shape"))
+
+    @staticmethod
+    def _fmt_winrate_pct(wr):
+        return f"{(wr + 1) / 2 * 100:.0f}%" if wr is not None else ""
+
+    def _update_moves_tab(self):
+        """Refreshes the Moves tab: the info line (which game, if any, is loaded, and its
+        result), the move table, and the position counter -- see _current_moves_list for which
+        move source is being shown. Per the "B eval"/"W eval"/"Current evaluation" convention:
+        B/W come from a *loaded* game's own recorded per-ply evaluation (root_winrate -- turn-
+        relative, so it's already "how did this look for the side about to move," i.e. self-
+        relative for whichever color's row it is) and stay blank with no game loaded, since
+        there's no separate "recorded by the original engine" evaluation to show then; Current
+        always comes from position_eval_log -- the position-currently-being-analyzed engine's
+        own evaluation of that same ply, filled in as it's (re-)visited during live analysis,
+        regardless of whether a game is loaded.
+        """
+        if self.review_record is not None:
+            info = self._review_row_text(self.review_record)
+            model = self.review_record.get("model")
+            if model:
+                info += f"\nModel: {model}"
+        else:
+            info = "No game loaded -- showing this session's own move history."
+        self.movesInfoLabel.configure(text=info)
+
+        moves = self._current_moves_list()
+        for row in self.movesTree.get_children():
+            self.movesTree.delete(row)
+        selected_iid = None
+        for i, mv in enumerate(moves):
+            ply = mv.get("ply", i)
+            color = "black" if ply % 2 == 0 else "white"
+            move = mv.get("move")
+            move_txt = "pass" if move is None else f"({move[0]},{move[1]})"
+
+            b_eval = w_eval = ""
+            if self.review_record is not None:
+                txt = self._fmt_winrate_pct(mv.get("root_winrate"))
+                if color == "black":
+                    b_eval = txt
+                else:
+                    w_eval = txt
+            cur_eval = self._fmt_winrate_pct(self.position_eval_log.get(ply, {}).get("winrate"))
+
+            iid = str(i)
+            self.movesTree.insert("", END, iid=iid, values=(ply + 1, move_txt, b_eval, w_eval, cur_eval))
+            if self.review_index == i + 1:
+                selected_iid = iid
+
+        # No explicit deselect needed for the "no current ply" case: every row above was just
+        # deleted and freshly reinserted, so there's nothing left selected unless set_selection
+        # was just called for it.
+        if selected_iid is not None:
+            self.movesTree.selection_set(selected_iid)
+            self.movesTree.see(selected_iid)
+
+        self.movesPositionLabel.configure(text=f"Position {self.review_index} / {len(moves)}")
+
+    def _on_moves_tree_select(self, event=None):
+        sel = self.movesTree.selection()
+        if not sel:
+            return
+        idx = int(sel[0]) + 1
+        if idx == self.review_index:
+            return  # already there -- avoid re-jumping on the selection _update_moves_tab itself sets
+        self._jump_to_ply(idx)
+
     def on_end(self, winner):
         self.game_over = True
+        self.game_over_ply = len(self.rule.seq)
         if winner == 1:
+            winner_color, margin, by = 1, None, "capture"
             self.statusLabel.configure(text="winner is black")
         elif winner == -1:
+            winner_color, margin, by = -1, None, "capture"
             self.statusLabel.configure(text="winner is white")
         else:
             result = self.rule.end_game()
+            winner_color, margin, by = result[0], (result[1] or None), "score"
             if result[0] == 1:
                 self.statusLabel.configure(text=f"winner is black by {result[1]}")
             elif result[0] == -1:
                 self.statusLabel.configure(text=f"winner is white by {result[1]}")
             else:
                 self.statusLabel.configure(text="draw")
+        # Restored verbatim by _render_review_position if a later free-play jump (_jump_to_ply)
+        # lands back on game_over_ply -- game_over alone doesn't carry the "who won and how" text.
+        self.game_over_text = self.statusLabel.cget("text")
+
+        self._save_session_game(winner_color, margin, by)
 
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
+
+    def _save_session_game(self, winner_color, margin, by):
+        """Auto-saves a finished game that had a live analysis session at some point -- human vs
+        engine, engine vs engine played interactively, or human vs human under analysis (see
+        session_used_engine, set by start_session) -- to matches/, in the same per-move record
+        shape MatchRunner's match files use (see MatchRunner._run), so both the engine-match
+        dialog's loader and _open_load_game_dialog/_load_game_for_reference work on either source
+        uniformly. A pure "New Local Game" (no session ever started) isn't saved -- there's no
+        evaluation data worth keeping, and that mode is meant to stay a throwaway scratch board.
+        """
+        if not self.session_used_engine or not self.session_move_log:
+            return
+
+        def side_desc(color):
+            movers = {rec["mover"] for rec in self.session_move_log if rec["color"] == color}
+            if not movers:
+                return "human"
+            return next(iter(movers)) if len(movers) == 1 else "mixed"
+
+        black, white = side_desc("black"), side_desc("white")
+        winner = {1: "black", -1: "white", 0: "draw"}.get(winner_color)
+
+        record = {
+            "type": "session",
+            "model": self.session_model,
+            "black": black, "white": white,
+            "winner": winner, "winner_color": winner_color,
+            "margin": margin, "by": by,
+            "moves": self.session_move_log,
+        }
+
+        os.makedirs(MATCHES_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tag = os.path.splitext(self.session_model)[0] if self.session_model else "session"
+        path = os.path.join(MATCHES_DIR, f"game_{tag}_{black}_vs_{white}_{stamp}.json")
+        with open(path, "w") as f:
+            json.dump(record, f, indent=2)
 
     def on_close(self):
         if self.analysisEngine is not None:

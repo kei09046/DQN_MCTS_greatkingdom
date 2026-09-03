@@ -5,6 +5,7 @@
 #include "modelcompare.h"
 #include "consts.h"
 #include "elo.h"
+#include "analysis.hpp"
 
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
@@ -97,6 +98,11 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
+	// Owns debug-mode state and the printAnalysis/printVariation implementations (see
+	// analysis.hpp) -- attach it so player's own hot path (playout()/updateEval()) can reach it
+	// for debug-line streaming too, per MCTS::attachAnalysis's own comment.
+	Analysis analysis;
+	player.attachAnalysis(&analysis);
 
 	std::cout << "analysis ready" << std::endl;
 
@@ -147,7 +153,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 			while (player.rootVisits() < targetVisits && player.rootForcedState() == 0) {
 				int remaining = targetVisits - player.rootVisits();
 				player.runSimulation(PLAYOUT, std::min(chunk, remaining), 0);
-				player.printAnalysis();
+				analysis.printAnalysis(player);
 				ranAny = true;
 
 				// Let a queued command (e.g. "pause") interrupt a long-running search: peek
@@ -158,7 +164,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 					break;
 			}
 			if (!ranAny)
-				player.printAnalysis();
+				analysis.printAnalysis(player);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "analyze time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
@@ -169,13 +175,14 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 		}
 		else if (cmd == "debug") {
 			// "debug on"/"debug off" -- toggles per-playout search-path + NN-eval logging (see
-			// MCTS::setDebugMode/printPlayoutDebugLine). While on, each playout's line is
-			// printed the moment it finishes -- nothing is stored or batched here; the GUI
-			// (Python) is what accumulates and manages the resulting stream.
+			// Analysis::setDebugMode/printPlayoutDebugLine in analysis.hpp/.cpp). While on,
+			// each playout's line is printed the moment it finishes -- nothing is stored or
+			// batched here; the GUI (Python) is what accumulates and manages the resulting
+			// stream.
 			std::string state;
 			iss >> state;
-			player.setDebugMode(state == "on");
-			std::cout << "debug " << (player.getDebugMode() ? "on" : "off") << std::endl;
+			analysis.setDebugMode(state == "on");
+			std::cout << "debug " << (analysis.getDebugMode() ? "on" : "off") << std::endl;
 		}
 		else {
 			std::cout << "unknown command" << std::endl;
