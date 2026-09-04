@@ -146,13 +146,23 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 			if (iss >> requested)
 				targetVisits = requested;
 
-			constexpr int chunk = 100; // stream a fresh snapshot roughly this often, for a live "mid-search" view
+			// Stream a fresh snapshot roughly this often, for a live "mid-search" view -- also the
+			// nPlayout runSimulation sees per call, so it has to stay a multiple of 200 or the
+			// minSearchPerChild passed below truncates to 0 and the "every child gets at least
+			// some playout" forced-first-child phase silently never runs when driven from here
+			// (it still fires normally from a single, un-chunked runSimulation call, e.g. actual
+			// play's full-nPlayout call in MCTS::getMove).
+			constexpr int chunk = 400;
 
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 			bool ranAny = false;
 			while (player.rootVisits() < targetVisits && player.rootForcedState() == 0) {
 				int remaining = targetVisits - player.rootVisits();
-				player.runSimulation(PLAYOUT, std::min(chunk, remaining), 0);
+				int n = std::min(chunk, remaining);
+				// 1/200 of this call's own playout budget, same ratio MCTS::getMove uses
+				// (globalConfig.nPlayout / 200) -- e.g. n == chunk == 400 gives 2 forced playouts
+				// per child every chunk.
+				player.runSimulation(PLAYOUT, n, 0, n / 200);
 				analysis.printAnalysis(player);
 				ranAny = true;
 

@@ -560,7 +560,7 @@ MCTS::~MCTS(){
     delete transposTable;
 }
 
-void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit){
+void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild){
     //std::cout << "run simulation " << nPlayout << std::endl;
     if(globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
@@ -573,12 +573,31 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
     if(playMode == PLAYOUT){
-        while(evaluate_counter < nPlayout && (root->forcedState == 0)){
+        // root->child is only sized (Node::expand(), called on a node's *second* visit) once
+        // its first NN evaluation has actually resolved -- and with search_thread_num > 1, one
+        // playout() call only queues that evaluation; it isn't resolved until root gets visited
+        // again while still pending, which flags searchStuck and forces the next call to drain
+        // it. A fixed count of calls here doesn't reliably land past that point (2 calls only
+        // gets root to "queued and stuck", never expanded), which silently made the forced-
+        // per-child phase below a no-op (root->child.size() == 0, so its loop never ran) --
+        // loop on the actual condition instead of guessing how many calls that takes.
+        while(!root->expanded && root->forcedState == 0)
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
-            playMode, nPlayout, timeLimit);
+                playMode, timeLimit);
+        // std::cerr << "first phase done" << std::endl;
+
+        for(int i=0; i<minSearchPerChild; ++i){
+            for(int j=0; j<root->child.size(); ++j){
+                playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+                playMode, timeLimit, j);
+            }
         }
-        if(globalConfig.detailedStat)
-            std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
+        // std::cerr << "second phase done" << std::endl;
+        while(search_counter < nPlayout && (root->forcedState == 0)){
+            playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+            playMode, timeLimit);
+        }
+        // std::cerr << "third phase done" << std::endl;
     }
     else{
         auto duration = std::chrono::seconds(timeLimit);
@@ -587,8 +606,6 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, nPlayout, timeLimit);
         }
-        if(globalConfig.detailedStat)
-            std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
     }
 
     // The search loop above can exit (nPlayout reached, root->forcedState flips nonzero, or a
@@ -610,13 +627,16 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         current_evaluating_nodes.clear();
     }
 
+    if(globalConfig.detailedStat)
+        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
+
     // if(globalConfig.detailedStat)
     //     printVariation();
 }
 
 Move MCTS::getMove(float temp){
     for(int i=0; i<10; ++i){
-        runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10);
+        runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10, globalConfig.nPlayout / 200);
         // printVariation();
         const auto& [winProb, scoreEXP] = getEval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
@@ -625,7 +645,7 @@ Move MCTS::getMove(float temp){
 }
 
 MoveData MCTS::getMoveProb(float temp){
-    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time);
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, globalConfig.nPlayout / 200);
     return root->selectMoveProb(temp);
 }
 
@@ -659,10 +679,11 @@ void MCTS::reset(const Game& startPos){
 void MCTS::playout(int& searchCounter, int& evaluateCounter,
     std::vector<Node*>& inEvaluation, std::vector<std::vector<Node*>>& updateQueue,
     std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
-    const int playMode, const int nPlayout, const int timeLimit) {
+    const int playMode, const int timeLimit, int forcedFirstSearch) {
+    // std::cerr << searchCounter << " " << evaluateCounter << std::endl;
 
     // SELECTION
-    if((playMode == TIMEOUT || searchCounter < nPlayout) && (inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
+    if((inEvaluation.size() < globalConfig.search_thread_num) && !searchStuck){
         std::vector<int> childIdx;
         std::vector<Node*> path;
         Node* cur = root;
@@ -709,7 +730,23 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             if(forced != 0)
                 break;
 
-            int a = cur->selectChildInSearch(); // assume node is evaluated
+            int a;
+            if(cur == root && forcedFirstSearch >= 0){
+                a = forcedFirstSearch;
+                // selectChildInSearch (the ordinary path below) allocates child[a] itself,
+                // lazily, the instant before returning it -- this bypasses that entirely, so it
+                // has to do the same allocate-if-missing check here, or an unexplored index
+                // (child[a] still nullptr, since root->child is only ever pre-sized with
+                // placeholders in Node::expand(), not populated) segfaults on the dereference
+                // below.
+                if(cur->child[a] == nullptr){
+                    const auto& moves = cur->game.getAvailableMoves();
+                    cur->addChild({moves[a] / colSize, moves[a] % colSize}, a);
+                }
+            }
+            else
+                a = cur->selectChildInSearch(); // assume node is evaluated
+
             childIdx.push_back(a);
             cur = cur->child[a];
         }
@@ -764,8 +801,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     }
 
     //EVALUATION & UPDATE
-    if(inEvaluation.size() >= globalConfig.search_thread_num || (playMode == PLAYOUT && searchCounter == nPlayout && !inEvaluation.empty()) ||
-    (root->forcedState != 0 && !inEvaluation.empty()) || searchStuck){
+    if(inEvaluation.size() >= globalConfig.search_thread_num || searchStuck){
         // wait for the result
         std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);

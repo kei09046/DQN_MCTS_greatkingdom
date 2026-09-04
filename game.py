@@ -409,10 +409,75 @@ def _value_mse(result):
     return (init_q - winrate) ** 2
 
 
-def _sorted_candidate_moves(result):
-    """Candidate moves with at least one visit, sorted by visit count -- the exact set/order the
-    candidate Listbox is populated in, so a row index maps back to the same move on either side."""
-    moves = sorted(result.get("moves", []), key=lambda m: m["visits"], reverse=True)
+# Matches configs/play_config.json's mcts.cPuct -- the config "./play analyze" itself loads (see
+# ModelCompare::analyze / main.cpp's `mod == "analyze"` branch) -- and is the same constant
+# Node::selectChildInSearch (src/PMCTS.cpp) uses for its PUCT term below.
+CPUCT = 1.5
+
+
+def _move_preference(mv, total_visits):
+    """Node::selectChildInSearch's PUCT preference value (src/PMCTS.cpp:261-281) for an
+    already-visited child -- the quantity search itself ranks moves by when picking what to
+    explore next on the following playout. Every move ever shown in the candidate list has
+    visits > 0 (see the filter in _sorted_candidate_moves), i.e. an already-expanded child, so
+    the fpu/unvisited-child branch never applies here -- only these three, picked by the child's
+    own "forced" field (src/PMCTS.cpp:266-281, see analysis.cpp's childForced comment for the
+    sign convention -- negative there means THIS move is a proven win for root's own mover):
+
+    - forced < 0 (proven win): selectChildInSearch returns this child immediately, ahead of any
+      pref comparison at all -- not merely "highest pref". +inf here means exactly that: it
+      always wins any comparison, the same way the real search short-circuits straight to it
+      (and, when multiple children are wins, the real engine takes whichever it hits first in
+      board order rather than ranking them against each other -- +inf ties do the same: it
+      groups them all at the top without claiming to rank among them).
+    - forced > 0 (proven loss): pref is suppressed to a fixed -2.0 + ..., not the ordinary
+      q-based formula -- almost never selected over any non-losing sibling.
+    - forced == 0 (undetermined): the ordinary formula,
+          pref = child.W/child.N + cPuct * prior * sqrt(rootVisits) / (1 + child.N)
+      child.W/child.N is exactly the "q" field already parsed per move; child.N/edgeN is
+      "visits"."""
+    forced = mv.get("forced", 0)
+    puct_term = CPUCT * mv["prior"] * math.sqrt(max(total_visits, 0)) / (1 + mv["visits"])
+    if forced < 0:
+        return math.inf
+    if forced > 0:
+        return -2.0 + puct_term
+    return mv["q"] + puct_term
+
+
+# Field each sortable column reads off a move dict (see _move_preference for "pref").
+_CANDIDATE_SORT_KEYS = {
+    "visits": lambda mv: mv["visits"],
+    "policy": lambda mv: mv["prior"],
+    "winrate": lambda mv: mv["winrate"],
+    "q": lambda mv: mv["q"],
+    "pref": lambda mv: mv["pref"],
+}
+
+# (sort key or None if not sortable, header text, field width) for each column of the candidate
+# Listbox -- shared by _build_search_column (builds the clickable header row) and
+# _update_candidate_listbox (formats each row and refreshes the header's sort-indicator arrow).
+_CANDIDATE_COLUMNS = (
+    (None, "move", 10),
+    ("visits", "visits", 8),
+    ("policy", "policy", 8),
+    ("winrate", "winrate", 9),
+    ("q", "Q", 8),
+    ("pref", "pref", 8),
+)
+
+
+def _sorted_candidate_moves(result, sort_key="visits", reverse=True):
+    """Candidate moves with at least one visit, sorted by the given field -- the exact set/order
+    the candidate Listbox is populated in, so a row index maps back to the same move on either
+    side. Every move dict also gets a "pref" field filled in (see _move_preference) regardless of
+    whether "pref" is the active sort key, since the Listbox always displays it as a column."""
+    total_visits = result.get("visits") or 0
+    moves = result.get("moves", [])
+    for mv in moves:
+        mv["pref"] = _move_preference(mv, total_visits)
+    key_fn = _CANDIDATE_SORT_KEYS.get(sort_key, _CANDIDATE_SORT_KEYS["visits"])
+    moves = sorted(moves, key=key_fn, reverse=reverse)
     return [mv for mv in moves if mv["visits"] > 0]
 
 
@@ -430,12 +495,16 @@ _ANALYSIS_INITQ_RE = re.compile(r"^initQ\s*:\s*" + _FLOAT)
 # from "still climbing toward the target" is what the visits status label uses to avoid getting
 # stuck showing "analyzing..." forever once the engine has actually finished.
 _ANALYSIS_FORCED_RE = re.compile(r"^forced\s*:\s*(-?\d+)")
-# "move <r> <c> visits <N> prior <P> winrate <W> q <Q> variation <r1> <c1> <r2> <c2> ..." --
-# one candidate move; the variation tail is 0 or more coordinate pairs, captured whole and
-# split separately since its length varies per move.
+# "move <r> <c> visits <N> prior <P> winrate <W> q <Q> forced <F> variation <r1> <c1> ..." --
+# one candidate move; "forced" is this CHILD's own forcedState (not the root's -- see the
+# _ANALYSIS_FORCED_RE root-level field above), from the child's own mover's perspective: negative
+# means the child's mover (the opponent) loses there, i.e. THIS move is a proven win for root's
+# own mover; positive is the opposite, a proven loss for root's mover (see childForced's comment
+# in src/analysis.cpp and Node::selectChildInSearch, src/PMCTS.cpp:266-281). The variation tail is
+# 0 or more coordinate pairs, captured whole and split separately since its length varies per move.
 _ANALYSIS_MOVE_RE = re.compile(
     r"^move\s+(-?\d+)\s+(-?\d+)\s+visits\s+" + _FLOAT + r"\s+prior\s+" + _FLOAT
-    + r"\s+winrate\s+" + _FLOAT + r"\s+q\s+" + _FLOAT + r"\s+variation(.*)$")
+    + r"\s+winrate\s+" + _FLOAT + r"\s+q\s+" + _FLOAT + r"\s+forced\s+(-?\d+)\s+variation(.*)$")
 # "scoreSearch : <float>" -- search-refined score-head estimate: same backup mechanism as
 # winrate (root->S accumulates a scoreExp contribution from every playout along the tree), so
 # this moves as search deepens -- the scoreExp/initQ pair's counterpart to winrate/scoreSearch.
@@ -491,7 +560,8 @@ class AnalysisEngine:
             bufsize=1,
         )
         # results: dicts {"winrate": float, "visits": int,
-        #                 "moves": [{"move": (r,c), "visits": float, "prior": float, "winrate": float}, ...]}
+        #                 "moves": [{"move": (r,c), "visits": float, "prior": float, "winrate": float,
+        #                            "q": float, "forced": int}, ...]}
         self.results = queue.Queue()
         # playouts: individual debug-mode playout dicts {"forced": int, "winp": float,
         # "score": float, "path": [(r,c), ...]}, one per line, streamed live and independent of
@@ -540,7 +610,7 @@ class AnalysisEngine:
 
             m = _ANALYSIS_MOVE_RE.match(line)
             if m:
-                r, c, visits, prior, winrate, q, var_tail = m.groups()
+                r, c, visits, prior, winrate, q, forced, var_tail = m.groups()
                 var_ints = [int(x) for x in var_tail.split()]
                 variation = list(zip(var_ints[0::2], var_ints[1::2]))
                 current["moves"].append({
@@ -549,6 +619,7 @@ class AnalysisEngine:
                     "prior": float(prior),
                     "winrate": float(winrate),
                     "q": float(q),
+                    "forced": int(forced),
                     "variation": variation,
                 })
                 continue
@@ -857,6 +928,12 @@ class Game:
         self.sideFrame.pack_propagate(False)
         self.setupPanel = None
         self.analysisResultPanel = None
+        # Which field the candidate-move Listbox is currently sorted by, and in which direction --
+        # set before the panel is built since _build_search_column's clickable column headers read
+        # it to render their initial sort-indicator arrow. See _sorted_candidate_moves/
+        # _on_candidate_sort_header_click.
+        self.candidate_sort_key = "visits"
+        self.candidate_sort_reverse = True
         self._build_setup_panel()
         self._build_analysis_result_panel()
 
@@ -1163,9 +1240,29 @@ class Game:
                                           font=("Helvetica", 10, "bold"), anchor="w",
                                           wraplength=260, justify=LEFT)
         self.candidateListHeader.pack(fill=X)
-        self.candidateColumnHeader = Label(self.candidateFrame, text="move       visits   policy  winrate     Q",
-                                            font=("Courier", 9), fg="#555555", anchor="w")
-        self.candidateColumnHeader.pack(fill=X, pady=(2, 2))
+
+        # Two interchangeable header widgets stacked in the same slot (see
+        # _update_candidate_listbox, which packs whichever matches the current overlay mode):
+        # candidateColumnHeaderFrame's per-column labels are clickable to sort by that field
+        # (visits/policy/winrate/Q/pref) in Policy/Visits overlay mode; candidateVariationHeader
+        # is the plain single-line label Variation mode used already, unsortable since that mode
+        # lists move sequences rather than a single numeric stat.
+        self.candidateColumnHeaderFrame = Frame(self.candidateFrame)
+        self._candidate_sort_labels = {}
+        self._candidate_header_text = {}
+        for key, text, width in _CANDIDATE_COLUMNS:
+            self._candidate_header_text[key] = text.ljust(width)
+            lbl = Label(self.candidateColumnHeaderFrame, text=text.ljust(width),
+                        font=("Courier", 9), fg="#555555", anchor="w")
+            lbl.pack(side=LEFT)
+            if key is not None:
+                lbl.configure(cursor="hand2")
+                lbl.bind("<Button-1>", lambda e, k=key: self._on_candidate_sort_header_click(k))
+            self._candidate_sort_labels[key] = lbl
+        self.candidateColumnHeaderFrame.pack(fill=X, pady=(2, 2))
+
+        self.candidateVariationHeader = Label(self.candidateFrame, text="expected continuation",
+                                               font=("Courier", 9), fg="#555555", anchor="w")
 
         candidate_list_frame = Frame(self.candidateFrame)
         candidate_list_frame.pack(fill=BOTH, expand=True)
@@ -2046,10 +2143,22 @@ class Game:
 
         if show_variation:
             self.candidateListHeader.configure(text="Candidate moves, with follow-up line:")
-            self.candidateColumnHeader.configure(text="expected continuation")
+            self.candidateColumnHeaderFrame.pack_forget()
+            self.candidateVariationHeader.pack(fill=X, pady=(2, 2))
         else:
-            self.candidateListHeader.configure(text="Candidate moves, by visit count:")
-            self.candidateColumnHeader.configure(text="move       visits   policy  winrate     Q")
+            sort_label = {"q": "Q"}.get(self.candidate_sort_key, self.candidate_sort_key)
+            self.candidateListHeader.configure(
+                text=f"Candidate moves, sorted by {sort_label} "
+                     f"({'desc' if self.candidate_sort_reverse else 'asc'}):")
+            self.candidateVariationHeader.pack_forget()
+            self.candidateColumnHeaderFrame.pack(fill=X, pady=(2, 2))
+            arrow = " ▼" if self.candidate_sort_reverse else " ▲"
+            for key, lbl in self._candidate_sort_labels.items():
+                if key == self.candidate_sort_key:
+                    lbl.configure(text=(self._candidate_header_text[key].rstrip() + arrow).ljust(
+                        len(self._candidate_header_text[key]) + 2), fg="black")
+                else:
+                    lbl.configure(text=self._candidate_header_text[key], fg="#555555")
 
         self.analysisListbox.delete(0, END)
 
@@ -2063,7 +2172,7 @@ class Game:
         self.analysisListbox.insert(END, total_text)
         self.analysisListbox.itemconfig(0, fg="#555555")
 
-        moves = _sorted_candidate_moves(result)
+        moves = _sorted_candidate_moves(result, self.candidate_sort_key, self.candidate_sort_reverse)
         # Once forced, "moves" holds exactly the one proven move (see Analysis::printAnalysis) --
         # already the sole/first row below with no extra sorting needed; itemconfig just flags
         # that row's text color so it reads as "proven", not merely "currently on top".
@@ -2081,12 +2190,18 @@ class Game:
             else:
                 pct = (mv["winrate"] + 1) / 2 * 100
                 text = (f"({r},{c})".ljust(10) + f"{int(mv['visits']):<8}"
-                        f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}")
+                        f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}  {mv['pref']:+.3f}")
             row = idx + 1  # offset by the "Total visits" row at index 0
             self.analysisListbox.insert(END, text)
-            if forced > 0:
+            # Per-move "forced" (see _ANALYSIS_MOVE_RE's comment for the sign convention) covers
+            # both cases uniformly: the ordinary per-child breakdown (root itself undetermined,
+            # but any individual child can still be a proven win/loss), and the single-move
+            # "root already proven" breakdown (whose one move's own forced field was set to match
+            # root's clamped result -- see childForced in src/analysis.cpp's forced-root branch).
+            mv_forced = mv.get("forced", 0)
+            if mv_forced < 0:
                 self.analysisListbox.itemconfig(row, fg=FORCED_WIN_COLOR)
-            elif forced < 0:
+            elif mv_forced > 0:
                 self.analysisListbox.itemconfig(row, fg=FORCED_LOSS_COLOR)
 
         if show_variation and selected_row is not None:
@@ -2101,11 +2216,24 @@ class Game:
         idx = sel[0] - 1  # row 0 is the "Total visits" summary row, not a candidate
         if idx < 0:
             return
-        moves = _sorted_candidate_moves(self.last_analysis_result)
+        moves = _sorted_candidate_moves(self.last_analysis_result, self.candidate_sort_key,
+                                         self.candidate_sort_reverse)
         if idx >= len(moves):
             return
         self.selected_variation_move = moves[idx]["move"]
         self._draw_move_overlay(self.last_analysis_result)
+
+    def _on_candidate_sort_header_click(self, key):
+        """Clicking a candidate-list column header sorts by that field; clicking the
+        already-active column again just flips descending/ascending, matching the common
+        sortable-table convention."""
+        if key == self.candidate_sort_key:
+            self.candidate_sort_reverse = not self.candidate_sort_reverse
+        else:
+            self.candidate_sort_key = key
+            self.candidate_sort_reverse = True
+        if self.last_analysis_result is not None:
+            self._update_candidate_listbox(self.last_analysis_result)
 
     def _on_debug_mode_change(self):
         """Just tells the engine whether to log playouts from here on -- it does not itself

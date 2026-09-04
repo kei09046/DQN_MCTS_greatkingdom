@@ -70,7 +70,7 @@ public:
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
-    void runSimulation(const int playMode, const int nPlayout, const int timeLimit);
+    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1);
 
     Move getMove(float temperature);
 
@@ -128,7 +128,7 @@ private:
 
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation,
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
-    const int playMode, const int nPlayout, const int timeLimit);
+    const int playMode, const int timeLimit, int forcedFirstSearch = -1);
 
     void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
 

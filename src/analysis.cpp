@@ -223,6 +223,16 @@ void Analysis::printAnalysis(MCTS& mcts){
             float prior = (i < root->edgeP.size()) ? root->edgeP[i] : 0.0f;
             float winrate = 0.0f;
             float q = 0.0f;
+            // child->forcedState, from the CHILD's own mover's perspective (see
+            // Node::selectChildInSearch, src/PMCTS.cpp:266-281): negative means the child's own
+            // mover (the opponent, one ply down) loses there -- i.e. THIS move is a proven win
+            // for root's mover -- and positive means the opposite, a proven loss for root's
+            // mover. selectChildInSearch short-circuits to the first negative child it finds
+            // (skipping the ordinary pref comparison entirely) and suppresses positive ones to a
+            // fixed -2.0 + ... pref instead of the ordinary q + cPuct*prior*.../(1+visits) --
+            // neither of which the GUI's own pref column could reproduce without this field.
+            int childForced = (i < root->child.size() && root->child[i] != nullptr)
+                                   ? root->child[i]->forcedState : 0;
             if(i < root->child.size() && root->child[i] != nullptr && root->child[i]->N > 0){
                 winrate = root->child[i]->Wp / root->child[i]->N;
                 q = root->child[i]->W / root->child[i]->N; // blended utility actually used for PUCT selection
@@ -233,6 +243,7 @@ void Analysis::printAnalysis(MCTS& mcts){
                        << " prior " << prior
                        << " winrate " << winrate
                        << " q " << q
+                       << " forced " << childForced
                        << " variation";
             if(i < root->child.size() && root->child[i] != nullptr){
                 for(const Move& fm : followUpFrom(root->child[i], 6)){
@@ -289,12 +300,14 @@ void Analysis::printAnalysis(MCTS& mcts){
             float clamped = (root->forcedState > 0) ? 1.0f : -1.0f;
             float winrate = clamped;
             float q = clamped;
+            int childForced = chosen->forcedState;
 
             std::cout << "move " << r << " " << c
                        << " visits " << visits
                        << " prior " << prior
                        << " winrate " << winrate
                        << " q " << q
+                       << " forced " << childForced
                        << " variation";
             for(const Move& fm : followUpFrom(chosen, 6)){
                 std::cout << " " << (int)fm.first << " " << (int)fm.second;
