@@ -97,21 +97,21 @@ namespace{
     std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game){
         const auto& [logAct, winP, scoreEXP, scoreMap] = *nnOutput;
 
-        float captureV[2] = {0.0f, 0.0f};
-        const Color turn = game.getTurn();
-        const Color oppturn = Game::reverseColor(turn);
-        const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
-        const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
+        // float captureV[2] = {0.0f, 0.0f};
+        // const Color turn = game.getTurn();
+        // const Color oppturn = Game::reverseColor(turn);
+        // const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
+        // const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
-        float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
+        // float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
 
-        scoreV += scoreEXP;
-        for(int i=0; i<boardSize; ++i){
-            if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
-                Color owned = game.getScoreBoard({i / colSize, i % colSize});
-                scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
-            }
-        }
+        // scoreV += scoreEXP;
+        // for(int i=0; i<boardSize; ++i){
+        //     if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
+        //         Color owned = game.getScoreBoard({i / colSize, i % colSize});
+        //         scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
+        //     }
+        // }
 
         // float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
 
@@ -140,7 +140,8 @@ namespace{
 
         // float utility = winP * 0.9f;
         // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
-        float utility = winP * 0.9f + scoreV * 0.01f;
+        // float utility = winP * 0.9f + scoreV * 0.01f;
+        float utility = winP;
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
         //     if(cntr++ % 100 == 0){

@@ -846,14 +846,14 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        self.root.geometry("1760x1000")
+        self.root.geometry("2100x1000")
 
         self.boardFrame = Frame(self.root)
         self.canvas = Canvas(self.boardFrame, width=900, height=900, bg=BOARD_BG, highlightthickness=0)
         self.passButton = Button(self.boardFrame, text="pass")
         self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
 
-        self.sideFrame = Frame(self.root, width=760, height=900)
+        self.sideFrame = Frame(self.root, width=1100, height=900)
         self.sideFrame.pack_propagate(False)
         self.setupPanel = None
         self.analysisResultPanel = None
@@ -879,6 +879,24 @@ class Game:
         self.last_analysis_result = None
         self.selected_variation_move = None
         self.analysis_paused = False
+        # "analyze N" is a cumulative visit-count target on the engine's side (see
+        # modelcompare.cpp), not a one-shot playout budget -- and the tree persists across
+        # moves, so a freshly-current position's root visits are often already nonzero (carried
+        # over from being explored as a child during the previous move's search). These two
+        # track, for whatever position is currently "this turn": analysis_turn_base_visits is
+        # that carried-over starting point (visits before any of this turn's own search ran),
+        # and analysis_turn_requested is the Playout limit field's value as of the most recent
+        # request (_request_more_playouts always recomputes the absolute target as base +
+        # this, fresh from the field, rather than piling `extra` on top of however far search
+        # has already gotten -- so nudging the field from 4000 to 4001 and hitting Apply runs
+        # exactly one more playout, not another 4001 of them). Together they let the Visits
+        # label and _compute_analysis_status report "done this turn" instead of the engine's
+        # raw, carryover-inflated root visit count. Reset at every turn boundary: see
+        # _commit_move (sets analysis_turn_base_visits to the carryover, analysis_turn_requested
+        # to the limit) and _sync_analysis_position (both to 0, since a fresh replay carries
+        # over nothing).
+        self.analysis_turn_base_visits = 0
+        self.analysis_turn_requested = 0
         # Guards _maybe_auto_play from re-triggering multiple times for the same position while
         # several analysis result blocks stream in as the search climbs toward the playout limit.
         self._auto_move_seq_len = -1
@@ -1037,12 +1055,15 @@ class Game:
         Button(btn_row, text="Cancel", command=picker.destroy).pack(side=RIGHT, padx=(0, 5))
 
     def _build_analysis_result_panel(self):
-        """The merged Analysis window: a "Position" column (the ordinary live candidate-move/
-        overlay/debug controls) and a "Moves" column (_build_moves_tab -- the former standalone
-        "Load Game" window's move-list/navigation, now living alongside it instead of as a
-        separate panel/dialog -- see _load_game_for_reference and _jump_to_ply) side by side, so
-        both are visible at once with nothing to click through to see the other. "End Session /
-        Back to Setup" sits above both, spanning the full width.
+        """The merged Analysis window: a "Position" column (engine-plays/overlay/debug-mode
+        controls), a "Search" column (the candidate-move breakdown and, below it, the debug-mode
+        playout log -- see _build_search_column; it gets its own column, rather than sharing
+        Position's, because both boxes are wide multi-line lists that need real room), and a
+        "Moves" column (_build_moves_tab -- the former standalone "Load Game" window's
+        move-list/navigation, now living alongside the rest instead of as a separate panel/
+        dialog -- see _load_game_for_reference and _jump_to_ply), all three side by side so
+        nothing needs clicking through to see another. "End Session / Back to Setup" sits above
+        all three, spanning the full width.
         """
         panel = Frame(self.sideFrame)
         self.analysisResultPanel = panel
@@ -1056,14 +1077,19 @@ class Game:
         position_col = Frame(columns_row)
         position_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 8))
         Frame(columns_row, width=1, bg="#999999").pack(side=LEFT, fill=Y)
+        search_col = Frame(columns_row)
+        search_col.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
+        Frame(columns_row, width=1, bg="#999999").pack(side=LEFT, fill=Y)
         moves_col = Frame(columns_row)
         moves_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(8, 0))
         self.movesColumn = moves_col
 
         Label(position_col, text="Position", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
+        Label(search_col, text="Search", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
         Label(moves_col, text="Moves", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
 
         self._build_position_tab(position_col)
+        self._build_search_column(search_col)
         self._build_moves_tab(moves_col)
 
     def _build_position_tab(self, panel):
@@ -1123,12 +1149,16 @@ class Game:
                     variable=self.debug_mode_var, command=self._on_debug_mode_change,
                     wraplength=260, justify=LEFT, anchor="w").pack(fill=X, pady=(0, 10))
 
-        # candidateFrame (ordinary per-move breakdown) and debugFrame (per-playout log) occupy
-        # the same spot and are never both visible -- _on_debug_mode_change toggles between them.
-        list_area = Frame(panel)
-        list_area.pack(fill=BOTH, expand=True)
-
-        self.candidateFrame = Frame(list_area)
+    def _build_search_column(self, panel):
+        """The Search column: candidateFrame (the ordinary Policy/Visits/Variation per-move
+        breakdown) on top, and debugFrame (the debug-mode per-playout log) below it -- both
+        always visible, stacked in their own column rather than sharing Position's (they're
+        both full-width multi-line lists that need real room, which is what made the previous
+        single shared box cramped). debugFrame just stays empty while debug mode is off, instead
+        of being unpacked/hidden -- so toggling debug mode never resizes or reflows this column,
+        only fills in (or clears) its lower box.
+        """
+        self.candidateFrame = Frame(panel)
         self.candidateListHeader = Label(self.candidateFrame, text="Candidate moves, by visit count:",
                                           font=("Helvetica", 10, "bold"), anchor="w",
                                           wraplength=260, justify=LEFT)
@@ -1146,25 +1176,73 @@ class Game:
         candidate_scrollbar.pack(side=RIGHT, fill=Y)
         self.analysisListbox.pack(side=LEFT, fill=BOTH, expand=True)
         self.analysisListbox.bind("<<ListboxSelect>>", self._on_candidate_listbox_select)
-        self.candidateFrame.pack(fill=BOTH, expand=True)
+        self.candidateFrame.pack(side=TOP, fill=BOTH, expand=True)
 
-        self.debugFrame = Frame(list_area)
-        Label(self.debugFrame, text="Playouts, in search order -- select one to trace its\n"
-                                     "path on the board (Variation overlay mode):",
+        self.debugFrame = Frame(panel)
+        self.debugFrame.pack(side=TOP, fill=BOTH, expand=True, pady=(10, 0))
+        Frame(self.debugFrame, height=1, bg="#999999").pack(fill=X, pady=(0, 8))
+        Label(self.debugFrame, text="Playouts, in search order (debug mode) -- select one to\n"
+                                     "trace its path on the board:",
               font=("Helvetica", 10, "bold"), anchor="w", wraplength=260, justify=LEFT).pack(fill=X)
-        Label(self.debugFrame, text="#     path                              winp   score",
-              font=("Courier", 9), fg="#555555", anchor="w").pack(fill=X, pady=(2, 2))
 
+        debug_header_row = Frame(self.debugFrame)
+        debug_header_row.pack(fill=X, pady=(2, 2))
+        Label(debug_header_row, text="path (row+col per move, e.g. \"24 28\")",
+              font=("Courier", 9), fg="#555555", anchor="w").pack(side=LEFT, fill=X, expand=True)
+        Label(debug_header_row, text="#     winp   score", font=("Courier", 9), fg="#555555",
+              anchor="w").pack(side=RIGHT)
+
+        # The path column gets its own small listbox with its own horizontal scrollbar, kept in
+        # step (vertically) with a second, fixed-width listbox holding "# winp score" -- so a
+        # long search path scrolls within its own little window instead of shoving winp/score
+        # off to the right where they'd need a wide window to stay visible (that was the bug:
+        # a single Listbox with one long fixed-width line per row, no horizontal scrollbar).
         debug_list_frame = Frame(self.debugFrame)
         debug_list_frame.pack(fill=BOTH, expand=True)
-        debug_scrollbar = Scrollbar(debug_list_frame, orient=VERTICAL)
-        self.debugListbox = Listbox(debug_list_frame, yscrollcommand=debug_scrollbar.set,
-                                     font=("Courier", 9), height=20, exportselection=False)
-        debug_scrollbar.configure(command=self.debugListbox.yview)
-        debug_scrollbar.pack(side=RIGHT, fill=Y)
-        self.debugListbox.pack(side=LEFT, fill=BOTH, expand=True)
-        self.debugListbox.bind("<<ListboxSelect>>", self._on_debug_listbox_select)
-        # debugFrame starts unpacked -- candidateFrame is the default view.
+
+        debug_vscrollbar = Scrollbar(debug_list_frame, orient=VERTICAL)
+        debug_vscrollbar.pack(side=RIGHT, fill=Y)
+
+        stat_frame = Frame(debug_list_frame)
+        stat_frame.pack(side=RIGHT, fill=Y)
+        self.debugListbox = Listbox(stat_frame, font=("Courier", 9), height=20, width=18,
+                                     exportselection=False)
+        self.debugListbox.pack(fill=Y, expand=True)
+
+        path_frame = Frame(debug_list_frame)
+        path_frame.pack(side=LEFT, fill=BOTH, expand=True)
+        debug_hscrollbar = Scrollbar(path_frame, orient=HORIZONTAL)
+        debug_hscrollbar.pack(side=BOTTOM, fill=X)
+        self.debugPathListbox = Listbox(path_frame, xscrollcommand=debug_hscrollbar.set,
+                                         font=("Courier", 9), height=20, exportselection=False)
+        debug_hscrollbar.configure(command=self.debugPathListbox.xview)
+        self.debugPathListbox.pack(side=LEFT, fill=BOTH, expand=True)
+
+        # Keep the two listboxes' vertical scroll positions and selections in lock-step, as if
+        # they were columns of one widget. _debug_sync_guard prevents the yview_moveto() call
+        # below from re-triggering this same handler for the listbox it's synchronizing.
+        self._debug_sync_guard = False
+
+        def sync_yview(source, *args):
+            debug_vscrollbar.set(*args)
+            if self._debug_sync_guard:
+                return
+            self._debug_sync_guard = True
+            try:
+                other = self.debugListbox if source is self.debugPathListbox else self.debugPathListbox
+                other.yview_moveto(args[0])
+            finally:
+                self._debug_sync_guard = False
+
+        self.debugPathListbox.configure(yscrollcommand=lambda *a: sync_yview(self.debugPathListbox, *a))
+        self.debugListbox.configure(yscrollcommand=lambda *a: sync_yview(self.debugListbox, *a))
+        debug_vscrollbar.configure(command=self._debug_listboxes_yview)
+
+        for lb in (self.debugPathListbox, self.debugListbox):
+            lb.bind("<<ListboxSelect>>", self._on_debug_listbox_select)
+            lb.bind("<MouseWheel>", self._on_debug_list_mousewheel)
+            lb.bind("<Button-4>", self._on_debug_list_mousewheel)
+            lb.bind("<Button-5>", self._on_debug_list_mousewheel)
 
     def _build_moves_tab(self, panel):
         """The former standalone "Load Game for Review" window's content, now a tab of the
@@ -1328,6 +1406,19 @@ class Game:
         with real prior search just reports its current stats as-is; only a barely-touched
         child gets the couple of playouts it needs to show a real (non-blank) per-move
         breakdown instead of one big resumed search. Pause stays engaged either way.
+
+        Otherwise (not paused), the Playout limit field is meant as "how many playouts to spend
+        on this move", not "search until root visits reach this number" -- but "analyze N" is a
+        cumulative target on the *engine's* side (see modelcompare.cpp), and the tree persists
+        across moves, so the position just jumped to typically already carries over some visits
+        from having been explored as a child during the previous move's search. Left alone,
+        that carry-over would silently eat into the requested budget (or, on a well-explored
+        child, make the request an outright no-op). So the target sent is the carried-over visit
+        count (matched["visits"], from the same per-move breakdown used for session_move_log
+        above -- exactly what the child's visits will be immediately after send_play) plus the
+        configured limit, to land on "limit *more* playouts" instead. A proven win/loss still
+        cuts search short regardless of the target (rootForcedState() in the engine's own search
+        loop) -- that exception needs no special-casing here.
         """
         is_pass = (x == self.boardSize and y == 0)
 
@@ -1397,8 +1488,16 @@ class Game:
 
         if self.analysis_mode:
             self.analysisEngine.send_play(x, y)
-            self.analysisEngine.request_analysis(
-                _PAUSED_MOVE_MIN_VISITS if self.analysis_paused else self._get_analysis_limit())
+            # New position -> new turn: reset the Visits-label baseline to this position's
+            # carried-over visit count (see analysis_turn_base_visits' comment in __init__).
+            base_visits = int(matched["visits"]) if matched else 0
+            self.analysis_turn_base_visits = base_visits
+            if self.analysis_paused:
+                target = _PAUSED_MOVE_MIN_VISITS
+                self.analysis_turn_requested = max(0, target - base_visits)
+                self.analysisEngine.request_analysis(target)
+            else:
+                self._request_more_playouts()
             self.selected_variation_move = None
             # A new position means the old playout log's tree no longer applies (it described
             # search on the position we just left); AnalysisEngine doesn't track this on its
@@ -1463,9 +1562,8 @@ class Game:
         self.debug_mode_var.set(False)
         self.playout_log = []
         self.selected_playout_index = None
+        self.debugPathListbox.delete(0, END)
         self.debugListbox.delete(0, END)
-        self.debugFrame.pack_forget()
-        self.candidateFrame.pack(fill=BOTH, expand=True)
 
     def reset_board(self):
         """Clear the board, end any live session, and start a fresh local (no engine) game."""
@@ -1475,6 +1573,8 @@ class Game:
         self.canvas.delete("stone")
         self.canvas.delete("move_overlay")
         self.last_analysis_result = None
+        self.analysis_turn_base_visits = 0
+        self.analysis_turn_requested = 0
         self.selected_variation_move = None
         self._reset_debug_mode()
         self.analysis_paused = False
@@ -1553,6 +1653,14 @@ class Game:
         self._auto_move_seq_len = -1
         self.analysis_paused = True
         self.analysisPauseButton.configure(text="Resume")
+        # A plain replay (send_play with no "analyze" in between) leaves every node on the
+        # replayed path unexplored -- no carryover, unlike a move committed during live search
+        # (see _commit_move) -- and last_analysis_result may still be describing whatever
+        # position/session preceded this sync, so it can't be trusted as this turn's starting
+        # point either. New turn, clean baseline.
+        self.last_analysis_result = None
+        self.analysis_turn_base_visits = 0
+        self.analysis_turn_requested = 0
         self.analysisEngine.send_reset()
         for x, y in self.rule.seq:
             if x == -1 or y == -1:
@@ -1566,31 +1674,50 @@ class Game:
         except ValueError:
             return 4000
 
-    def apply_analysis_limit(self):
-        """Re-request analysis with whatever limit is currently in the entry box.
+    def _request_more_playouts(self, extra=None):
+        """Sends "analyze" for a target of analysis_turn_base_visits + `extra` (default: the
+        Playout limit field) -- "analyze N"'s target is an absolute cumulative visit count on
+        the engine's side (see modelcompare.cpp), so this recomputes it fresh from the field
+        every time, rather than piling `extra` on top of however far search has already gotten.
+        That distinction matters once this is called more than once for the same position
+        (successive Apply/Resume presses): recomputing fresh means nudging the field from 4000
+        to 4001 and hitting Apply runs exactly one more playout (the target rises by exactly 1,
+        offset by the same fixed base both times) -- stacking `extra` on top of current visits
+        each press would instead run another whole 4001. Leaving the field untouched and
+        pressing Apply again is correctly a no-op (same target as last time, already reached).
+        analysis_turn_requested tracks the field value this last sent, so the Visits label and
+        _compute_analysis_status compare against the same target this actually requested (see
+        analysis_turn_base_visits' comment in __init__).
+        """
+        if extra is None:
+            extra = self._get_analysis_limit()
+        self.analysis_turn_requested = extra
+        self.analysisEngine.request_analysis(self.analysis_turn_base_visits + extra)
 
-        The engine tracks visits cumulatively on the current position, so raising the
-        limit resumes search on the existing tree instead of restarting; if the limit
-        is at or below what's already been searched, the engine just stops (or was
-        already stopped) and re-prints the current snapshot as-is -- it never resets.
+    def apply_analysis_limit(self):
+        """Re-requests analysis at this turn's carried-over baseline plus the Playout limit
+        field's current value (_request_more_playouts) -- so raising the limit after search
+        already finished and hitting Apply resumes search by exactly the difference (bump it
+        from 4000 to 4001 and one more playout runs, not another 4001), rather than either
+        no-op'ing (the old flat-target bug) or overshooting by the field's full value each press.
         """
         if not self.analysis_mode or self.analysisEngine is None:
             return
         self.analysis_paused = False
         self.analysisPauseButton.configure(text="Pause")
-        self.analysisEngine.request_analysis(self._get_analysis_limit())
+        self._request_more_playouts()
 
     def toggle_analysis_pause(self):
         """Pause halts the engine's in-progress search after its current chunk, keeping
-        the tree as-is; Resume just re-sends the current limit, which continues search
-        on the existing (unreset) tree from wherever it left off.
+        the tree as-is; Resume re-requests analysis at this turn's baseline plus the
+        configured limit (_request_more_playouts), same as Apply.
         """
         if not self.analysis_mode or self.analysisEngine is None:
             return
         if self.analysis_paused:
             self.analysis_paused = False
             self.analysisPauseButton.configure(text="Pause")
-            self.analysisEngine.request_analysis(self._get_analysis_limit())
+            self._request_more_playouts()
         else:
             self.analysis_paused = True
             self.analysisPauseButton.configure(text="Resume")
@@ -1871,8 +1998,11 @@ class Game:
         status = self._compute_analysis_status(result)
         visits = result.get("visits")
         if visits is not None and status is not None:
-            limit = self._get_analysis_limit()
-            self.analysisVisitsLabel.configure(text=f"Visits: {visits} / {limit} ({status})")
+            # "This turn"'s visits, not the engine's raw (carryover-inflated) root total --
+            # see analysis_turn_base_visits' comment in __init__.
+            turn_visits = max(0, int(visits) - self.analysis_turn_base_visits)
+            self.analysisVisitsLabel.configure(
+                text=f"Visits: {turn_visits} / {self.analysis_turn_requested} ({status})")
 
         self._update_candidate_listbox(result)
         self._maybe_auto_play(status)
@@ -1907,7 +2037,7 @@ class Game:
             return "done, forced win"
         if forced < 0:
             return "done, forced loss"
-        if visits >= self._get_analysis_limit():
+        if visits >= self.analysis_turn_base_visits + self.analysis_turn_requested:
             return "done"
         return "analyzing..."
 
@@ -1922,6 +2052,17 @@ class Game:
             self.candidateColumnHeader.configure(text="move       visits   policy  winrate     Q")
 
         self.analysisListbox.delete(0, END)
+
+        # Visits are the engine's cumulative total on the current position (every playout run
+        # since the last move was played/position changed, not just whatever the most recent
+        # search chunk added) -- each candidate row below already reflects that, but the root
+        # total itself isn't otherwise shown anywhere in this box, so give it its own row.
+        # Row 0 always, and it's not a candidate -- _on_candidate_listbox_select below skips it.
+        total_visits = result.get("visits")
+        total_text = f"Total visits: {int(total_visits)}" if total_visits is not None else "Total visits: -"
+        self.analysisListbox.insert(END, total_text)
+        self.analysisListbox.itemconfig(0, fg="#555555")
+
         moves = _sorted_candidate_moves(result)
         # Once forced, "moves" holds exactly the one proven move (see Analysis::printAnalysis) --
         # already the sole/first row below with no extra sorting needed; itemconfig just flags
@@ -1941,14 +2082,15 @@ class Game:
                 pct = (mv["winrate"] + 1) / 2 * 100
                 text = (f"({r},{c})".ljust(10) + f"{int(mv['visits']):<8}"
                         f"{mv['prior'] * 100:5.1f}%  {pct:5.1f}%  {mv['q']:+.3f}")
+            row = idx + 1  # offset by the "Total visits" row at index 0
             self.analysisListbox.insert(END, text)
             if forced > 0:
-                self.analysisListbox.itemconfig(idx, fg=FORCED_WIN_COLOR)
+                self.analysisListbox.itemconfig(row, fg=FORCED_WIN_COLOR)
             elif forced < 0:
-                self.analysisListbox.itemconfig(idx, fg=FORCED_LOSS_COLOR)
+                self.analysisListbox.itemconfig(row, fg=FORCED_LOSS_COLOR)
 
         if show_variation and selected_row is not None:
-            self.analysisListbox.selection_set(selected_row)
+            self.analysisListbox.selection_set(selected_row + 1)
 
     def _on_candidate_listbox_select(self, event=None):
         if self.overlay_var.get() != "variation" or self.last_analysis_result is None:
@@ -1956,68 +2098,97 @@ class Game:
         sel = self.analysisListbox.curselection()
         if not sel:
             return
+        idx = sel[0] - 1  # row 0 is the "Total visits" summary row, not a candidate
+        if idx < 0:
+            return
         moves = _sorted_candidate_moves(self.last_analysis_result)
-        idx = sel[0]
         if idx >= len(moves):
             return
         self.selected_variation_move = moves[idx]["move"]
         self._draw_move_overlay(self.last_analysis_result)
 
     def _on_debug_mode_change(self):
-        """Debug mode only streams playouts run *after* it's turned on -- the engine keeps
-        nothing from before, so a stale "done" position would otherwise show an empty playout
-        list until the user separately bumped the playout limit. Force a small fresh burst of
-        search right away instead, so turning debug mode on always produces something to look
-        at. Toggling either way also starts us over locally: our own accumulated playout_log
-        described whatever was captured under the *previous* on/off state, which the freshly
-        (un)toggled engine process's stream no longer matches.
+        """Just tells the engine whether to log playouts from here on -- it does not itself
+        start or stop search (that's the Pause/Resume button's job, exclusively). So flipping
+        this on while search is paused produces nothing until Resume is pressed, and flipping it
+        on mid-search starts logging the playouts that search is already running. Either way we
+        also reset our own accumulated playout_log locally, since it described whatever was
+        captured under the *previous* on/off state, which the freshly (un)toggled engine
+        process's stream no longer matches.
         """
         self.playout_log = []
         self.selected_playout_index = None
         on = self.debug_mode_var.get()
 
-        self.debugFrame.pack_forget()
-        self.candidateFrame.pack_forget()
-        (self.debugFrame if on else self.candidateFrame).pack(fill=BOTH, expand=True)
-
-        if self.analysisEngine is None:
-            return
-        self.analysisEngine.send_debug(on)
-        if on:
-            current_visits = (self.last_analysis_result or {}).get("visits") or 0
-            target = max(self._get_analysis_limit(), current_visits + 200)
-            self.analysis_limit_var.set(str(target))
-            self.analysis_paused = False
-            self.analysisPauseButton.configure(text="Pause")
-            self.analysisEngine.request_analysis(target)
+        # Both candidateFrame and debugFrame live in their own Search column and stay packed
+        # regardless of "on" -- debugFrame just has nothing in it (see _update_debug_listbox)
+        # while debug mode is off, rather than being hidden/resized.
+        if self.analysisEngine is not None:
+            self.analysisEngine.send_debug(on)
+        # selected_playout_index was just reset above -- if the board was showing a playout's
+        # path (Variation overlay), redraw so that stale marker set doesn't linger.
         if self.last_analysis_result is not None:
             self._draw_move_overlay(self.last_analysis_result)
         self._update_debug_listbox()
 
     def _update_debug_listbox(self):
+        self.debugPathListbox.delete(0, END)
         self.debugListbox.delete(0, END)
         selected_row = None
         for row, rec in enumerate(self.playout_log):
             if row == self.selected_playout_index:
                 selected_row = row
-            path_text = " ".join(f"({r},{c})" for r, c in rec["path"]) or "(root)"
+            # "row col" per move, no parens/comma (e.g. (2,4) (2,8) -> "24 28") -- much more
+            # compact than the tuple form, which is what forced winp/score off-screen for any
+            # search path longer than a handful of moves.
+            path_text = " ".join(f"{r}{c}" for r, c in rec["path"]) or "(root)"
             if rec["forced"] != 0:
                 stat_text = "forced win" if rec["forced"] > 0 else "forced loss"
             else:
                 stat_text = f"{rec['winp']:+.2f}  {rec['score']:+.2f}"
-            self.debugListbox.insert(END, f"{row:<5} {path_text:<34} {stat_text}")
+            self.debugPathListbox.insert(END, path_text)
+            self.debugListbox.insert(END, f"{row:<5} {stat_text}")
         if selected_row is not None:
+            self.debugPathListbox.selection_set(selected_row)
+            self.debugPathListbox.see(selected_row)
             self.debugListbox.selection_set(selected_row)
             self.debugListbox.see(selected_row)
 
+    def _debug_listboxes_yview(self, *args):
+        """Vertical scrollbar command for the split path/stat debug listboxes -- drives both in
+        lock-step (see the yscrollcommand sync installed in _build_position_tab)."""
+        self.debugPathListbox.yview(*args)
+        self.debugListbox.yview(*args)
+
+    def _on_debug_list_mousewheel(self, event):
+        if getattr(event, "num", None) == 5 or event.delta < 0:
+            units = 1
+        else:
+            units = -1
+        self.debugPathListbox.yview_scroll(units, "units")
+        self.debugListbox.yview_scroll(units, "units")
+        return "break"
+
     def _on_debug_listbox_select(self, event=None):
-        sel = self.debugListbox.curselection()
+        # Either listbox can fire this (clicking a row in "path" or in "# winp score") -- mirror
+        # the selection onto the other one so they always highlight the same row.
+        source = event.widget if event is not None else self.debugPathListbox
+        sel = source.curselection()
         if not sel:
             return
         idx = sel[0]
         if idx >= len(self.playout_log):
             return
+        other = self.debugListbox if source is self.debugPathListbox else self.debugPathListbox
+        other.selection_clear(0, END)
+        other.selection_set(idx)
         self.selected_playout_index = idx
+        # Selecting a path always traces it on the board -- the same numbered-marker drawing
+        # the "Variation" board-overlay mode uses (_draw_playout_path_overlay), so just switch
+        # into that mode rather than requiring it be picked first; clicking an "expected
+        # continuation" candidate works the same way once already in Variation mode (see
+        # _on_candidate_listbox_select) -- this makes debug-path clicks equally immediate.
+        self.overlay_var.set("variation")
         if self.last_analysis_result is not None:
             self._draw_move_overlay(self.last_analysis_result)
 
