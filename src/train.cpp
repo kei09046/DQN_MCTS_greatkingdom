@@ -88,7 +88,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 				}
 				std::cout << "\n";
-				ModelCompare::displayBoardGUI(true, game_manager);
+				// ModelCompare::displayBoardGUI(true, game_manager);
 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
 			}
 

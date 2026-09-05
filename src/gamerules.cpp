@@ -182,6 +182,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
 void Game::setPolicyMask(){
     possibleMoves.clear();
     std::fill(pTransferGroups.begin(), pTransferGroups.end(), -1);
+    winmove = RESIGNMOVE;
 
     const auto& [tactic, wdl] = tacticCheck();
     if(wdl > 0){

@@ -376,12 +376,19 @@ MoveData Node::selectMoveProb(float temp){
     if(forcedState > 0){
         // label smoothing is applied here.
         //std::fill(visitPortion.begin(), visitPortion.end(), 0.02f/(outputSize - 1));
-        for(int i=0; i<child.size(); ++i){
-            if(child[i] != nullptr && child[i]->forcedState < 0){
-                auto winningMove = game.getAvailableMoves()[i];
-                visitPortion[winningMove] = 1.0f;
-                selectedMove = {winningMove / colSize, winningMove % colSize};
-                break;
+
+        if(game.getWin() != RESIGNMOVE){
+            selectedMove = game.getWin();
+            visitPortion[selectedMove.first * colSize + selectedMove.second] = 1.0f;
+        }
+        else{
+            for(int i=0; i<child.size(); ++i){
+                if(child[i] != nullptr && child[i]->forcedState < 0){
+                    auto winningMove = game.getAvailableMoves()[i];
+                    visitPortion[winningMove] = 1.0f;
+                    selectedMove = {winningMove / colSize, winningMove % colSize};
+                    break;
+                }
             }
         }
     }
@@ -395,7 +402,7 @@ MoveData Node::selectMoveProb(float temp){
             }
             visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
         }
-        selectedMove = {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
+        selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
     }
 
     else{
@@ -413,8 +420,15 @@ MoveData Node::selectMoveProb(float temp){
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
-        selectedMove = {game.getAvailableMoves()[index] / colSize, game.getAvailableMoves()[index] % colSize};
+        selectedMove = {game.getAvailableMoves().at(index) / colSize, game.getAvailableMoves().at(index) % colSize};
     }
+
+    // std::cerr << "Available moves : ";
+    // for(const auto& m : game.getAvailableMoves())
+    //     std::cerr << m/colSize << m%colSize << " ";
+    // std::cerr << std::endl;
+    // std::cerr << "Selected moves : ";
+    // printMove(selectedMove);
 
     return {selectedMove, visitPortion, forcedState, game.getAvailableMoves().size() == 1};
 }
@@ -561,7 +575,6 @@ MCTS::~MCTS(){
 }
 
 void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild){
-    //std::cout << "run simulation " << nPlayout << std::endl;
     if(globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
 
@@ -573,18 +586,14 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
     if(playMode == PLAYOUT){
-        // root->child is only sized (Node::expand(), called on a node's *second* visit) once
-        // its first NN evaluation has actually resolved -- and with search_thread_num > 1, one
-        // playout() call only queues that evaluation; it isn't resolved until root gets visited
-        // again while still pending, which flags searchStuck and forces the next call to drain
-        // it. A fixed count of calls here doesn't reliably land past that point (2 calls only
-        // gets root to "queued and stuck", never expanded), which silently made the forced-
-        // per-child phase below a no-op (root->child.size() == 0, so its loop never ran) --
-        // loop on the actual condition instead of guessing how many calls that takes.
         while(!root->expanded && root->forcedState == 0)
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                 playMode, timeLimit);
         // std::cerr << "first phase done" << std::endl;
+        // std::cerr << "available moves : ";
+        // for(const auto& m : root->game.getAvailableMoves())
+        //     std::cerr << m/colSize << m%colSize << " ";
+        // std::cerr << std::endl;
 
         for(int i=0; i<minSearchPerChild; ++i){
             for(int j=0; j<root->child.size(); ++j){
