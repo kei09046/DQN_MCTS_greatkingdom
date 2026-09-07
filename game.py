@@ -531,10 +531,20 @@ _ANALYSIS_PLAYOUT_RE = re.compile(
     r"^playout\s+forced\s+(-?\d+)\s+winp\s+" + _FLOAT + r"\s+score\s+" + _FLOAT + r"\s+path(.*)$")
 
 
+def _model_sort_key(filename):
+    """Numeric-ID order (e.g. I17280B.pt < I28800B.pt), with names ending in "B"
+    (before the .pt extension) grouped ahead of everything else."""
+    stem = filename[:-len(".pt")]
+    m = re.search(r"(\d+)", stem)
+    model_id = int(m.group(1)) if m else -1
+    return (0 if stem.endswith("B") else 1, model_id, filename)
+
+
 def list_models(models_dir=MODELS_DIR):
     if not os.path.isdir(models_dir):
         return []
-    return sorted(f for f in os.listdir(models_dir) if f.endswith(".pt"))
+    return sorted((f for f in os.listdir(models_dir) if f.endswith(".pt")),
+                  key=_model_sort_key)
 
 
 class AnalysisEngine:
@@ -917,7 +927,16 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        self.root.geometry("2100x1000")
+        # Design size is 2100x1000, but that's wider/taller than plenty of real monitors --
+        # requesting more than the screen has causes the window manager to just clip the
+        # window at the screen edge instead of shrinking it, which is what was cutting the
+        # UI off horizontally. Clamp to whatever this screen actually has (minus a small
+        # margin for WM decorations/taskbars) instead of assuming the design size fits.
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        win_w = min(2100, screen_w - 20)
+        win_h = min(1000, screen_h - 80)
+        self.root.geometry(f"{win_w}x{win_h}")
 
         self.boardFrame = Frame(self.root)
         self.canvas = Canvas(self.boardFrame, width=900, height=900, bg=BOARD_BG, highlightthickness=0)
