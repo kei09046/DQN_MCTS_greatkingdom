@@ -1059,8 +1059,12 @@ class Game:
         if models:
             model_row = Frame(panel)
             model_row.pack(fill=X, pady=(0, 10))
-            Label(model_row, textvariable=self.setup_model_var, anchor="w",
-                  relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X, expand=True)
+            # Bounded width (not fill=X/expand=True) on purpose: an expanding label eats every
+            # leftover pixel in the row, leaving the button flush against the column's right
+            # edge with zero margin -- fine in this measured layout, but a font-metric/DPI
+            # difference on a real display is enough to clip it. A fixed width leaves slack.
+            Label(model_row, textvariable=self.setup_model_var, anchor="w", width=14,
+                  relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X)
             Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
         else:
             Label(panel, text=f"(no .pt files found in {MODELS_DIR})", fg="red",
@@ -1412,8 +1416,12 @@ class Game:
 
         model_row = Frame(panel)
         model_row.pack(fill=X, pady=(0, 8))
-        Label(model_row, textvariable=self.setup_model_var, anchor="w",
-              relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X, expand=True)
+        # See the matching model_row in _build_setup_panel for why this is a bounded width
+        # instead of fill=X/expand=True -- this column is the narrowest of the three
+        # (moves_col), so an expanding label here is what was pinning "Choose..." flush
+        # against the column edge and clipping it on some displays.
+        Label(model_row, textvariable=self.setup_model_var, anchor="w", width=14,
+              relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X)
         Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
 
         models = list_models()
