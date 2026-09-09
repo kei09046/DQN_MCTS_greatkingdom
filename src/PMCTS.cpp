@@ -309,6 +309,9 @@ Move Node::selectMove(float temp){
         // if(globalConfig.detailedStat)
         //     std::cout << "status: " << static_cast<int>(onlyMove.first) << " " << static_cast<int>(onlyMove.second)
         //     << " forced : " << -forcedState + (forcedState > 0 ? 1 : -1) << std::endl;
+        if(game.getWin() != RESIGNMOVE){
+            return game.getWin();
+        }
         for(int i=0; i<child.size(); ++i){
             if(child[i] != nullptr && child[i]->forcedState < 0)
                 return {game.getAvailableMoves()[i] / colSize, game.getAvailableMoves()[i] % colSize};
@@ -856,8 +859,9 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
 
 
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
-    if(globalConfig.detailedStat){ // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
-        for (Node* n : path | std::views::reverse) {
+    if (globalConfig.detailedStat) { // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
+        for (auto it = path.rbegin(); it != path.rend(); ++it) {
+            Node* n = *it;
             n->W += 1.0f;   // revert VL
             n->W += evalQ;
             n->Wp += evalW;
@@ -867,9 +871,9 @@ void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, f
             evalW = -evalW;
         }
     }
-
-    else{
-        for (Node* n : path | std::views::reverse) {
+    else {
+        for (auto it = path.rbegin(); it != path.rend(); ++it) {
+            Node* n = *it;
             n->W += 1.0f;   // revert VL
             n->W += evalQ;
             evalQ = -evalQ;
