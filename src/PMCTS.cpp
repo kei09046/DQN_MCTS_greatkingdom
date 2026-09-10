@@ -98,10 +98,10 @@ namespace{
         const auto& [logAct, winP, scoreEXP, scoreMap] = *nnOutput;
 
         // float captureV[2] = {0.0f, 0.0f};
-        // const Color turn = game.getTurn();
+        const Color turn = game.getTurn();
         // const Color oppturn = Game::reverseColor(turn);
-        // const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
-        // const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
+        const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
+        const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
         // float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
 
@@ -113,7 +113,7 @@ namespace{
         //     }
         // }
 
-        // float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
+        float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
 
         // std::bitset<boardSize> mark;
         // for(int i=0; i<inputSize; ++i){
@@ -140,8 +140,8 @@ namespace{
 
         // float utility = winP * 0.9f;
         // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
-        // float utility = winP * 0.9f + scoreV * 0.01f;
-        float utility = winP;
+        float utility = winP * 0.9f + scoreV * 0.05f;
+        // float utility = winP;
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
         //     if(cntr++ % 100 == 0){

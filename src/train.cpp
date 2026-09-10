@@ -30,7 +30,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
-	Color startingTurn = BLACK;
+	int startingTurn = 0;
 	
 	NNInput state;
 
@@ -94,52 +94,49 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			// Generate NN training input.
 			// if position is black's turn to move, judge from white's perspective.
-			float result = (winner == startingTurn) ? -0.9f : 0.9f;
+			float result = ((winner == BLACK) ^ (startingTurn % 2 == 0)) ? -0.9f : 0.9f;
 
-			std::vector<float> maps[2];
-			int mapIdx = (startingTurn == BLACK) ? 0 : 1;
-			maps[mapIdx] = std::move(map);
-			maps[1 - mapIdx].reserve(boardSize);
-			for(auto v : maps[mapIdx])
-				maps[1 - mapIdx].push_back(-v);
-
-			int idx = 0;
 			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
+				// compute occupation map
+				std::vector<float> maps[2];
+				maps[0] = std::move(map);
+				maps[1].reserve(boardSize);
+				for(auto v : maps[0])
+					maps[1].push_back(-v);
+
 				// score with komi not applied.
-				float score_diff = -game_manager.scoreDiff(startingTurn);
+				float score_diff = -game_manager.scoreDiff(BLACK);
 				// calculate train stats
 				total_score_diff.fetch_add((int)score_diff);
 				total_game_length.fetch_add(sequence.size());
 
-				for(TrainData& data : buffer){
-					std::get<2>(data) = result;
+				//insert Data
+				for(int i=0; i<sequence.size(); ++i){
+					TrainData& data = buffer.at(i);
+					if(i >= startingTurn){
+						std::get<2>(data) = result;
+						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+					}
+					else{
+						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
+					}
 					std::get<3>(data) = score_diff;
-					std::get<4>(data) = maps[idx % 2];
-					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
-					insertData(data, forced.at(idx), only.at(idx));
+					std::get<4>(data) = maps[i % 2];
+					insertData(data, forced.at(i), only.at(i));
 					result = -result; // switch color
 					score_diff = -score_diff;
-					idx++;
 				}
 				player->reset(Game());
 				return;
 			}
 			// play until score termination.
 			else if(wintype == CAPTURE){
-				for(TrainData& data : buffer){
-					std::get<2>(data) = result;
-					std::get<3>(data) = 0.0f;
-					std::get<4>(data) = maps[idx % 2];
-					std::get<5>(data) = POLICYHEAD | VALUEHEAD;
-					insertData(data, forced.at(idx), only.at(idx));
+				for(int i=startingTurn; i<sequence.size(); ++i){
+					std::get<2>(buffer.at(i)) = result;
 					result = -result; // switch color
-					idx++;
 				}
 				player->reset(game_manager);
-				startingTurn = game_manager.getTurn();
-				buffer.clear();
-				forced.clear();
-				only.clear();
+				startingTurn = sequence.size();
 			}
 		}
 	}
@@ -400,7 +397,8 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	learning_rate = (games_played < 26880) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 26880) / 960);
+	//learning_rate = (games_played < 26880) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 26880) / 960);
+	learning_rate = 0.001f;
 }
 
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
