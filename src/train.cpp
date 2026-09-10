@@ -28,6 +28,123 @@ TrainPipeline::TrainPipeline(std::string init_model,
 		train_losses[i].reserve(globalConfig.compare_game_cnt);
 }
 
+// void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
+// 	Game game_manager = Game();
+// 	Color startingTurn = BLACK;
+	
+// 	NNInput state;
+
+// 	std::vector<Move> sequence;
+// 	std::vector<TrainData> buffer;
+// 	std::vector<int> forced;
+// 	std::vector<bool> only; 
+
+// 	#ifdef measureTime
+// 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+// 	#endif
+
+// 	while (true) {
+// 		game_manager.setPolicyMask();
+// 		state = PolicyValueNet::getData(game_manager);
+
+// 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
+// 		//printMove(m);
+
+// 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
+
+// 		assert(m != RESIGNMOVE);
+// 		if(m != RESIGNMOVE){
+// 			sequence.push_back(m);
+// 			// add placeHolder value to buffer
+// 			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
+// 			forced.push_back(forcedState);
+// 			only.push_back(isOnlyMove);
+// 		}
+
+// 		if (winner == EMPTY) {
+// 			if(!player->jump(m)){ // very rare case
+// 				std::cerr << "game manager's state : " << std::endl; 
+// 				ModelCompare::displayBoardGUI(true, game_manager);
+// 				std::cout << std::endl;
+// 				for(const auto& i : sequence){
+// 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
+// 				}
+// 				std::cerr << "\n";
+// 				player->reset(Game());
+// 				#ifdef measureTime
+// 				player->resetTimeStats();
+// 				#endif
+// 				return;
+// 			}
+// 		}
+
+// 		else {
+// 			// update stats
+// 			wintype_counter[((winner == BLACK) ? 2 : 0) + ((wintype == CAPTURE) ? 1 : 0)].fetch_add(1);
+
+// 			if (is_shown) {
+// 				std::cout << "\n";
+// 				for(const auto& i : sequence){
+// 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
+// 				}
+// 				std::cout << "\n";
+// 				// ModelCompare::displayBoardGUI(true, game_manager);
+// 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
+// 			}
+
+// 			// Generate NN training input.
+// 			// if position is black's turn to move, judge from white's perspective.
+// 			float result = (winner == startingTurn) ? -0.9f : 0.9f;
+
+// 			std::vector<float> maps[2];
+// 			int mapIdx = (startingTurn == BLACK) ? 0 : 1;
+// 			maps[mapIdx] = std::move(map);
+// 			maps[1 - mapIdx].reserve(boardSize);
+// 			for(auto v : maps[mapIdx])
+// 				maps[1 - mapIdx].push_back(-v);
+
+// 			int idx = 0;
+// 			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
+// 				// score with komi not applied.
+// 				float score_diff = -game_manager.scoreDiff(startingTurn);
+// 				// calculate train stats
+// 				total_score_diff.fetch_add((int)score_diff);
+// 				total_game_length.fetch_add(sequence.size());
+
+// 				for(TrainData& data : buffer){
+// 					std::get<2>(data) = result;
+// 					std::get<3>(data) = score_diff;
+// 					std::get<4>(data) = maps[idx % 2];
+// 					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+// 					insertData(data, forced.at(idx), only.at(idx));
+// 					result = -result; // switch color
+// 					score_diff = -score_diff;
+// 					idx++;
+// 				}
+// 				player->reset(Game());
+// 				return;
+// 			}
+// 			// play until score termination.
+// 			else if(wintype == CAPTURE){
+// 				for(TrainData& data : buffer){
+// 					std::get<2>(data) = result;
+// 					std::get<3>(data) = 0.0f;
+// 					std::get<4>(data) = maps[idx % 2];
+// 					std::get<5>(data) = POLICYHEAD | VALUEHEAD;
+// 					insertData(data, forced.at(idx), only.at(idx));
+// 					result = -result; // switch color
+// 					idx++;
+// 				}
+// 				player->reset(game_manager);
+// 				startingTurn = game_manager.getTurn();
+// 				buffer.clear();
+// 				forced.clear();
+// 				only.clear();
+// 			}
+// 		}
+// 	}
+// }
+
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
 	int startingTurn = 0;
@@ -94,7 +211,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 			// Generate NN training input.
 			// if position is black's turn to move, judge from white's perspective.
-			float result = ((winner == BLACK) ^ (startingTurn % 2 == 0)) ? -0.9f : 0.9f;
+			float result = ((winner == BLACK) ^ (startingTurn % 2 == 0)) ? 0.9f : -0.9f;
 
 			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
 				// compute occupation map
