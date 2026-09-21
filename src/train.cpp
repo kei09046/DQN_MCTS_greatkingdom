@@ -232,10 +232,16 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					TrainData& data = buffer.at(i);
 					if(i >= startingTurn){
 						std::get<2>(data) = result;
-						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+						if(result < 0) 
+							std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+						else
+							std::get<5>(data) = VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
 					}
 					else{
-						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
+						if(std::get<2>(data) < 0)
+							std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
+						else
+							std::get<5>(data) = VALUEHEAD | SCOREHEAD;
 					}
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[i % 2];
@@ -514,8 +520,8 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	//learning_rate = (games_played < 26880) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 26880) / 960);
-	learning_rate = 0.001f;
+	learning_rate = (games_played < 65280) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 65280) / 960);
+	//learning_rate = 0.001f;
 }
 
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{

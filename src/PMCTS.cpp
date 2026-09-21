@@ -140,7 +140,7 @@ namespace{
 
         // float utility = winP * 0.9f;
         // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
-        float utility = winP * 0.9f + scoreV * 0.05f;
+        float utility = winP * 0.9f + scoreV * 0.01f;
         // float utility = winP;
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
@@ -353,7 +353,7 @@ Move Node::selectMove(float temp){
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
-        weights[i] = std::pow(edgeN[i], temp);
+        weights[i] = std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
@@ -412,8 +412,9 @@ MoveData Node::selectMoveProb(float temp){
         std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
 
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-            weights[i] = (edgeN[i] == 0.0f) ? 0.0f : std::pow(edgeN[i], temp);
+            visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - globalConfig.nPlayout / 200)/(N - globalConfig.nPlayout * game.getAvailableMoves().size() / 200);
+            //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
+            weights[i] = std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
         }
 
         std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
