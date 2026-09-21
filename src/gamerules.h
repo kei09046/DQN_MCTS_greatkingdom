@@ -72,10 +72,10 @@ public:
     // list of possible moves, logit transfer list.
     void setPolicyMask();
 
-    std::pair<Move, int> tacticCheck() const;
+    // should be called after copy is created.
+    void resetMask();
 
-    // return type : winMove(resignMove if nothing), list of possible moves, transferTable. 
-    // std::tuple<std::pair<Move, int>, std::vector<Move>, std::vector<std::vector<uint8_t>>> expand(const Move threat) const;
+    std::pair<Move, int> tacticCheck() const;
 
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);

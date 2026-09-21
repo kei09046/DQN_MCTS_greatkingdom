@@ -189,6 +189,7 @@ void Node::addChild(const Move& move, int idx){
 
         if(it == transposTable->end()){
             Game ng = this->game;
+            ng.resetMask();
 
             // if idx = -1, move is not in the list. -> Add completely new child.
             if(idx == -1){
@@ -464,14 +465,7 @@ Node* Node::jump(Move move){
         }
     }
 
-    // The requested move isn't among this node's policy-restricted available moves -- e.g.
-    // Game::setPolicyMask (gamerules.cpp) only ever offers PASSMOVE when the current player is
-    // already ahead on score (or under its "opponent has a winning threat" branch), so a pass
-    // played outside that window is a real, engine-accepted move that this node's search simply
-    // never considered. It's still legal (the caller already validated it before calling jump),
-    // so graft it on as a fresh child instead of failing here: returning nullptr used to silently
-    // corrupt the MCTS root, which then crashed on the very next tree operation (jump/search/etc.)
-    // -- reproduced via a single "pass" during analysis mode segfaulting on the following command.
+    std::cerr << "unexpected move played" << std::endl;
     addChild(move, -1);
     return child.back();
 }
