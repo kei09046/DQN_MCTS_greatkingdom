@@ -354,7 +354,7 @@ Move Node::selectMove(float temp){
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
-        weights[i] = std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
+        weights[i] = (edgeN[i] - globalConfig.nPlayout / 200 <= 0) ? 0.0f : std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
