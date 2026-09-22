@@ -98,6 +98,10 @@ Color Game::makeMoveGivenScore(const Move& move){
     uint8_t r = move.first;
     uint8_t c = move.second;
 
+    if(!(board[r][c] & EMPTY)){
+        printMove(move);
+        ModelCompare::displayBoardGUI(true, *this);
+    }
     assert(board[r][c] & EMPTY);
     // turn off the empty bit, turn on the color bit.
     board[r][c] ^= currentTurn | EMPTY;
@@ -140,6 +144,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+
     if(!(board[r][c] & EMPTY)){
         ModelCompare::displayBoardGUI(true, *this);
         printMove(move);
@@ -313,10 +318,11 @@ void Game::resetMask(){
     possibleMoves.clear();
     std::fill(pTransferGroups.begin(), pTransferGroups.end(), -1);
     winmove = RESIGNMOVE;
+    threat = RESIGNMOVE;
 }
 
 std::pair<Move, int> Game::tacticCheck() const{
-    Move threat = RESIGNMOVE;
+    Move tactic = RESIGNMOVE;
 
     std::bitset<boardSize> chainChecker;
     for(int i=0; i<rowSize; ++i){            
@@ -329,7 +335,7 @@ std::pair<Move, int> Game::tacticCheck() const{
                 if(isLegal(onlyLib / colSize, onlyLib % colSize)){
                     // if my stone is under threat -> have to find only move unless can capture opponent's stone.
                     if(board[i][j] & currentTurn){
-                        threat = {onlyLib / colSize, onlyLib % colSize};
+                        tactic = {onlyLib / colSize, onlyLib % colSize};
                     }
 
                     // if opponent stone is capturable
@@ -347,23 +353,23 @@ std::pair<Move, int> Game::tacticCheck() const{
     // check if playing at threat would extend it's liberties
     std::bitset<boardSize> liberties;
     for(int i=0; i<4; ++i){
-        uint8_t r = threat.first + dr[i];
-        uint8_t c = threat.second + dc[i];
+        uint8_t r = tactic.first + dr[i];
+        uint8_t c = tactic.second + dc[i];
         if(inbound(r, c)){
             if(board[r][c] & EMPTY){
-                return {threat, 0};    
+                return {tactic, 0};    
             }
             else if(board[r][c] & currentTurn){
                 liberties |= chains[findHead(r, c)].liberties;
             }
         }
     }
-    liberties[threat.first * colSize + threat.second] = false;
+    liberties[tactic.first * colSize + tactic.second] = false;
 
-    assert(threat != RESIGNMOVE);
+    assert(tactic != RESIGNMOVE);
     if(liberties.none())
-        return {threat, -1};
-    return {threat, 0};
+        return {tactic, -1};
+    return {tactic, 0};
 }
 
 void Game::onGameEnd(Color winner){

@@ -64,6 +64,7 @@ public:
     // For continued play after the capture, 'makeMoveWithStat' should be called.
     std::pair<Color, Wintype> makeMove(Move move);
 
+    // optimized version of makeMove. Used inside MCTS search only. resetMask(), setPolicyMask() should be called beforehand.
     Color makeMoveGivenScore(const Move& move);
 
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.

@@ -189,17 +189,17 @@ void Node::addChild(const Move& move, int idx){
 
         if(it == transposTable->end()){
             Game ng = this->game;
-            ng.resetMask();
 
             // if idx = -1, move is not in the list. -> Add completely new child.
             if(idx == -1){
                 winner = ng.makeMove(move).first;
             }
-            // else, compute child based on stats calculated on expand() call.
+            // else, compute child based on stats calculated on setPolicyMask() call.
             else{
                 winner = ng.makeMoveGivenScore(move);
             }
-
+            // reset policyMask state. It would be reevaluated when this node gets selected during search.
+            ng.resetMask();
             childNode = new Node(ng, newHash, transposTable);
             childNode->forcedState = (winner == EMPTY) ? 0 : (winner == turn) ? -1 : 1;
             transposTable->emplace(newHash, std::make_pair(childNode, 1));
@@ -415,7 +415,7 @@ MoveData Node::selectMoveProb(float temp){
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
             visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - globalConfig.nPlayout / 200)/(N - globalConfig.nPlayout * game.getAvailableMoves().size() / 200);
             //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-            weights[i] = std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
+            weights[i] = (edgeN[i] <= globalConfig.nPlayout / 200) ? 0.0f : std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
         }
 
         std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -615,11 +615,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         }
     }
 
-    // The search loop above can exit (nPlayout reached, root->forcedState flips nonzero, or a
-    // searchStuck early-return in playout()) while an evaluation request is still sitting in the
-    // shared evaluator queue, pointing at one of our nodes. The caller (start_self_play) calls
-    // jump()/reset() right after this returns, which deletes nodes — so any such request must be
-    // waited on and drained here first, or the evaluator thread will read freed memory.
+    // wait until pending evaluation finishes.
     if(!current_evaluating_nodes.empty()){
         std::shared_ptr<NNResultBuf> rb = result_buffer.back();
         std::unique_lock<std::mutex> lk2(rb->resultmutex);
@@ -676,6 +672,7 @@ bool MCTS::jump(Move move){
 void MCTS::reset(const Game& startPos){
     root->deleteTree();
     root = new Node(startPos, hash.computeHash(startPos), transposTable);
+    root->game.resetMask();
 
     if(globalConfig.transTable){
         transposTable->clear();
