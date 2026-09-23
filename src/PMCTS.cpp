@@ -321,22 +321,7 @@ Move Node::selectMove(float temp){
     else if(game.getAvailableMoves().empty()){
         return RESIGNMOVE;
     }
-    // else if(globalConfig.detailedStat){
-    //     std::vector<int> v(game.getAvailableMoves().size());
-    //     std::iota(v.begin(), v.end(), 0);
-    //     std::sort(v.begin(), v.end(), [&](const int& a, const int& b){
-    //         return edgeN[a] > edgeN[b];
-    //     });
 
-    //     for(int i=0; i<std::min(static_cast<int>(game.getAvailableMoves().size()), 3); ++i){
-    //         int idx = v[i];
-    //         if(child[idx] != nullptr)
-    //             std::cout << "status: " << static_cast<int>(game.getAvailableMoves()[idx].first) << " " << static_cast<int>(game.getAvailableMoves()[idx].second)
-    //             << " forced : " << child[idx]->forcedState << " sc: " << edgeN[idx] << " Q: " 
-    //             << child[idx]->W/child[idx]->N << " initQ : " << child[idx]->initQ << " Wp : " << child[idx]->Wp/child[idx]->N 
-    //             << " S : " << child[idx]->S / child[idx]->N << " P " << edgeP[idx] << std::endl;
-    //     }
-    // }
 
     int maxi, maxn = -1, index;
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
