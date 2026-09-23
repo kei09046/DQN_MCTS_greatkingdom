@@ -72,7 +72,7 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 
 		if(cord == PASSMOVE || game_manager.isLegal(cord)){
 			res = game_manager.makeMove(cord).first;
-			//displayBoardGUI(true, game_manager);
+			//game_manager.displayBoardGUI(true);
 			if (res != EMPTY) {
 				game_manager.onGameEnd(res);
 				break;
@@ -147,11 +147,9 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 				targetVisits = requested;
 
 			// Stream a fresh snapshot roughly this often, for a live "mid-search" view -- also the
-			// nPlayout runSimulation sees per call, so it has to stay a multiple of 200 or the
+			// nPlayout runSimulation sees per call, so chunk * minVisitRatio has to be >= 1 or the
 			// minSearchPerChild passed below truncates to 0 and the "every child gets at least
-			// some playout" forced-first-child phase silently never runs when driven from here
-			// (it still fires normally from a single, un-chunked runSimulation call, e.g. actual
-			// play's full-nPlayout call in MCTS::getMove).
+			// some playout" forced-first-child phase silently never runs when driven from here.
 			constexpr int chunk = 400;
 
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -159,10 +157,10 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 			while (player.rootVisits() < targetVisits && player.rootForcedState() == 0) {
 				int remaining = targetVisits - player.rootVisits();
 				int n = std::min(chunk, remaining);
-				// 1/200 of this call's own playout budget, same ratio MCTS::getMove uses
-				// (globalConfig.nPlayout / 200) -- e.g. n == chunk == 400 gives 2 forced playouts
+				// minVisitRatio of this call's own playout budget, same ratio MCTS::getMove uses
+				// -- e.g. n == chunk == 400 with minVisitRatio 0.005 gives 2 forced playouts
 				// per child every chunk.
-				player.runSimulation(PLAYOUT, n, 0, n / 200);
+				player.runSimulation(PLAYOUT, n, 0, globalConfig.minVisits(n));
 				analysis.printAnalysis(player);
 				ranAny = true;
 
@@ -320,7 +318,7 @@ void ModelCompare::playHuman() {
 		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
 		res = game_manager.makeMove(cord).first;
-		displayBoardGUI(true, game_manager);
+		game_manager.displayBoardGUI(true);
 		std::cout << std::endl;
 
 		// auto [onlymove, forcedState] = experiment.tacticCheck();
@@ -344,7 +342,7 @@ void ModelCompare::playHuman() {
 		 
 		experiment.makeMoveGivenScore(cord);
 		experiment.setPolicyMask();
-		displayBoardGUI(true, experiment);
+		experiment.displayBoardGUI(true);
 		std::cout << std::endl;
 
 		if (res != EMPTY) {
@@ -443,62 +441,6 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 		delete players[i];
 	}
 	return ratings;
-}
-
-
-void ModelCompare::displayBoardGUI(bool showScore, const Game& game){
-    char display[rowSize][colSize];
-
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            switch(game.getBoard({i, j})){
-                case BLACK:
-                    display[i][j] = 'o';
-                    break;
-                case WHITE:
-                    display[i][j] = 'x';
-                    break;
-                case NEUTRAL:
-                    display[i][j] = '+';
-                    break;
-                default:
-                    display[i][j] = '-';
-                    break;
-            }
-
-            if(showScore){
-                switch(game.getScoreBoard({i, j})){
-                    case BSCORE:
-                        display[i][j] = 'b';
-                        break;
-                    case WSCORE:
-                        display[i][j] = 'w';
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-    }
-
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            std::cout << display[i][j] << " ";
-        }
-        std::cout << std::endl;
-    }
-
-	// const auto nnInput = PolicyValueNet::getData(game);
-	// int cnt = rowSize * colSize * 18;
-	// for(int i=18; i<=21; ++i){
-	// 	std::cout << "\n channel " << i << "\n";
-		
-	// 	for(int j=0; j<rowSize; ++j){
-	// 		for(int k=0; k<colSize; ++k)
-	// 			std::cout << nnInput[cnt++] << " ";
-	// 		std::cout << "\n";
-	// 	}
-	// }
 }
 
 

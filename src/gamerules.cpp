@@ -1,5 +1,4 @@
 #include "gamerules.h"
-#include "modelcompare.h"
 #include <utility>
 #include <queue>
 #include <vector>
@@ -100,7 +99,7 @@ Color Game::makeMoveGivenScore(const Move& move){
 
     if(!(board[r][c] & EMPTY)){
         printMove(move);
-        ModelCompare::displayBoardGUI(true, *this);
+        displayBoardGUI(true);
     }
     assert(board[r][c] & EMPTY);
     // turn off the empty bit, turn on the color bit.
@@ -146,7 +145,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
     uint8_t c = move.second;
 
     if(!(board[r][c] & EMPTY)){
-        ModelCompare::displayBoardGUI(true, *this);
+        displayBoardGUI(true);
         printMove(move);
     }
     assert(board[r][c] & EMPTY);
@@ -822,4 +821,59 @@ uint8_t Game::getLegalMoveCount() const{
             ret += isLegal(i, j) ? 1 : 0;
     
     return ret;
+}
+
+void Game::displayBoardGUI(bool showScore) const{
+    char display[rowSize][colSize];
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            switch(getBoard({i, j})){
+                case BLACK:
+                    display[i][j] = 'o';
+                    break;
+                case WHITE:
+                    display[i][j] = 'x';
+                    break;
+                case NEUTRAL:
+                    display[i][j] = '+';
+                    break;
+                default:
+                    display[i][j] = '-';
+                    break;
+            }
+
+            if(showScore){
+                switch(getScoreBoard({i, j})){
+                    case BSCORE:
+                        display[i][j] = 'b';
+                        break;
+                    case WSCORE:
+                        display[i][j] = 'w';
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            std::cout << display[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
+
+	// const auto nnInput = PolicyValueNet::getData(game);
+	// int cnt = rowSize * colSize * 18;
+	// for(int i=18; i<=21; ++i){
+	// 	std::cout << "\n channel " << i << "\n";
+		
+	// 	for(int j=0; j<rowSize; ++j){
+	// 		for(int k=0; k<colSize; ++k)
+	// 			std::cout << nnInput[cnt++] << " ";
+	// 		std::cout << "\n";
+	// 	}
+	// }
 }

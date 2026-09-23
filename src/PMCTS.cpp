@@ -14,7 +14,6 @@
 #include <ranges>
 #include <execution>
 
-#include "modelcompare.h"
 
 
 namespace{
@@ -60,7 +59,7 @@ namespace{
         //     static int cntr = 0;
         //     if(cntr++ % 100 == 0){
         //         std::cout << "turn : " << static_cast<int>(node->game_().getTurn()) << std::endl;  
-        //         ModelCompare::displayBoardGUI(true, node->game_());
+        //         node->game_().displayBoardGUI(true);
 
         //         int t = 0;
         //         for(uint8_t i=0U; i<rowSize; ++i){
@@ -145,7 +144,7 @@ namespace{
         // if(globalConfig.detailedStat){
         //     static int cntr = 0;
         //     if(cntr++ % 100 == 0){
-        //         ModelCompare::displayBoardGUI(true, game);
+        //         game.displayBoardGUI(true);
         //         std::cout << "Q : " << winP << "\n";
         //         std::cout << "C : " << captureV[0] - captureV[1] << "\n";
         //         std::cout << "S : " << scoreV << "\n";
@@ -230,7 +229,7 @@ void Node::addChild(const Move& move, int idx){
 
 
 void Node::expand(){
-    //ModelCompare::displayBoardGUI(true, game);
+    //game.displayBoardGUI(true);
     //std::cerr << "Expand called" << std::endl;
 
     expanded = true;
@@ -253,7 +252,7 @@ int Node::selectChildInSearch(){
 
     if(game.getAvailableMoves().empty()){
         std::cerr << N << " " << W << " " << initQ << " " << S << " " << Wp << std::endl;
-        ModelCompare::displayBoardGUI(true, game);
+        game.displayBoardGUI(true);
     }
     assert(!game.getAvailableMoves().empty());
 
@@ -302,7 +301,7 @@ int Node::selectChildInSearch(){
 Move Node::selectMove(float temp){
     //std::cout << "available move size : " << game.getAvailableMoves().size() << std::endl;
     if(forcedState == -1 || forcedState == 1){
-        ModelCompare::displayBoardGUI(true, game);
+        game.displayBoardGUI(true);
         assert(false && "trying to make move on terminated position!");
     }
 
@@ -351,10 +350,11 @@ Move Node::selectMove(float temp){
         return {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
     }
 
+    const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
-        weights[i] = (edgeN[i] - globalConfig.nPlayout / 200 <= 0) ? 0.0f : std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
+        weights[i] = (edgeN[i] - minVisit <= 0) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
@@ -373,7 +373,7 @@ MoveData Node::selectMoveProb(float temp){
     Move selectedMove;
 
     if(forcedState == -1 || forcedState == 1){
-        ModelCompare::displayBoardGUI(true, game);
+        game.displayBoardGUI(true);
         assert(false && "trying to make move on terminated position!");
     }
 
@@ -411,11 +411,12 @@ MoveData Node::selectMoveProb(float temp){
 
     else{
         std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
+        const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
 
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - globalConfig.nPlayout / 200)/(N - globalConfig.nPlayout * game.getAvailableMoves().size() / 200);
+            visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - minVisit)/(N - minVisit * game.getAvailableMoves().size());
             //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-            weights[i] = (edgeN[i] <= globalConfig.nPlayout / 200) ? 0.0f : std::pow(edgeN[i] - globalConfig.nPlayout / 200, temp);
+            weights[i] = (edgeN[i] <= minVisit) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
         }
 
         std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -452,7 +453,7 @@ Node* Node::jump(Move move){
     // for(auto p : game.getAvailableMoves())
     //     std::cerr << static_cast<int>(p.first) << "," << static_cast<int>(p.second) << " ";
     // std::cerr << "node's state : " << std::endl;
-    // ModelCompare::displayBoardGUI(true, game);
+    // game.displayBoardGUI(true);
 
     int moveInt = move.first * colSize + move.second;
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
@@ -483,7 +484,7 @@ void Node::deleteTree(){
     auto it = transposTable->find(hashValue);
     // if(it == transposTable->end()){
     //     std::cerr << "hash : " << hashValue << std::endl;
-    //     ModelCompare::displayBoardGUI(false, this->game);
+    //     this->game.displayBoardGUI(false);
     // }
     assert(it != transposTable->end());
 
@@ -512,7 +513,7 @@ void Node::deleteTree(Node* exception){
     auto it = transposTable->find(hashValue);
     if(it == transposTable->end()){ // should never enter here.
         std::cerr << "hash : " << hashValue << std::endl;
-        ModelCompare::displayBoardGUI(false, this->game);
+        this->game.displayBoardGUI(false);
     }
     assert(it != transposTable->end());
 
@@ -638,8 +639,12 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 }
 
 Move MCTS::getMove(float temp){
+    // spread the total forced visits over the 10 chunks so each child ends up with exactly
+    // minVisits(nPlayout), which is what selectMove subtracts.
+    const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
     for(int i=0; i<10; ++i){
-        runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10, globalConfig.nPlayout / 200);
+        runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
+            minVisit * (i + 1) / 10 - minVisit * i / 10);
         // printVariation();
         const auto& [winProb, scoreEXP] = getEval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
@@ -648,7 +653,7 @@ Move MCTS::getMove(float temp){
 }
 
 MoveData MCTS::getMoveProb(float temp){
-    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, globalConfig.nPlayout / 200);
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, globalConfig.minVisits(globalConfig.nPlayout));
     return root->selectMoveProb(temp);
 }
 

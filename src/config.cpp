@@ -47,6 +47,7 @@ Config loadConfig(const std::string& path) {
     c.nPlayout = M.at("nPlayout");
     c.cPuct     = M.at("cPuct");
     c.temp = M.at("temp");
+    c.minVisitRatio = M.value("minVisitRatio", 0.005f);
 
     // nn
     auto& N = j.at("nn");

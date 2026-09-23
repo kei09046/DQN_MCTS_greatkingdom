@@ -64,7 +64,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 // 		if (winner == EMPTY) {
 // 			if(!player->jump(m)){ // very rare case
 // 				std::cerr << "game manager's state : " << std::endl; 
-// 				ModelCompare::displayBoardGUI(true, game_manager);
+// 				game_manager.displayBoardGUI(true);
 // 				std::cout << std::endl;
 // 				for(const auto& i : sequence){
 // 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
@@ -88,7 +88,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 // 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 // 				}
 // 				std::cout << "\n";
-// 				// ModelCompare::displayBoardGUI(true, game_manager);
+// 				// game_manager.displayBoardGUI(true);
 // 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
 // 			}
 
@@ -181,7 +181,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		if (winner == EMPTY) {
 			if(!player->jump(m)){ // very rare case
 				std::cerr << "game manager's state : " << std::endl; 
-				ModelCompare::displayBoardGUI(true, game_manager);
+				game_manager.displayBoardGUI(true);
 				std::cout << std::endl;
 				for(const auto& i : sequence){
 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
@@ -205,7 +205,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 				}
 				std::cout << "\n";
-				// ModelCompare::displayBoardGUI(true, game_manager);
+				// game_manager.displayBoardGUI(true);
 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
 			}
 

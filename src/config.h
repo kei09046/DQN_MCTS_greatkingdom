@@ -35,6 +35,13 @@ struct Config {
     int nPlayout;
     float cPuct;
     float temp;
+    float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
+
+    // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.
+    int minVisits(int nPlayout) const {
+        if (minVisitRatio <= 0.0f) return 0;
+        return static_cast<int>(nPlayout * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
+    }
 
     //cache
     int tableSize;

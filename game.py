@@ -945,15 +945,18 @@ class Game:
 
         self.sideFrame = Frame(self.root, width=1100, height=900)
         self.sideFrame.pack_propagate(False)
-        self.setupPanel = None
         self.analysisResultPanel = None
+        # The model the toolbar's "Start Engine" button (re)launches the analysis engine with --
+        # see _start_analysis_from_panel. Picking a different one mid-session and pressing it
+        # again swaps engines in place, on whatever position is on the board.
+        models = list_models()
+        self.engine_model_var = StringVar(value=models[0] if models else "")
         # Which field the candidate-move Listbox is currently sorted by, and in which direction --
         # set before the panel is built since _build_search_column's clickable column headers read
         # it to render their initial sort-indicator arrow. See _sorted_candidate_moves/
         # _on_candidate_sort_header_click.
         self.candidate_sort_key = "visits"
         self.candidate_sort_reverse = True
-        self._build_setup_panel()
         self._build_analysis_result_panel()
 
         self.stones = []
@@ -1003,12 +1006,16 @@ class Game:
         # while debug_mode_var is checked. See _on_debug_mode_change / _draw_playout_path_overlay.
         self.playout_log = []
         self.selected_playout_index = None
+        # The pending root.after() id of the poll_analysis loop, so (re)starting the engine can
+        # cancel the old loop instead of stacking a second one on top of it.
+        self._poll_after_id = None
 
         # Every move committed via _commit_move (human click, pass, or engine auto-play) is
         # logged here regardless of session state -- see _commit_move and _save_session_game.
         # Only ever written to matches/ if session_used_engine ends up true for the game (i.e.
         # a live analysis session -- see start_session -- touched it at some point); a pure
-        # "New Local Game" leaves this accumulating harmlessly but unsaved. Kept in lock-step
+        # local game (no engine ever started since "Clear Board") leaves this accumulating
+        # harmlessly but unsaved. Kept in lock-step
         # with self.rule.seq (same length, same moves) at all times -- see _commit_move's
         # divergence-truncation -- so it doubles as "the move list to browse" in the Moves tab
         # (see _current_moves_list) whenever no recorded game is loaded for reference.
@@ -1041,76 +1048,25 @@ class Game:
         self.game_over_ply = None
         self.game_over_text = None
 
-    def _build_setup_panel(self):
-        panel = Frame(self.sideFrame)
-        self.setupPanel = panel
+    def _build_model_row(self, parent, model_var, models, pady=(0, 10)):
+        """The Label(current model)+"Choose..." row shared by every model picker in the UI
+        (the session toolbar and the Engine vs Engine dialog's two engine columns) -- one
+        definition so they all stay visually identical and any future tweak (like the fixed
+        width below) only needs making once.
+        """
+        model_row = Frame(parent)
+        model_row.pack(fill=X, pady=pady)
+        # Bounded width (not fill=X/expand=True) on purpose: an expanding label eats every
+        # leftover pixel in the row, leaving the button flush against the column's right
+        # edge with zero margin -- fine in this measured layout, but a font-metric/DPI
+        # difference on a real display is enough to clip it. A fixed width leaves slack.
+        Label(model_row, textvariable=model_var, anchor="w", width=14,
+              relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X)
+        Button(model_row, text="Choose...",
+               command=lambda: self._open_model_picker(model_var)).pack(side=LEFT, padx=(5, 0))
+        return model_row
 
-        Label(panel, text="Great Kingdom", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 15))
-
-        Label(panel, text="Start a session", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
-        Label(panel, text="Analyze the current position, and optionally have\n"
-                          "the engine play one or both sides. You can flip who's\n"
-                          "playing which color at any time from the session panel.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(4, 10))
-
-        models = list_models()
-        Label(panel, text="Model:", anchor="w").pack(fill=X, pady=(0, 0))
-        self.setup_model_var = StringVar(value=models[0] if models else "")
-        if models:
-            model_row = Frame(panel)
-            model_row.pack(fill=X, pady=(0, 10))
-            # Bounded width (not fill=X/expand=True) on purpose: an expanding label eats every
-            # leftover pixel in the row, leaving the button flush against the column's right
-            # edge with zero margin -- fine in this measured layout, but a font-metric/DPI
-            # difference on a real display is enough to clip it. A fixed width leaves slack.
-            Label(model_row, textvariable=self.setup_model_var, anchor="w", width=14,
-                  relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X)
-            Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
-        else:
-            Label(panel, text=f"(no .pt files found in {MODELS_DIR})", fg="red",
-                  wraplength=260, justify=LEFT, anchor="w").pack(fill=X, pady=(0, 10))
-
-        Label(panel, text="Engine plays:", anchor="w").pack(fill=X)
-        self.setup_color_var = StringVar(value="analysis")
-        Radiobutton(panel, text="Black (you play White)", variable=self.setup_color_var,
-                    value="engine_black", anchor="w").pack(fill=X)
-        Radiobutton(panel, text="White (you play Black)", variable=self.setup_color_var,
-                    value="engine_white", anchor="w").pack(fill=X)
-        Radiobutton(panel, text="Neither -- analysis only", variable=self.setup_color_var,
-                    value="analysis", anchor="w").pack(fill=X)
-
-        self.start_session_button = Button(panel, text="Start Session", command=self.start_session)
-        self.start_session_button.pack(fill=X, pady=(15, 0))
-        if not models:
-            self.start_session_button.configure(state=DISABLED)
-
-        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
-
-        Label(panel, text="No engine: the board is free to\nplay locally, move by move.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
-        Button(panel, text="New Local Game", command=self.reset_board).pack(fill=X)
-
-        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
-
-        Label(panel, text="Play two independently-configured engines\nagainst each other for a number of games,\n"
-                          "recording every move, evaluation, and result.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
-        match_button = Button(panel, text="Engine vs Engine Match...", command=self._open_match_dialog)
-        match_button.pack(fill=X)
-        if not models:
-            match_button.configure(state=DISABLED)
-
-        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=20)
-
-        Label(panel, text="Load a previously played game -- an\n"
-                          "auto-saved human/engine game, or one game\n"
-                          "out of a saved engine match -- into the\n"
-                          "Analysis window's Moves tab, for move-by-\n"
-                          "move review and analysis with any engine.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(0, 10))
-        Button(panel, text="Load Game...", command=self._open_load_game_dialog).pack(fill=X)
-
-    def _open_model_picker(self):
+    def _open_model_picker(self, model_var):
         models = list_models()
         if not models:
             return
@@ -1135,7 +1091,7 @@ class Game:
         for m in models:
             listbox.insert(END, m)
 
-        current = self.setup_model_var.get()
+        current = model_var.get()
         if current in models:
             idx = models.index(current)
             listbox.selection_set(idx)
@@ -1144,7 +1100,7 @@ class Game:
         def choose(event=None):
             sel = listbox.curselection()
             if sel:
-                self.setup_model_var.set(models[sel[0]])
+                model_var.set(models[sel[0]])
             picker.destroy()
 
         listbox.bind("<Double-Button-1>", choose)
@@ -1162,14 +1118,44 @@ class Game:
         "Moves" column (_build_moves_tab -- the former standalone "Load Game" window's
         move-list/navigation, now living alongside the rest instead of as a separate panel/
         dialog -- see _load_game_for_reference and _jump_to_ply), all three side by side so
-        nothing needs clicking through to see another. "End Session / Back to Setup" sits above
-        all three, spanning the full width.
+        nothing needs clicking through to see another. This is the only side panel -- the app
+        opens straight into it -- so a toolbar above all three columns carries everything the
+        old setup lobby offered: Clear Board / Engine vs Engine Match / Load Game, and the
+        engine model picker with its Start Engine button, usable at any time to start or swap
+        the engine on the position currently on the board.
         """
         panel = Frame(self.sideFrame)
         self.analysisResultPanel = panel
+        models = list_models()
 
-        Label(panel, text="Session", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 10))
-        Button(panel, text="End Session / Back to Setup", command=self.end_analysis_mode).pack(fill=X, pady=(0, 10))
+        Label(panel, text="Great Kingdom", font=("Helvetica", 16, "bold")).pack(anchor="w", pady=(0, 10))
+
+        actions_row = Frame(panel)
+        actions_row.pack(fill=X, pady=(0, 8))
+        Button(actions_row, text="Clear Board", command=self.reset_board).pack(side=LEFT)
+        match_button = Button(actions_row, text="Engine vs Engine Match...", command=self._open_match_dialog)
+        match_button.pack(side=LEFT, padx=(8, 0))
+        if not models:
+            match_button.configure(state=DISABLED)
+        Button(actions_row, text="Load Game...", command=self._open_load_game_dialog).pack(side=LEFT, padx=(8, 0))
+
+        engine_row = Frame(panel)
+        engine_row.pack(fill=X, pady=(0, 10))
+        Label(engine_row, text="Engine model:").pack(side=LEFT)
+        if models:
+            model_holder = Frame(engine_row)
+            model_holder.pack(side=LEFT, padx=(5, 0))
+            self._build_model_row(model_holder, self.engine_model_var, models, pady=0)
+        else:
+            Label(engine_row, text=f"(no .pt files found in {MODELS_DIR})", fg="red").pack(side=LEFT, padx=(5, 0))
+        self.startEngineButton = Button(engine_row, text="Start Engine", command=self._start_analysis_from_panel)
+        self.startEngineButton.pack(side=LEFT, padx=(8, 0))
+        if not models:
+            self.startEngineButton.configure(state=DISABLED)
+        self.engineStatusLabel = Label(engine_row, text="", fg="#555555", anchor="w")
+        self.engineStatusLabel.pack(side=LEFT, padx=(10, 0))
+
+        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=(0, 10))
 
         columns_row = Frame(panel)
         columns_row.pack(fill=BOTH, expand=True)
@@ -1367,15 +1353,13 @@ class Game:
     def _build_moves_tab(self, panel):
         """The former standalone "Load Game for Review" window's content, now a tab of the
         merged Analysis window: an optional loaded game's info, position navigation, the move
-        table itself (see _update_moves_tab for the B eval/W eval/Current eval convention), and
-        a way to attach a live engine at whatever position is currently shown -- reusing
-        start_session exactly as the setup panel's own "Start Session" does.
+        table itself (see _update_moves_tab for the B eval/W eval/Current eval convention).
+        Loading a game and starting the engine live in the toolbar above all three columns --
+        see _build_analysis_result_panel.
         """
         self.movesInfoLabel = Label(panel, text="", font=("Helvetica", 11), anchor="w",
                                      wraplength=260, justify=LEFT)
         self.movesInfoLabel.pack(fill=X, pady=(10, 8))
-
-        Button(panel, text="Load Game...", command=self._open_load_game_dialog).pack(fill=X, pady=(0, 8))
 
         nav_row = Frame(panel)
         nav_row.pack(fill=X, pady=(0, 2))
@@ -1406,37 +1390,8 @@ class Game:
         self.movesTree.pack(side=LEFT, fill=BOTH, expand=True)
         self.movesTree.bind("<<TreeviewSelect>>", self._on_moves_tree_select)
 
-        Frame(panel, height=1, bg="#999999").pack(fill=X, pady=10)
-
-        Label(panel, text="Start analyzing this position:", font=("Helvetica", 11, "bold"),
-              anchor="w").pack(fill=X)
-        Label(panel, text="With any engine you like -- not necessarily the one(s) that played\n"
-                          "a loaded game, if one is loaded.",
-              wraplength=260, justify=LEFT, fg="#555555", anchor="w").pack(fill=X, pady=(2, 8))
-
-        model_row = Frame(panel)
-        model_row.pack(fill=X, pady=(0, 8))
-        # See the matching model_row in _build_setup_panel for why this is a bounded width
-        # instead of fill=X/expand=True -- this column is the narrowest of the three
-        # (moves_col), so an expanding label here is what was pinning "Choose..." flush
-        # against the column edge and clipping it on some displays.
-        Label(model_row, textvariable=self.setup_model_var, anchor="w", width=14,
-              relief=SUNKEN, bg="white", padx=5).pack(side=LEFT, fill=X)
-        Button(model_row, text="Choose...", command=self._open_model_picker).pack(side=LEFT, padx=(5, 0))
-
-        models = list_models()
-        self.moves_analyze_button = Button(panel, text="Start Analyzing", command=self._start_analysis_from_panel)
-        self.moves_analyze_button.pack(fill=X)
-        if not models:
-            self.moves_analyze_button.configure(state=DISABLED)
-
-    def _show_panel(self, panel):
-        for p in (self.setupPanel, self.analysisResultPanel):
-            p.pack_forget()
-        panel.pack(fill=BOTH, expand=True)
-
     def start(self):
-        """Open the main window with a freely playable board and the setup panel."""
+        """Open the main window with a freely playable board and the session panel."""
         self.boardFrame.grid(row=0, column=0, sticky="n")
         self.sideFrame.grid(row=0, column=1, sticky="n", padx=20, pady=20)
         self.canvas.pack()
@@ -1465,7 +1420,8 @@ class Game:
         self.canvas.bind("<Button-1>", self.on_click)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self._show_panel(self.setupPanel)
+        self.analysisResultPanel.pack(fill=BOTH, expand=True)
+        self._update_engine_status()
         self._update_status()
 
     def _draw_star_points(self):
@@ -1690,13 +1646,13 @@ class Game:
         self.debugListbox.delete(0, END)
 
     def reset_board(self):
-        """Clear the board, end any live session, and start a fresh local (no engine) game."""
+        """"Clear Board": clear the board, stop any running engine, and start a fresh local (no
+        engine) game -- "Start Engine" attaches one again whenever wanted."""
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
         self.canvas.delete("stone")
-        self.canvas.delete("move_overlay")
-        self.last_analysis_result = None
+        self._clear_analysis_display()
         self.analysis_turn_base_visits = 0
         self.analysis_turn_requested = 0
         self.selected_variation_move = None
@@ -1722,25 +1678,52 @@ class Game:
         self.game_over_ply = None
         self.game_over_text = None
         self.statusLabel.configure(text="")
-        self._show_panel(self.setupPanel)
+        self._update_engine_status()
         self._update_status()
         self._update_moves_tab()
 
+    def _clear_analysis_display(self):
+        """Blanks every piece of the panel that shows a streamed analysis result (board
+        overlay, candidate list, stat labels) -- needed now that the session panel stays up
+        permanently instead of being swapped out for the setup lobby whenever the engine went
+        away, which is what used to hide stale results."""
+        self.canvas.delete("move_overlay")
+        self.last_analysis_result = None
+        self.selected_variation_move = None
+        self.analysisListbox.delete(0, END)
+        self.analysisWinrateLabel.configure(text="Win probability: -")
+        self.analysisInitQLabel.configure(text="Initial value (initQ): -")
+        self.analysisScoreExpLabel.configure(text="Score head (initial): -")
+        self.analysisScoreSearchLabel.configure(text="Score head (search): -")
+        self.analysisValueMSELabel.configure(text="Value MSE loss: -")
+        self.analysisPolicyCELabel.configure(text="Policy CE loss: -")
+        self.analysisVisitsLabel.configure(text="Visits: -")
+
+    def _update_engine_status(self):
+        """Toolbar text next to "Start Engine": which model (if any) is currently running, and
+        the button's label -- "Restart Engine" once one is live, since pressing it again swaps
+        in whatever model is currently picked on the same position."""
+        if self.analysis_mode and self.analysisEngine is not None:
+            self.engineStatusLabel.configure(text=f"Running: {self.session_model}")
+            self.startEngineButton.configure(text="Restart Engine")
+        else:
+            self.engineStatusLabel.configure(text="No engine running")
+            self.startEngineButton.configure(text="Start Engine")
+
     def start_session(self, model=None):
-        """Launch (or restart) the analysis engine on the position currently on the board,
-        and set which side(s) -- if any -- it auto-plays for, per the setup panel's choice.
-        Since this doesn't clear the board first, it doubles as both "analyze this position"
-        and "play a game against the engine from here"; which one it feels like is entirely
-        down to the Engine plays checkboxes, freely changeable afterwards from the session
-        panel without ending the session. Also reachable from the Moves tab
-        (_start_analysis_from_panel), where self.rule already holds whatever position was being
-        browsed (possibly review_mode-locked to a loaded game) -- game_over is reset
+        """Launch (or restart, possibly with a different model) the analysis engine on the
+        position currently on the board. Since this doesn't clear the board first, it doubles as
+        both "analyze this position" and "play a game against the engine from here"; which one it
+        feels like is entirely down to the Engine plays checkboxes, which are left exactly as
+        they are and stay freely changeable at any time. Reached via the toolbar's Start Engine
+        button (_start_analysis_from_panel), where self.rule already holds whatever position is
+        being browsed (possibly review_mode-locked to a loaded game) -- game_over is reset
         unconditionally since browsing can leave it set for a finished game's last position, and
         position_eval_log is cleared since a freshly (re)started engine's opinions of positions
         shouldn't mix with whatever an earlier engine/session already recorded there.
         """
         if model is None:
-            model = self.setup_model_var.get()
+            model = self.engine_model_var.get()
         if not model:
             return
 
@@ -1754,20 +1737,15 @@ class Game:
         self.game_over = False
         self.position_eval_log = {}
 
-        if not self.review_mode:
-            # A loaded/locked game never auto-plays (see _is_engine_turn) regardless of these --
-            # leave them (and whatever a prior, unrelated session set them to) alone rather than
-            # re-deriving from the setup panel's choice, which wasn't made with this game in mind.
-            choice = self.setup_color_var.get()
-            self.engine_plays_black_var.set(choice == "engine_black")
-            self.engine_plays_white_var.set(choice == "engine_white")
-
+        self._clear_analysis_display()
         self._sync_analysis_position()
 
-        self._show_panel(self.analysisResultPanel)
+        self._update_engine_status()
         self._update_status()
         self._update_moves_tab()
-        self.root.after(100, self.poll_analysis)
+        if self._poll_after_id is not None:
+            self.root.after_cancel(self._poll_after_id)
+        self._poll_after_id = self.root.after(100, self.poll_analysis)
 
     def _sync_analysis_position(self):
         """Replay the current game's move sequence into the analysis engine, then leave it
@@ -1847,19 +1825,8 @@ class Game:
             self.analysisPauseButton.configure(text="Resume")
             self.analysisEngine.send_pause()
 
-    def end_analysis_mode(self):
-        self.analysis_mode = False
-        self.engine_plays_black_var.set(False)
-        self.engine_plays_white_var.set(False)
-        if self.analysisEngine is not None:
-            self.analysisEngine.close()
-            self.analysisEngine = None
-        self.canvas.delete("move_overlay")
-        self.last_analysis_result = None
-        self._reset_debug_mode()
-        self._show_panel(self.setupPanel)
-
     def poll_analysis(self):
+        self._poll_after_id = None
         # game_over is ignored while browsing a loaded game (review_mode): _jump_to_ply can
         # leave it set (or stale) for that game's final position, but analysis on a loaded game
         # should keep running regardless of where in its history is currently being viewed.
@@ -1888,7 +1855,7 @@ class Game:
         if got_playout and self.debug_mode_var.get():
             self._update_debug_listbox()
         if self.analysis_mode and not self.game_over:
-            self.root.after(200, self.poll_analysis)
+            self._poll_after_id = self.root.after(200, self.poll_analysis)
 
     def _on_overlay_mode_change(self):
         if self.last_analysis_result is not None:
@@ -2423,7 +2390,7 @@ class Game:
             col = Frame(parent, padx=10)
             Label(col, text=label, font=("Helvetica", 11, "bold")).pack(anchor="w")
             model_var = StringVar(value=models[0])
-            OptionMenu(col, model_var, *models).pack(fill=X, pady=(2, 6))
+            self._build_model_row(col, model_var, models, pady=(2, 6))
             Label(col, text="Playouts:", anchor="w").pack(fill=X)
             playouts_var = StringVar(value="800")
             Entry(col, textvariable=playouts_var, width=10).pack(anchor="w", pady=(0, 6))
@@ -2648,9 +2615,8 @@ class Game:
     def _open_load_game_dialog(self):
         """Entry point for loading any previously recorded game -- an auto-saved human/engine
         session (see _save_session_game) or one game out of a saved engine-match file (see
-        MatchRunner) -- as the Moves tab's reference data (_load_game_for_reference). Reachable
-        both from the setup panel (nothing running yet) and from the Moves tab itself (to swap
-        in a different game mid-session). Distinct from the live match dialog's own
+        MatchRunner) -- as the Moves tab's reference data (_load_game_for_reference), from the
+        toolbar's Load Game button, with or without an engine running. Distinct from the live match dialog's own
         double-click-to-load (_load_match_game_from_dialog): this one reads back off disk, so it
         also reaches games from past sessions of the program, not just the current one.
         """
@@ -2731,7 +2697,7 @@ class Game:
         into. If a live analysis session is already running, it's kept (and resynced to the new
         position by _jump_to_ply below) rather than closed, so swapping which game is being
         browsed mid-session doesn't interrupt analysis; if none is running yet, the board/rule
-        are simply rebuilt and the B/W columns show up immediately, ready for "Start Analyzing"
+        are simply rebuilt and the B/W columns show up immediately, ready for "Start Engine"
         (with any model) whenever you like.
         """
         self.engine_plays_black_var.set(False)
@@ -2742,18 +2708,16 @@ class Game:
         self.review_record = record
         self.review_moves = [mv["move"] for mv in record.get("moves", [])]
 
-        self._show_panel(self.analysisResultPanel)
         self._jump_to_ply(len(self.review_moves))
 
     def _start_analysis_from_panel(self):
-        """"Start Analyzing" in the Moves tab: attaches a live engine (self.setup_model_var,
-        shared with the setup panel's own model picker) at whatever position is currently on the
-        board -- typically reached right after loading a game for reference
-        (_load_game_for_reference) and jumping to whichever of its positions is of interest, but
-        works the same with no game loaded too (equivalent to the setup panel's own "Start
-        Session", just reachable from inside an already-open Analysis window).
+        """The toolbar's "Start Engine"/"Restart Engine" button: attaches a live engine
+        (self.engine_model_var, the toolbar's model picker) at whatever position is currently on
+        the board, replacing any engine already running -- so changing the model and pressing it
+        again is how engines get swapped mid-session. Works the same with or without a loaded
+        game (_load_game_for_reference).
         """
-        model = self.setup_model_var.get()
+        model = self.engine_model_var.get()
         if not model:
             return
         self.start_session(model)
@@ -2952,6 +2916,11 @@ class Game:
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
+        # With the engine gone the session is over too -- otherwise analysis_mode would keep
+        # claiming a live engine (e.g. _commit_move after jumping back would call send_play on
+        # None) and the toolbar would still show it as running.
+        self.analysis_mode = False
+        self._update_engine_status()
 
     def _save_session_game(self, winner_color, margin, by):
         """Auto-saves a finished game that had a live analysis session at some point -- human vs
@@ -2959,7 +2928,7 @@ class Game:
         session_used_engine, set by start_session) -- to matches/, in the same per-move record
         shape MatchRunner's match files use (see MatchRunner._run), so both the engine-match
         dialog's loader and _open_load_game_dialog/_load_game_for_reference work on either source
-        uniformly. A pure "New Local Game" (no session ever started) isn't saved -- there's no
+        uniformly. A pure local game (no engine started since "Clear Board") isn't saved -- there's no
         evaluation data worth keeping, and that mode is meant to stay a throwaway scratch board.
         """
         if not self.session_used_engine or not self.session_move_log:

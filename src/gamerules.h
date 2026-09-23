@@ -78,6 +78,9 @@ public:
 
     std::pair<Move, int> tacticCheck() const;
 
+    // print the board to stdout. If showScore is set, territory is shown as 'b' / 'w'.
+    void displayBoardGUI(bool showScore) const;
+
     inline float scoreDiff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
         return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
