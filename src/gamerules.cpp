@@ -346,7 +346,7 @@ std::pair<Move, int> Game::tacticCheck() const{
         }
     }
 
-    if(threat == RESIGNMOVE)
+    if(tactic == RESIGNMOVE)
         return {RESIGNMOVE, 0};
 
     // check if playing at threat would extend it's liberties

@@ -354,6 +354,7 @@ Move Node::selectMove(float temp){
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
+        assert((forcedState != 0 || edgeN[i] >= minVisit) && "root child visited less than minVisit");
         weights[i] = (edgeN[i] - minVisit <= 0) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -414,6 +415,7 @@ MoveData Node::selectMoveProb(float temp){
         const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
 
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
+            assert((forcedState != 0 || edgeN[i] >= minVisit) && "root child visited less than minVisit");
             visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - minVisit)/(N - minVisit * game.getAvailableMoves().size());
             //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
             weights[i] = (edgeN[i] <= minVisit) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
