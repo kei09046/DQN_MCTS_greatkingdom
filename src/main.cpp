@@ -64,7 +64,8 @@ int main(int argc, char** argv) {
         float temp = std::stof(argv[4]); // < 1.0f
         int n_games = std::stoi(argv[5]);
         int n_threads = std::stoi(argv[6]);
-        float winRate = ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, true, true, temp, n_games, n_threads);
+        float winRate = ModelCompare::policy_evaluate(target, compare, std::cout, std::cout, true, true, temp, n_games, n_threads,
+            {globalConfig.engineParams(0), globalConfig.engineParams(1)});
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){
@@ -76,7 +77,10 @@ int main(int argc, char** argv) {
 
         int n_games = std::stoi(argv[2 + n_models]);
         float temp = std::stof(argv[3 + n_models]); // < 1.0f
-        ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games);
+        std::vector<SearchParams> params;
+        for(int i=0; i<n_models; ++i)
+            params.push_back(globalConfig.engineParams(i));
+        ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games, params);
     }
     else if(mod == "test_hash"){
         Hash hash;

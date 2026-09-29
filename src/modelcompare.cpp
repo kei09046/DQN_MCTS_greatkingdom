@@ -7,6 +7,13 @@
 #include "elo.h"
 #include "analysis.hpp"
 
+namespace{
+	// search params of idx-th engine; global config values if not given.
+	SearchParams paramsOf(const std::vector<SearchParams>& params, int idx){
+		return (idx < static_cast<int>(params.size())) ? params[idx] : globalConfig.searchParams();
+	}
+}
+
 
 float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
 	// if(is_shown)
@@ -160,7 +167,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 				// minVisitRatio of this call's own playout budget, same ratio MCTS::getMove uses
 				// -- e.g. n == chunk == 400 with minVisitRatio 0.005 gives 2 forced playouts
 				// per child every chunk.
-				player.runSimulation(PLAYOUT, n, 0, globalConfig.minVisits(n));
+				player.runSimulation(PLAYOUT, n, 0, player.searchParams().minVisits(n));
 				analysis.printAnalysis(player);
 				ranAny = true;
 
@@ -370,14 +377,14 @@ std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
 }
 
 float ModelCompare::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
-	bool gpu, float temp, int n_games, int n_thread) {
+	bool gpu, float temp, int n_games, int n_thread, const std::vector<SearchParams>& params) {
 	auto eo = new Evaluator(globalConfig.modelPath + mod_one, gpu);
 	auto et = new Evaluator(globalConfig.modelPath + mod_two, gpu);
 	std::vector<MCTS*> base_players, oppo_players;
 
 	for(int i=0; i<n_thread; ++i){
-		base_players.push_back(new MCTS(eo));
-		oppo_players.push_back(new MCTS(et));
+		base_players.push_back(new MCTS(eo, paramsOf(params, 0)));
+		oppo_players.push_back(new MCTS(et, paramsOf(params, 1)));
 	}
 
 	std::vector<std::thread> evaluate_threads;
@@ -404,14 +411,14 @@ float ModelCompare::policy_evaluate(const std::string& mod_one, const std::strin
 }
 
 std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_list,
-	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games) {
+	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games, const std::vector<SearchParams>& params) {
 	int N = model_list.size();
 	std::vector<MCTS*> players(N);
 	std::vector<Evaluator*> evaluators(N);
 
 	for (int i = 0; i < N; ++i) {
 		evaluators[i] = new Evaluator(globalConfig.modelPath + model_list[i], gpu);
-		players[i] = new MCTS(evaluators[i]);
+		players[i] = new MCTS(evaluators[i], paramsOf(params, i));
 	}
 
 	bool load_from_file = false;

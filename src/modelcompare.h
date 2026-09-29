@@ -28,11 +28,14 @@ public:
 	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
 		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
 
+	// params[i] : search params (fpu, minVisitRatio) of i-th engine. Engines without an entry use the global config values.
 	static float policy_evaluate(const std::string& mod_one, const std::string& mod_two, 
-		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 96, int n_thread=16);
+		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 96, int n_thread=16,
+		const std::vector<SearchParams>& params = {});
 
 	static std::vector<float> policy_evaluate(std::vector<std::string> model_list, // return list of elo
-		std::ostream& total_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100);
+		std::ostream& total_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100,
+		const std::vector<SearchParams>& params = {});
 
 	
 private:

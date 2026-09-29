@@ -49,6 +49,12 @@ Config loadConfig(const std::string& path) {
     c.temp = M.at("temp");
     c.minVisitRatio = M.value("minVisitRatio", 0.005f);
 
+    // per-engine overrides (optional). Missing fields fall back to the global values above.
+    if (j.contains("engines")) {
+        for (auto& E : j.at("engines"))
+            c.engines.push_back({E.value("FPU", c.fpu), E.value("minVisitRatio", c.minVisitRatio)});
+    }
+
     // nn
     auto& N = j.at("nn");
     c.batchSize    = N.at("batchSize");

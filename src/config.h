@@ -4,6 +4,18 @@
 #include <vector>
 #include <utility>
 
+// search options that can differ between engines (e.g. two engines in evaluate_two / evaluate_multi).
+struct SearchParams {
+    float fpu;
+    float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
+
+    // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.
+    int minVisits(int nPlayout) const {
+        if (minVisitRatio <= 0.0f) return 0;
+        return static_cast<int>(nPlayout * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
+    }
+};
+
 struct Config {
     // features
     bool transTable;
@@ -37,10 +49,20 @@ struct Config {
     float temp;
     float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
 
-    // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.
+    // per-engine overrides of fpu / minVisitRatio, read from "engines" in the config. Index = engine order.
+    std::vector<SearchParams> engines;
+
+    SearchParams searchParams() const {
+        return {fpu, minVisitRatio};
+    }
+
+    // search params for engine idx; falls back to the global values if no override is given.
+    SearchParams engineParams(int idx) const {
+        return (idx < static_cast<int>(engines.size())) ? engines[idx] : searchParams();
+    }
+
     int minVisits(int nPlayout) const {
-        if (minVisitRatio <= 0.0f) return 0;
-        return static_cast<int>(nPlayout * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
+        return searchParams().minVisits(nPlayout);
     }
 
     //cache

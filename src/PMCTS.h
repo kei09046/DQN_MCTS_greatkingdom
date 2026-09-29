@@ -22,9 +22,9 @@ class alignas(64) Node{
 public:
     Node(const Game& g, const HashValue hashValue, TransTable* const transposTable);
 
-    Move selectMove(float temperature);
+    Move selectMove(float temperature, int minVisit);
 
-    MoveData selectMoveProb(float temperature);
+    MoveData selectMoveProb(float temperature, int minVisit);
 
     Node* jump(Move move);
 
@@ -63,13 +63,13 @@ private:
 
     void expand();
 
-    int selectChildInSearch();
+    int selectChildInSearch(float fpu);
 };
 
 
 class alignas(64) MCTS{
 public:
-    MCTS(Evaluator* evaluator);
+    MCTS(Evaluator* evaluator, SearchParams params = globalConfig.searchParams());
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
@@ -100,6 +100,10 @@ public:
         return static_cast<int>(root->N);
     }
 
+    inline const SearchParams& searchParams() const{
+        return params;
+    }
+
     // Associates this MCTS instance with the Analysis object that owns debug-mode state (see
     // Analysis::debugMode in analysis.hpp) -- purely so playout()/updateEval() below can reach
     // it for the debug-line streaming they do mid-search (see printPlayoutDebugLine's own
@@ -122,6 +126,7 @@ private:
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
     TransTable* transposTable;
+    SearchParams params; // fpu / minVisitRatio used by this instance.
 
     // Non-owning; null unless attachAnalysis() was called (see above). Only playout()/updateEval()
     // below read this, to stream debug lines through it mid-search -- everything else Analysis

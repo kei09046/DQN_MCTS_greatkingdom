@@ -245,7 +245,7 @@ void Node::expand(){
     #endif
 }
 
-int Node::selectChildInSearch(){
+int Node::selectChildInSearch(float fpu){
     int maxi = -1;
     float pref, maxval = -1000.0f; // pref may be less than -1.(due to score head)
     bool lost = true;
@@ -258,7 +258,7 @@ int Node::selectChildInSearch(){
 
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
         if(child[i] == nullptr){
-            pref = ((globalConfig.fpu < 0.0f) ? 0.0f : -W/valueN()-globalConfig.fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
+            pref = ((fpu < 0.0f) ? 0.0f : -W/valueN()-fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
             lost = false;
         }
 
@@ -298,7 +298,7 @@ int Node::selectChildInSearch(){
     return maxi;
 }
 
-Move Node::selectMove(float temp){
+Move Node::selectMove(float temp, int minVisit){
     //std::cout << "available move size : " << game.getAvailableMoves().size() << std::endl;
     if(forcedState == -1 || forcedState == 1){
         game.displayBoardGUI(true);
@@ -336,7 +336,6 @@ Move Node::selectMove(float temp){
         return {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
     }
 
-    const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
@@ -360,7 +359,7 @@ Move Node::selectMove(float temp){
 }
 
 
-MoveData Node::selectMoveProb(float temp){
+MoveData Node::selectMoveProb(float temp, int minVisit){
     std::vector<float> visitPortion(outputSize, 0.0f);
     Move selectedMove;
 
@@ -405,7 +404,6 @@ MoveData Node::selectMoveProb(float temp){
 
     else{
         std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
-        const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
 
         // visits above minVisit. Proven losing moves get no minimum visits (see MCTS::runSimulation) and count as 0.
         std::vector<float> counted(game.getAvailableMoves().size());
@@ -559,8 +557,8 @@ void Node::addDirichletNoise(Evaluator* evaluator){
     }
 }
 
-MCTS::MCTS(Evaluator* evaluator) : 
-evaluator(evaluator), transposTable(new TransTable()){
+MCTS::MCTS(Evaluator* evaluator, SearchParams params) : 
+evaluator(evaluator), transposTable(new TransTable()), params(params){
     root = new Node(Game(), hash.baseHash(), transposTable);
     if(globalConfig.transTable){
         transposTable->emplace(hash.baseHash(), std::make_pair(root, 1));
@@ -568,7 +566,7 @@ evaluator(evaluator), transposTable(new TransTable()){
 }
 
 MCTS::MCTS(MCTS&& other) noexcept
-    : root(other.root), evaluator(other.evaluator), transposTable(other.transposTable)
+    : root(other.root), evaluator(other.evaluator), transposTable(other.transposTable), params(other.params)
 {
     other.root = nullptr;
     other.evaluator = nullptr;
@@ -660,7 +658,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 Move MCTS::getMove(float temp){
     // spread the total forced visits over the 10 chunks so each child ends up with exactly
     // minVisits(nPlayout), which is what selectMove subtracts.
-    const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
+    const int minVisit = params.minVisits(globalConfig.nPlayout);
     for(int i=0; i<10; ++i){
         runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
             minVisit * (i + 1) / 10 - minVisit * i / 10);
@@ -668,12 +666,13 @@ Move MCTS::getMove(float temp){
         const auto& [winProb, scoreEXP] = getEval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
     }
-    return root->selectMove(temp);
+    return root->selectMove(temp, minVisit);
 }
 
 MoveData MCTS::getMoveProb(float temp){
-    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, globalConfig.minVisits(globalConfig.nPlayout));
-    return root->selectMoveProb(temp);
+    const int minVisit = params.minVisits(globalConfig.nPlayout);
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
+    return root->selectMoveProb(temp, minVisit);
 }
 
 std::pair<float, float> MCTS::getEval(){
@@ -773,7 +772,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 }
             }
             else
-                a = cur->selectChildInSearch(); // assume node is evaluated
+                a = cur->selectChildInSearch(params.fpu); // assume node is evaluated
 
             childIdx.push_back(a);
             cur = cur->child[a];
