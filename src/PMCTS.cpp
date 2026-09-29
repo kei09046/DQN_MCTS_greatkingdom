@@ -450,10 +450,6 @@ Node* Node::jump(Move move){
     if(!expanded){
         expand();
     }
-    // expand() leaves child empty on a forced node (e.g. a proven win); still allow jumping to one of its moves.
-    if(child.size() < game.getAvailableMoves().size()){
-        child.resize(game.getAvailableMoves().size(), nullptr);
-    }
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
