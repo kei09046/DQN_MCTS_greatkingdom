@@ -450,6 +450,10 @@ Node* Node::jump(Move move){
     if(!expanded){
         expand();
     }
+    // expand() leaves child empty on a forced node (e.g. a proven win); still allow jumping to one of its moves.
+    if(child.size() < game.getAvailableMoves().size()){
+        child.resize(game.getAvailableMoves().size(), nullptr);
+    }
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
@@ -602,20 +606,44 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         //     std::cerr << m/colSize << m%colSize << " ";
         // std::cerr << std::endl;
 
-        for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
-            for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
+        if(minSearchPerChild > 0 && root->forcedState == 0){
+            // returns false if child j should not get minimum visits. Marks root as won if child j is a proven loss for opponent.
+            auto needsVisit = [&](int j){
                 const Node* c = root->child[j];
                 // winning move found: root is proven won, same as selectChildInSearch would mark it.
                 if(c != nullptr && c->forcedState < 0){
                     root->forcedState = -c->forcedState + 1;
-                    break;
+                    return false;
                 }
                 // proven losing move: don't spend minimum visits on it (selectMove/selectMoveProb ignore it).
-                if(c != nullptr && c->forcedState > 0)
-                    continue;
-                playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
-                playMode, timeLimit, j);
+                return !(c != nullptr && c->forcedState > 0);
+            };
+
+            const std::vector<float> initialN = root->edgeN;
+            for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
+                for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
+                    if(needsVisit(j))
+                        playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+                        playMode, timeLimit, j);
+                }
             }
+
+            // a playout call may not reach its child: it returns early when its path meets a node still in evaluation,
+            // and the following call only flushes pending evaluations. Keep going over the children that fell short.
+            bool shortfall = true;
+            while(shortfall && root->forcedState == 0){
+                shortfall = false;
+                for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
+                    if(root->edgeN[j] < initialN[j] + minSearchPerChild && needsVisit(j)){
+                        shortfall = true;
+                        playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
+                        playMode, timeLimit, j);
+                    }
+                }
+            }
+
+            if(root->forcedState == 0)
+                rootMinVisits += minSearchPerChild;
         }
         // std::cerr << "second phase done" << std::endl;
         while(search_counter < nPlayout && (root->forcedState == 0)){
@@ -657,7 +685,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 
 Move MCTS::getMove(float temp){
     // spread the total forced visits over the 10 chunks so each child ends up with exactly
-    // minVisits(nPlayout), which is what selectMove subtracts.
+    // minVisits(nPlayout). runSimulation counts them in rootMinVisits, which is what selectMove subtracts.
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     for(int i=0; i<10; ++i){
         runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
@@ -666,13 +694,17 @@ Move MCTS::getMove(float temp){
         const auto& [winProb, scoreEXP] = getEval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
     }
-    return root->selectMove(temp, minVisit);
+    return selectMove(temp);
+}
+
+Move MCTS::selectMove(float temp){
+    return root->selectMove(temp, rootMinVisits);
 }
 
 MoveData MCTS::getMoveProb(float temp){
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
-    return root->selectMoveProb(temp, minVisit);
+    return root->selectMoveProb(temp, rootMinVisits);
 }
 
 std::pair<float, float> MCTS::getEval(){
@@ -689,6 +721,7 @@ bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
     old_root->deleteTree(root);
+    rootMinVisits = 0;
     return root != nullptr;
 }
 
@@ -696,6 +729,7 @@ void MCTS::reset(const Game& startPos){
     root->deleteTree();
     root = new Node(startPos, hash.computeHash(startPos), transposTable);
     root->game.resetMask();
+    rootMinVisits = 0;
 
     if(globalConfig.transTable){
         transposTable->clear();

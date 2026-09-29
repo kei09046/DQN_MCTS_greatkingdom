@@ -77,6 +77,9 @@ public:
 
     Move getMove(float temperature);
 
+    // pick a move from the current root's search result (no additional search).
+    Move selectMove(float temperature);
+
     MoveData getMoveProb(float temperature);
 
     // getEval returns evaluation from player's perspective, which is opposite from internally stored value.
@@ -127,6 +130,7 @@ private:
     Evaluator* evaluator; // shared along multiple MCTS instances
     TransTable* transposTable;
     SearchParams params; // fpu / minVisitRatio used by this instance.
+    int rootMinVisits = 0; // minimum visits given to every root child since root was set. Subtracted on move selection.
 
     // Non-owning; null unless attachAnalysis() was called (see above). Only playout()/updateEval()
     // below read this, to stream debug lines through it mid-search -- everything else Analysis

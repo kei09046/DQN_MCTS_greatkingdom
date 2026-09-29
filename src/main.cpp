@@ -39,7 +39,13 @@ int main(int argc, char** argv) {
     else if(mod == "analyze"){
         globalConfig = loadConfig("../configs/play_config.json");
         std::string model_file = argv[2];
-        ModelCompare::analyze(model_file, true);
+        // optional overrides : ./play analyze <model> [FPU] [minVisitRatio]
+        SearchParams params = globalConfig.searchParams();
+        if(argc > 3)
+            params.fpu = std::stof(argv[3]);
+        if(argc > 4)
+            params.minVisitRatio = std::stof(argv[4]);
+        ModelCompare::analyze(model_file, true, params);
     }
     else if(mod == "web"){
         globalConfig = loadConfig("../configs/play_config.json");

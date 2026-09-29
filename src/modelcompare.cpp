@@ -92,7 +92,7 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 	return;
 }
 
-void ModelCompare::analyze(const std::string& model, bool gpu) {
+void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams params) {
 	// The "analyze" loop below peeks the raw stdin fd via poll() to detect a queued
 	// "pause" command without blocking. Buffered stdio can silently read ahead past the
 	// currently-parsed line (e.g. if the first getline() below runs late because model
@@ -104,13 +104,14 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 
 	Game game_manager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator);
+	MCTS player = MCTS(evaluator, params);
 	// Owns debug-mode state and the printAnalysis/printVariation implementations (see
 	// analysis.hpp) -- attach it so player's own hot path (playout()/updateEval()) can reach it
 	// for debug-line streaming too, per MCTS::attachAnalysis's own comment.
 	Analysis analysis;
 	player.attachAnalysis(&analysis);
 
+	std::cout << "search params : FPU " << params.fpu << " minVisitRatio " << params.minVisitRatio << std::endl;
 	std::cout << "analysis ready" << std::endl;
 
 	std::string line;
@@ -182,6 +183,15 @@ void ModelCompare::analyze(const std::string& model, bool gpu) {
 				analysis.printAnalysis(player);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "analyze time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
+		}
+		else if (cmd == "select") {
+			// "select <temp>" -- pick a move from the current search result with the same rule
+			// MCTS::getMove uses (Node::selectMove), without searching further. Does not play it;
+			// the caller sends "play" afterwards. Pass is printed as "<rowSize> 0", resign as "255 255".
+			float temp = globalConfig.temp;
+			iss >> temp;
+			Move m = player.selectMove(temp);
+			std::cout << "selected " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 		}
 		else if (cmd == "pause") {
 			// The in-progress "analyze" loop (if any) already stopped itself to read this

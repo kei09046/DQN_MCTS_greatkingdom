@@ -117,7 +117,10 @@ class RuleManager:
         self.board[x][y] = self.turn
         empty_space = 0
         same_adj = set()
-        diff_adj = set()
+        # liberty_list holds pseudo-liberties (one per stone-empty adjacency), so a group loses one
+        # for every one of its stones adjacent to (x, y), not one per group.
+        same_touch = 0
+        diff_touch = {}
 
         for i in range(4):
             u = self.board[x + self.x_adj[i]][y + self.y_adj[i]]
@@ -127,17 +130,17 @@ class RuleManager:
                 pass
             elif u * self.turn > 0:
                 same_adj.add(self.st_board[x + self.x_adj[i]][y + self.y_adj[i]])
+                same_touch += 1
             else:
-                diff_adj.add(self.st_board[x + self.x_adj[i]][y + self.y_adj[i]])
+                g = self.st_board[x + self.x_adj[i]][y + self.y_adj[i]]
+                diff_touch[g] = diff_touch.get(g, 0) + 1
 
         # print(empty_space)
         s = len(same_adj)
-        d = len(diff_adj)
 
         # 인접한 상대 돌의 활로 감소
-        for i in range(d):
-            temp = diff_adj.pop()
-            self.liberty_list[temp] -= 1
+        for temp, cnt in diff_touch.items():
+            self.liberty_list[temp] -= cnt
             if self.liberty_list[temp] == 0:
                 return 1
 
@@ -164,7 +167,7 @@ class RuleManager:
                 self.liberty_list[m] += self.liberty_list[temp]
                 self.liberty_list[temp] = 0
 
-            self.liberty_list[m] += empty_space - s
+            self.liberty_list[m] += empty_space - same_touch
 
         if self.liberty_list[m] == 0:
             return -1
@@ -338,6 +341,21 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 MATCHES_DIR = os.path.join(REPO_ROOT, "matches")
+PLAY_CONFIG = os.path.join(REPO_ROOT, "configs", "play_config.json")
+
+
+def default_search_params(config_path=PLAY_CONFIG):
+    """FPU / minVisitRatio that "./play analyze" uses when none are passed on its command line
+    (features.FPU / mcts.minVisitRatio of play_config.json, same fallbacks as src/config.cpp)."""
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    return {
+        "fpu": float(cfg.get("features", {}).get("FPU", -1.0)),
+        "min_visit_ratio": float(cfg.get("mcts", {}).get("minVisitRatio", 0.005)),
+    }
 
 BOARD_BG = "#DCB35C"
 OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit intensity
@@ -529,6 +547,11 @@ _ANALYSIS_SCOREMAP_RE = re.compile(r"^scoreMap\s*:\s*(.*)$")
 # Game is what accumulates the resulting stream into a persistent list (see Game.playout_log).
 _ANALYSIS_PLAYOUT_RE = re.compile(
     r"^playout\s+forced\s+(-?\d+)\s+winp\s+" + _FLOAT + r"\s+score\s+" + _FLOAT + r"\s+path(.*)$")
+# Reply to "select <temp>" (see ModelCompare::analyze): the move MCTS::selectMove picked on the
+# current root. Pass is "<boardSize> 0", resign is "255 255". Like "playout", it arrives outside
+# any "analysis begin"/"analysis end" block.
+_SELECTED_RE = re.compile(r"^selected\s+(\d+)\s+(\d+)$")
+RESIGN_MOVE = (255, 255)
 
 
 def _model_sort_key(filename):
@@ -559,9 +582,14 @@ class AnalysisEngine:
     send_play -- there is no separate "engine plays itself" process/protocol anymore.
     """
 
-    def __init__(self, model, build_dir=BUILD_DIR):
+    def __init__(self, model, build_dir=BUILD_DIR, search_params=None):
+        # search_params: optional {"fpu": float, "min_visit_ratio": float}, forwarded as
+        # `./play analyze <model> <FPU> <minVisitRatio>`. None = play_config.json's values.
+        args = ["./play", "analyze", model]
+        if search_params is not None:
+            args += [str(search_params["fpu"]), str(search_params["min_visit_ratio"])]
         self.proc = subprocess.Popen(
-            ["./play", "analyze", model],
+            args,
             cwd=build_dir,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -579,6 +607,8 @@ class AnalysisEngine:
         # itself (see printPlayoutDebugLine in src/analysis.cpp), so building up the growing list a
         # debug session looks at is entirely on the Python/GUI side; see Game.playout_log.
         self.playouts = queue.Queue()
+        # selections: (r, c) replies to request_select, in request order.
+        self.selections = queue.Queue()
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
 
@@ -602,6 +632,11 @@ class AnalysisEngine:
                     "score": float(score),
                     "path": list(zip(path_ints[0::2], path_ints[1::2])),
                 })
+                continue
+
+            m = _SELECTED_RE.match(line)
+            if m:
+                self.selections.put((int(m.group(1)), int(m.group(2))))
                 continue
 
             if line == "analysis begin":
@@ -687,6 +722,24 @@ class AnalysisEngine:
     def request_analysis(self, playouts=None):
         self._send("analyze" if playouts is None else f"analyze {playouts}")
 
+    def request_select(self, temp):
+        """Asks the engine to pick a move from its current search result (Node::selectMove,
+        the same rule MCTS::getMove uses), without searching further or playing it. The reply
+        arrives through get_selection."""
+        self._send(f"select {temp}")
+
+    def get_selection(self, stop_event=None, poll_interval=0.05, timeout=60):
+        """Blocks until the reply to request_select arrives; None on timeout/stop."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                return None
+            try:
+                return self.selections.get(timeout=poll_interval)
+            except queue.Empty:
+                pass
+        return None
+
     def send_pause(self):
         self._send("pause")
 
@@ -719,8 +772,9 @@ class MatchRunner:
     authority on legality/scoring here -- the match doesn't depend on parsing "game over"/score
     text out of either engine process at all, just its own make_move()/end_game() the same way
     Game._commit_move already does for the interactive board. Each engine is only ever asked
-    "what would you play here" (via analyze) and then told the resulting move back (send_play,
-    to both engines -- including the one that didn't choose it) to keep its own tree in sync.
+    to search (analyze) and then pick its move (select -- Node::selectMove on the C++ side, the same
+    rule MCTS::getMove uses), and then told the resulting move back (send_play, to both engines --
+    including the one that didn't choose it) to keep its own tree in sync.
 
     Runs entirely on a background thread; progress and finished-game records are handed to the
     caller thread-safely through `events` (a queue.Queue), which the GUI drains with
@@ -728,7 +782,7 @@ class MatchRunner:
     """
 
     def __init__(self, engine_a_cfg, engine_b_cfg, n_games, build_dir=BUILD_DIR):
-        # each cfg: {"model": str, "playouts": int, "temp": float}
+        # each cfg: {"model": str, "playouts": int, "temp": float, "fpu": float, "min_visit_ratio": float}
         self.cfg = {"A": engine_a_cfg, "B": engine_b_cfg}
         self.n_games = n_games
         self.build_dir = build_dir
@@ -765,41 +819,14 @@ class MatchRunner:
                 time.sleep(poll_interval)
         return latest
 
-    @staticmethod
-    def _select_move(result, temp, move_count):
-        """Same move-selection rule as Node::selectMoveProb in src/PMCTS.cpp (weight ∝
-        visits**temp, sampled; forced fully greedy once temp >= 5.0 or move_count >= 10) --
-        reimplemented here in Python rather than exposed as a new engine command, since the
-        "analyze" protocol already hands over the full visit-count breakdown this needs, and
-        every other piece of per-engine configuration in this match feature is likewise owned
-        client-side. Note this codebase's temp convention is inverted from the usual: LOW temp
-        means MORE random (near-uniform over visited moves), HIGH temp means MORE greedy.
-        """
-        moves = [mv for mv in result.get("moves", []) if mv["visits"] > 0]
-        if not moves:
-            moves = result.get("moves", [])
-        if not moves:
-            return None
-        if temp >= 5.0 or move_count >= 10:
-            return max(moves, key=lambda mv: mv["visits"])
-
-        weights = [mv["visits"] ** temp if mv["visits"] > 0 else 0.0 for mv in moves]
-        total = sum(weights)
-        if total <= 0:
-            return max(moves, key=lambda mv: mv["visits"])
-        pick = random.uniform(0, total)
-        upto = 0.0
-        for mv, w in zip(moves, weights):
-            upto += w
-            if upto >= pick:
-                return mv
-        return moves[-1]
-
     def _run(self):
         engines = {}
         try:
-            engines["A"] = AnalysisEngine(self.cfg["A"]["model"], build_dir=self.build_dir)
-            engines["B"] = AnalysisEngine(self.cfg["B"]["model"], build_dir=self.build_dir)
+            for side in ("A", "B"):
+                cfg = self.cfg[side]
+                engines[side] = AnalysisEngine(cfg["model"], build_dir=self.build_dir,
+                                               search_params={"fpu": cfg["fpu"],
+                                                              "min_visit_ratio": cfg["min_visit_ratio"]})
 
             for game_idx in range(self.n_games):
                 if self._stop.is_set():
@@ -839,34 +866,34 @@ class MatchRunner:
                         by = "aborted (no analysis result)"
                         break
 
-                    chosen = self._select_move(result, cfg["temp"], len(rm.seq))
-                    if chosen is None:
-                        # Only reachable once forced (see the "per-move breakdown is only
-                        # meaningful..." comment in Analysis::printAnalysis): the position is a
-                        # proven win/loss but this particular forced child happened to still be
-                        # unexpanded (root->child[i] == nullptr) at whatever low visit count
-                        # search stopped at, so the engine had no single move to single out
-                        # either -- rather than aborting the game with no result, resolve it
-                        # directly from forcedState (positive = whoever's on the move here wins,
-                        # matching Node::selectMove's own convention).
-                        if result.get("forced"):
-                            winner_color = rm.turn if result["forced"] > 0 else -rm.turn
-                            by = "forced (no move data)"
-                        else:
-                            by = "aborted (no candidate move)"
+                    # Move selection is done by the engine itself (Node::selectMove), so it
+                    # follows exactly the same rule as the C++ engine-vs-engine code.
+                    engines[mover].request_select(cfg["temp"])
+                    selected = engines[mover].get_selection(self._stop)
+                    if self._stop.is_set():
+                        break
+                    if selected is None:
+                        by = "aborted (no move selected)"
+                        break
+                    if selected == RESIGN_MOVE:
+                        # no available move at all (Node::selectMove returns RESIGNMOVE).
+                        winner_color = -rm.turn
+                        by = "resign"
                         break
 
-                    r, c = chosen["move"]
+                    r, c = selected
                     is_pass = (r, c) == (RuleManager.boardSize, 0)
+                    # the selected move's stats from the analysis snapshot, if it has an entry there.
+                    chosen = next((mv for mv in result.get("moves", []) if mv["move"] == (r, c)), {})
 
                     move_log.append({
                         "ply": len(rm.seq),
                         "by": mover,
                         "move": None if is_pass else [r, c],
-                        "visits": chosen["visits"],
-                        "prior": chosen["prior"],
-                        "move_winrate": chosen["winrate"],
-                        "move_q": chosen["q"],
+                        "visits": chosen.get("visits"),
+                        "prior": chosen.get("prior"),
+                        "move_winrate": chosen.get("winrate"),
+                        "move_q": chosen.get("q"),
                         "root_winrate": result.get("winrate"),
                         "root_visits": result.get("visits"),
                         "root_initQ": result.get("initQ"),
@@ -2364,7 +2391,7 @@ class Game:
 
     def _open_match_dialog(self):
         """Engine-vs-engine match dialog: two independently configured engines (model, playout
-        budget, move-selection temperature -- see MatchRunner) play a requested number of games
+        budget, move-selection temperature, FPU, minVisitRatio -- see MatchRunner) play a requested number of games
         against each other, alternating colors, with every move/evaluation/result recorded and
         saved to a JSON file under matches/. Fully separate from the interactive board/session
         above -- the match runs its own AnalysisEngine processes on a background thread and
@@ -2385,6 +2412,7 @@ class Game:
 
         config_frame = Frame(dialog)
         config_frame.pack(padx=10, pady=10, fill=X)
+        search_defaults = default_search_params()
 
         def build_engine_column(parent, label):
             col = Frame(parent, padx=10)
@@ -2396,16 +2424,26 @@ class Game:
             Entry(col, textvariable=playouts_var, width=10).pack(anchor="w", pady=(0, 6))
             Label(col, text="Temperature:", anchor="w").pack(fill=X)
             temp_var = StringVar(value="1.0")
-            Entry(col, textvariable=temp_var, width=10).pack(anchor="w")
-            return col, model_var, playouts_var, temp_var
+            Entry(col, textvariable=temp_var, width=10).pack(anchor="w", pady=(0, 6))
+            Label(col, text="FPU:", anchor="w").pack(fill=X)
+            fpu_var = StringVar(value=str(search_defaults["fpu"]))
+            Entry(col, textvariable=fpu_var, width=10).pack(anchor="w", pady=(0, 6))
+            Label(col, text="minVisitRatio:", anchor="w").pack(fill=X)
+            mvr_var = StringVar(value=str(search_defaults["min_visit_ratio"]))
+            Entry(col, textvariable=mvr_var, width=10).pack(anchor="w")
+            return col, model_var, playouts_var, temp_var, fpu_var, mvr_var
 
-        col_a, dialog.model_a, dialog.playouts_a, dialog.temp_a = build_engine_column(config_frame, "Engine A")
+        col_a, dialog.model_a, dialog.playouts_a, dialog.temp_a, dialog.fpu_a, dialog.mvr_a = \
+            build_engine_column(config_frame, "Engine A")
         col_a.pack(side=LEFT)
-        col_b, dialog.model_b, dialog.playouts_b, dialog.temp_b = build_engine_column(config_frame, "Engine B")
+        col_b, dialog.model_b, dialog.playouts_b, dialog.temp_b, dialog.fpu_b, dialog.mvr_b = \
+            build_engine_column(config_frame, "Engine B")
         col_b.pack(side=LEFT)
 
         Label(dialog, text="(Temperature: low = more random move choice, >= 5 = always the "
-                            "most-visited move; same convention as MCTS::getMove.)",
+                            "most-visited move; same convention as MCTS::getMove. "
+                            "FPU < 0 = unvisited children get Q 0; minVisitRatio <= 0 disables "
+                            "forced minimum visits.)",
               wraplength=420, justify=LEFT, fg="#555555").pack(padx=10, anchor="w")
 
         games_row = Frame(dialog)
@@ -2449,13 +2487,19 @@ class Game:
             playouts_b = max(1, int(dialog.playouts_b.get()))
             temp_a = max(0.0, float(dialog.temp_a.get()))
             temp_b = max(0.0, float(dialog.temp_b.get()))
+            fpu_a = float(dialog.fpu_a.get())
+            fpu_b = float(dialog.fpu_b.get())
+            mvr_a = float(dialog.mvr_a.get())
+            mvr_b = float(dialog.mvr_b.get())
             n_games = max(1, int(dialog.n_games_var.get()))
         except ValueError:
-            dialog.status_label.configure(text="Playouts/temperature/games must be numbers.")
+            dialog.status_label.configure(text="Playouts/temperature/FPU/minVisitRatio/games must be numbers.")
             return
 
-        cfg_a = {"model": dialog.model_a.get(), "playouts": playouts_a, "temp": temp_a}
-        cfg_b = {"model": dialog.model_b.get(), "playouts": playouts_b, "temp": temp_b}
+        cfg_a = {"model": dialog.model_a.get(), "playouts": playouts_a, "temp": temp_a,
+                 "fpu": fpu_a, "min_visit_ratio": mvr_a}
+        cfg_b = {"model": dialog.model_b.get(), "playouts": playouts_b, "temp": temp_b,
+                 "fpu": fpu_b, "min_visit_ratio": mvr_b}
 
         dialog.records = []
         dialog.tally = {"A": 0, "B": 0, "draw": 0}

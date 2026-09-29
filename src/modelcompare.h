@@ -21,7 +21,7 @@ public:
 	// Interactive analysis mode: reads "reset" / "play <r> <c>" / "analyze [playouts]" / "quit"
 	// commands from stdin, letting a caller build up an arbitrary position and request a
 	// winrate / policy / visit-count breakdown for it without playing a full game.
-	static void analyze(const std::string& model, bool gpu);
+	static void analyze(const std::string& model, bool gpu, SearchParams params = globalConfig.searchParams());
 
 	static void playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 
