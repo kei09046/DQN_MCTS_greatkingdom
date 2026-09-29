@@ -126,46 +126,58 @@ NNInput PolicyValueNet::getData(const Game& game){
 	Color oppturn = Game::reverseColor(turn);
 	Color state;
 
-	for(int i=0; i<inputSize; ++i){ // channel 0, 1, 2 : indicates location of black/white/neutral stones
+	// channel 0, 1, 2 : my/opponent's/neutral stones in current position
+	// channel 3, 4, 5 : same, one turn ago (before the last move)
+	// channel 6, 7, 8 : same, two turns ago (before the last two moves)
+	// stones are never removed during the game (capture ends it), so earlier positions are
+	// the current one without the last move's / last two moves' stones.
+	// lastTwoMoves[1] is the most recent move, lastTwoMoves[0] the one before.
+	const Move lastMove = game.getLastMove(1);
+	const Move secondLastMove = game.getLastMove(0);
+	const auto isStone = [](Move m){ return m != PASSMOVE && m != RESIGNMOVE; };
+	const int lastIdx = isStone(lastMove) ? lastMove.first * colSize + lastMove.second : -1;
+	const int secondLastIdx = isStone(secondLastMove) ? secondLastMove.first * colSize + secondLastMove.second : -1;
+
+	for(int i=0; i<inputSize; ++i){
 		state = game.getBoard({i / colSize, i % colSize});
+		int ch;
 		if(state == turn)
-			ret.at(i) = 1.0f;
+			ch = 0;
 		else if(state == oppturn)
-			ret.at(inputSize + i) = 1.0f;
+			ch = 1;
 		else if(state == NEUTRAL)
-			ret.at(2 * inputSize + i) = 1.0f;
+			ch = 2;
+		else
+			continue;
+
+		ret.at(ch * inputSize + i) = 1.0f;
+		if(i != lastIdx){
+			ret.at((3 + ch) * inputSize + i) = 1.0f;
+			if(i != secondLastIdx)
+				ret.at((6 + ch) * inputSize + i) = 1.0f;
+		}
 	}
 
 	Color terr;
 	Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
 	Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
-	for(int i=0; i<inputSize; ++i){ // channel 3, 4 : indicates territory
+	for(int i=0; i<inputSize; ++i){ // channel 9, 10 : indicates territory
 		terr = game.getScoreBoard({i/colSize, i%colSize});
 		if(terr == turnScore){
-			ret.at(3*inputSize + i) = 1.0f;
+			ret.at(9*inputSize + i) = 1.0f;
 		}
 		else if(terr == oppturnScore){
-			ret.at(4*inputSize + i) = 1.0f;
+			ret.at(10*inputSize + i) = 1.0f;
 		}
 	}
 
 	float diff = game.scoreDiff(turn);
-	for(int i=0; i<inputSize; ++i){ // channel 5 : difference of current score
-		ret.at(5*inputSize + i) = diff;
+	for(int i=0; i<inputSize; ++i){ // channel 11 : difference of current score
+		ret.at(11*inputSize + i) = diff;
 	}
 
-	// channel 6, 7 : last move and second last move
-	Move lastMove = game.getLastMove(0);
-	if(lastMove != PASSMOVE && lastMove != RESIGNMOVE){
-		ret.at(6*inputSize + lastMove.first * colSize + lastMove.second) = 1.0f;
-	}
-	Move secondLastMove = game.getLastMove(1);
-	if(secondLastMove != PASSMOVE && secondLastMove != RESIGNMOVE){
-		ret.at(7*inputSize + secondLastMove.first * colSize + secondLastMove.second) = 1.0f;
-	}
-
-	// channel 8 ~ 17 : liberty count(inf if adjacent to territory)
+	// channel 12 ~ 21 : liberty count(inf if adjacent to territory)
 	std::bitset<inputSize> mark;
 
 	for(int i=0; i<inputSize; ++i){
@@ -195,37 +207,37 @@ NNInput PolicyValueNet::getData(const Game& game){
 
 			if(state == turn){ // my stone's liberties
 				do {
-					ret.at((7 + liberty_count)*inputSize + cur) = 1.0f;
+					ret.at((11 + liberty_count)*inputSize + cur) = 1.0f;
 					cur = game.getStone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 			else if(state == oppturn){ // opponent stone's liberties
 				do {
-					ret.at((12 + liberty_count)*inputSize + cur) = 1.0f;
+					ret.at((16 + liberty_count)*inputSize + cur) = 1.0f;
 					cur = game.getStone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 		}
 	}
 
-	// channel 18 : opponent's threat
-	// channel 19 : best move to avoid threat
+	// channel 22 : opponent's threat
+	// channel 23 : best move to avoid threat
 	Move threat = game.getThreat();
 	if(threat != RESIGNMOVE){
-		ret.at(18 * inputSize + threat.first * colSize + threat.second) = 1.0f;
-		ret.at(19 * inputSize + game.getAvailableMoves()[0]) = 1.0f;
+		ret.at(22 * inputSize + threat.first * colSize + threat.second) = 1.0f;
+		ret.at(23 * inputSize + game.getAvailableMoves()[0]) = 1.0f;
 	}
 
-	// channel 20 : winning move
+	// channel 24 : winning move
 	Move winmove = game.getWin();
 	if(winmove != RESIGNMOVE){
-		ret.at(20 * inputSize + winmove.first * colSize + winmove.second) = 1.0f;
+		ret.at(24 * inputSize + winmove.first * colSize + winmove.second) = 1.0f;
 	}
 
-	// channel 21 : available moves
+	// channel 25 : available moves
 	for(const auto& m : game.getAvailableMoves()){
 		if(m < inputSize)
-			ret.at(21 * inputSize + m) = 1.0f;
+			ret.at(25 * inputSize + m) = 1.0f;
 	}
 
     return {ret};
@@ -693,7 +705,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
 	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G" || model_type == "H"
-	|| model_type == "I"){
+	|| model_type == "I" || model_type == "J"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -730,6 +742,9 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		else if(model_type == "I"){
 			net = std::make_shared<Net>(22, 20);
 		}
+		else if(model_type == "J"){ // I + stone positions of last two turns instead of last two moves
+			net = std::make_shared<Net>(26, 20);
+		}
 		else{
 			throw std::runtime_error("Unknown model type: " + model_type);
 		}
@@ -737,7 +752,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 		policy_value_net = std::move(net);
 	}   
 	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(22, 20);
+		policy_value_net = std::make_shared<Net>(globalConfig.inputChannel, 20);
 	}
 
 	policy_value_net->to(device);
