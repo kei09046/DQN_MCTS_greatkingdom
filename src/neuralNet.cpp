@@ -5,79 +5,57 @@
 #include <stdexcept>
 
 // For 9*9 board.
-Net::Net(int channelSize, int blockSize): channelSize(channelSize), cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
+Net::Net(int channelSize, int blockSize, int headChannels, int valueHidden): channelSize(channelSize), headChannels(headChannels),
+cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
 // Policy head
-at_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-at_bn3(torch::nn::BatchNorm2d(32)),
-at_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
-at_bn4(torch::nn::BatchNorm2d(2)),
-at_fc1(2 * inputSize, outputSize),
+at_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+at_bn(torch::nn::BatchNorm2d(headChannels)),
+at_fc(headChannels * inputSize, outputSize),
 
 // Value head
-v_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-v_bn3(torch::nn::BatchNorm2d(32)),
-v_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
-v_bn4(torch::nn::BatchNorm2d(2)),
-v_fc1(2 * inputSize, 1),
-//v_fc2(256, 1),
+v_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+v_bn(torch::nn::BatchNorm2d(headChannels)),
+v_fc1(headChannels * inputSize, valueHidden),
+v_fc2(valueHidden, 1),
 
 // Score diff head
-sc_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-sc_bn3(torch::nn::BatchNorm2d(32)),
-sc_cv4(torch::nn::Conv2dOptions(32, 2, 1).bias(false)),
-sc_bn4(torch::nn::BatchNorm2d(2)),
-sc_fc1(2 * inputSize, 1),
-//sc_fc2(256, 1),
+sc_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+sc_bn(torch::nn::BatchNorm2d(headChannels)),
+sc_fc1(headChannels * inputSize, valueHidden),
+sc_fc2(valueHidden, 1),
 
-// score map head
-sc_map_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-sc_map_bn3(torch::nn::BatchNorm2d(32)),
-sc_map_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
-
-// capture head
-// cap_cv3(torch::nn::Conv2dOptions(128, 32, 1).bias(false)),
-// cap_bn3(torch::nn::BatchNorm2d(32)),
-// cap_cv4(torch::nn::Conv2dOptions(32, 1, 1).bias(false))
-
+// Score map head
+sc_map_cv1(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+sc_map_bn1(torch::nn::BatchNorm2d(headChannels)),
+sc_map_cv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
-
 	for (int i = 0; i < blockSize; i++) {
 		blocks->push_back(ResidualBlock(128));
 	}
-	
+
 	register_module("cv1", cv1);
 	register_module("bn1", bn1);
 
-	register_module("at_cv3", at_cv3);
-	register_module("at_bn3", at_bn3);
-	register_module("at_cv4", at_cv4);
-	register_module("at_bn4", at_bn4);
-	register_module("at_fc1", at_fc1);
+	register_module("at_cv", at_cv);
+	register_module("at_bn", at_bn);
+	register_module("at_fc", at_fc);
 
-	register_module("v_cv3", v_cv3);
-	register_module("v_bn3", v_bn3);
-	register_module("v_cv4", v_cv4);
-	register_module("v_bn4", v_bn4);
+	register_module("v_cv", v_cv);
+	register_module("v_bn", v_bn);
 	register_module("v_fc1", v_fc1);
-	// register_module("v_fc2", v_fc2);
+	register_module("v_fc2", v_fc2);
 
-	register_module("sc_cv3", sc_cv3);
-	register_module("sc_bn3", sc_bn3);
-	register_module("sc_cv4", sc_cv4);
-	register_module("sc_bn4", sc_bn4);
+	register_module("sc_cv", sc_cv);
+	register_module("sc_bn", sc_bn);
 	register_module("sc_fc1", sc_fc1);
-	// register_module("sc_fc2", sc_fc2);
+	register_module("sc_fc2", sc_fc2);
 
-	register_module("sc_map_cv3", sc_map_cv3);
-	register_module("sc_map_bn3", sc_map_bn3);
-	register_module("sc_map_cv4", sc_map_cv4);
-
-	// register_module("cap_cv3", cap_cv3);
-	// register_module("cap_bn3", cap_bn3);
-	// register_module("cap_cv4", cap_cv4);
+	register_module("sc_map_cv1", sc_map_cv1);
+	register_module("sc_map_bn1", sc_map_bn1);
+	register_module("sc_map_cv2", sc_map_cv2);
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
@@ -88,35 +66,21 @@ NNOutput Net::forward(const torch::Tensor& state)
 	}
 
 	// policy head
-	torch::Tensor log_act = torch::nn::functional::relu(at_bn3(at_cv3(x)));
-	log_act = at_bn4(at_cv4(log_act));
-	log_act = log_act.view({ -1, 2 * inputSize });
-	//log_act = torch::nn::functional::relu(at_fc1(log_act));
-	log_act = at_fc1(log_act);
+	torch::Tensor log_act = torch::nn::functional::relu(at_bn(at_cv(x))).view({-1, headChannels * inputSize});
+	log_act = at_fc(log_act);
 
 	// value head
-	torch::Tensor val = torch::nn::functional::relu(v_bn3(v_cv3(x)));
-	val = v_bn4(v_cv4(val));
-	val = val.view({-1, 2 * inputSize});
-	//val = torch::nn::functional::relu(v_fc1(val));
-	val = v_fc1(val).tanh();
+	torch::Tensor val = torch::nn::functional::relu(v_bn(v_cv(x))).view({-1, headChannels * inputSize});
+	val = v_fc2(torch::nn::functional::relu(v_fc1(val))).tanh();
 
 	// score head
-	torch::Tensor score = torch::nn::functional::relu(sc_bn3(sc_cv3(x)));
-	score = sc_bn4(sc_cv4(score));
-	score = score.view({-1, 2 * inputSize});
-	//score = torch::nn::functional::relu(sc_fc1(score));
-	torch::Tensor exp_score_diff = sc_fc1(score);
+	torch::Tensor score = torch::nn::functional::relu(sc_bn(sc_cv(x))).view({-1, headChannels * inputSize});
+	torch::Tensor exp_score_diff = sc_fc2(torch::nn::functional::relu(sc_fc1(score)));
 
 	// score map head
-	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn3(sc_map_cv3(x)));
-	exp_score_map = sc_map_cv4(exp_score_map).tanh();
-	
-	// capture map head
-	// torch::Tensor cap_prob_map = torch::nn::functional::relu(cap_bn3(cap_cv3(x)));
-	// cap_prob_map = cap_cv4(cap_prob_map).sigmoid();
+	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn1(sc_map_cv1(x)));
+	exp_score_map = sc_map_cv2(exp_score_map).tanh();
 
-	//std::cerr << log_act << " " << val << " " << exp_score_diff << " " << exp_score_map << " " << cap_prob_map << std::endl;
 	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map);
 }
 
@@ -254,6 +218,7 @@ NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 	}
     return ret;
 }
+
 
 PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string& model_type, bool use_gpu):
  use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type)
@@ -704,8 +669,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "A" || model_type == "B" || model_type == "C" || model_type == "E" || model_type == "F" || model_type == "G" || model_type == "H"
-	|| model_type == "I" || model_type == "J"){
+	if(model_type == "J"){
 		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 		if(!net){
 			throw std::runtime_error("Model type mismatch when saving: " + model_file);
@@ -717,43 +681,20 @@ void PolicyValueNet::save_model(const std::string& model_file) const
 	}
 }
 
-void PolicyValueNet::load_model(const std::string& model_file){
-	if (model_file.ends_with(".pt")) {
-		std::shared_ptr<NetBase> net;
+std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
+	if(model_type == "J") // stone positions of last two turns instead of last two moves; 10 blocks, larger heads
+		return std::make_shared<Net>(26, 10);
+	// A ~ I used the previous Net architecture (2-channel heads) and input layout; they can no longer be loaded.
+	throw std::runtime_error("Unsupported model type: " + model_type);
+}
 
-		if(model_type == "A"){
-			net = std::make_shared<Net>(7, 12);
-		}
-		else if(model_type == "B"){
-			net = std::make_shared<Net>(9, 12);
-		}
-		else if(model_type == "C"){
-			net = std::make_shared<Net>(18, 12);
-		}
-		else if((model_type == "E") || (model_type == "F")){
-			net = std::make_shared<Net>(18, 15);
-		}
-		else if((model_type == "G")){
-			net = std::make_shared<Net>(18, 18);
-		}
-		else if(model_type == "H"){
-			net = std::make_shared<Net>(18, 20);
-		}
-		else if(model_type == "I"){
-			net = std::make_shared<Net>(22, 20);
-		}
-		else if(model_type == "J"){ // I + stone positions of last two turns instead of last two moves
-			net = std::make_shared<Net>(26, 20);
-		}
-		else{
-			throw std::runtime_error("Unknown model type: " + model_type);
-		}
-		torch::load(net, model_file);   
-		policy_value_net = std::move(net);
-	}   
-	else{ // load default model to begin with.
-		policy_value_net = std::make_shared<Net>(globalConfig.inputChannel, 20);
+void PolicyValueNet::load_model(const std::string& model_file){
+	std::shared_ptr<NetBase> net = makeNet();
+	// otherwise start from an untrained network.
+	if (model_file.ends_with(".pt")) {
+		torch::load(net, model_file);
 	}
+	policy_value_net = std::move(net);
 
 	policy_value_net->to(device);
 	torch::optim::AdamOptions opts(l2_const);

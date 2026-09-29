@@ -116,50 +116,41 @@ public:
 };
 
 
+// Every head first reduces the trunk to headChannels channels, and the value / score heads have a
+// hidden fully connected layer of valueHidden units.
 class Net : public NetBase{
 public:
-	Net(int channelSize, int blockSize);
+	Net(int channelSize, int blockSize, int headChannels = 32, int valueHidden = 256);
 	int channelSize;
+	int headChannels;
 
 	NNOutput forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
 	torch::nn::ModuleList blocks;
-	
+
 	// action(policy)
-	torch::nn::Conv2d at_cv3;
-	torch::nn::BatchNorm2d at_bn3;
-	torch::nn::Conv2d at_cv4;
-	torch::nn::BatchNorm2d at_bn4;
-	torch::nn::Linear at_fc1;
-	//PureTensorGroupedMaxInfConverter at_cvtr;
+	torch::nn::Conv2d at_cv;
+	torch::nn::BatchNorm2d at_bn;
+	torch::nn::Linear at_fc;
 
 	// value
-	torch::nn::Conv2d v_cv3;
-	torch::nn::BatchNorm2d v_bn3;
-	torch::nn::Conv2d v_cv4;
-	torch::nn::BatchNorm2d v_bn4;
+	torch::nn::Conv2d v_cv;
+	torch::nn::BatchNorm2d v_bn;
 	torch::nn::Linear v_fc1;
-	// torch::nn::Linear v_fc2;
+	torch::nn::Linear v_fc2;
 
 	// score scalar
-	torch::nn::Conv2d sc_cv3;
-	torch::nn::BatchNorm2d sc_bn3;
-	torch::nn::Conv2d sc_cv4;
-	torch::nn::BatchNorm2d sc_bn4;
+	torch::nn::Conv2d sc_cv;
+	torch::nn::BatchNorm2d sc_bn;
 	torch::nn::Linear sc_fc1;
-	// torch::nn::Linear sc_fc2;
-	
-	// score map
-	torch::nn::Conv2d sc_map_cv3;
-	torch::nn::BatchNorm2d sc_map_bn3;
-	torch::nn::Conv2d sc_map_cv4;
+	torch::nn::Linear sc_fc2;
 
-	// capture
-	// torch::nn::Conv2d cap_cv3;
-	// torch::nn::BatchNorm2d cap_bn3;
-	// torch::nn::Conv2d cap_cv4;
+	// score map
+	torch::nn::Conv2d sc_map_cv1;
+	torch::nn::BatchNorm2d sc_map_bn1;
+	torch::nn::Conv2d sc_map_cv2;
 };
 
 
@@ -174,6 +165,9 @@ private:
 	// std::vector<float> makeScoreDistributionBatch(const std::vector<float>& scores, float scoreRange, float sigma, int window) const;
 
 	void displayNNOutput(const NNOutput& modelOut);
+
+	// untrained network of this->model_type.
+	std::shared_ptr<NetBase> makeNet() const;
 
 public:
 	std::shared_ptr<NetBase> policy_value_net;
