@@ -174,7 +174,7 @@ namespace{
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), forcedState(0), hashValue(hashValue), expanded(false), evaluation(nullptr), transposTable(transposTable){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), minN(0.0f), forcedState(0), hashValue(hashValue), expanded(false), evaluation(nullptr), transposTable(transposTable){
 }
 
 void Node::addChild(const Move& move, int idx){
@@ -258,7 +258,7 @@ int Node::selectChildInSearch(){
 
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
         if(child[i] == nullptr){
-            pref = ((globalConfig.fpu < 0.0f) ? 0.0f : -W/N-globalConfig.fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
+            pref = ((globalConfig.fpu < 0.0f) ? 0.0f : -W/valueN()-globalConfig.fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
             lost = false;
         }
 
@@ -331,7 +331,8 @@ Move Node::selectMove(float temp){
         }
     }
 
-    if(temp >= 5.0f || game.getMoveCount() >= 10){
+    // proven lost root (forcedState < -1) only gets here with every move losing: just take the most visited one.
+    if(temp >= 5.0f || game.getMoveCount() >= 10 || forcedState < 0){
         return {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
     }
 
@@ -339,7 +340,12 @@ Move Node::selectMove(float temp){
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
-        assert((forcedState != 0 || edgeN[i] >= minVisit) && "root child visited less than minVisit");
+        // proven losing moves get no minimum visits (see MCTS::runSimulation) and are never picked.
+        if(child[i] != nullptr && child[i]->forcedState > 0){
+            weights[i] = 0.0f;
+            continue;
+        }
+        assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
         weights[i] = (edgeN[i] - minVisit <= 0) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -383,14 +389,16 @@ MoveData Node::selectMoveProb(float temp){
         }
     }
 
-    else if(temp >= 5.0f || game.getMoveCount() >= 10){
+    // proven lost root (forcedState < -1) only gets here with every move losing: just take the most visited one.
+    else if(temp >= 5.0f || game.getMoveCount() >= 10 || forcedState < 0){
+        const float visitSum = std::accumulate(edgeN.begin(), edgeN.end(), 0.0f);
         int maxi, maxn = -1;
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
             if(edgeN[i] > maxn){
                 maxn = edgeN[i];
                 maxi = i;
             }
-            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
+            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/visitSum;
         }
         selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
     }
@@ -399,11 +407,22 @@ MoveData Node::selectMoveProb(float temp){
         std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
         const int minVisit = globalConfig.minVisits(globalConfig.nPlayout);
 
+        // visits above minVisit. Proven losing moves get no minimum visits (see MCTS::runSimulation) and count as 0.
+        std::vector<float> counted(game.getAvailableMoves().size());
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            assert((forcedState != 0 || edgeN[i] >= minVisit) && "root child visited less than minVisit");
-            visitPortion[game.getAvailableMoves()[i]] = (edgeN[i] - minVisit)/(N - minVisit * game.getAvailableMoves().size());
+            if(child[i] != nullptr && child[i]->forcedState > 0){
+                counted[i] = 0.0f;
+                continue;
+            }
+            assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
+            counted[i] = edgeN[i] - minVisit;
+        }
+        const float visitSum = std::accumulate(counted.begin(), counted.end(), 0.0f);
+
+        for(int i=0; i<game.getAvailableMoves().size(); ++i){
+            visitPortion[game.getAvailableMoves()[i]] = counted[i]/visitSum;
             //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-            weights[i] = (edgeN[i] <= minVisit) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
+            weights[i] = (counted[i] <= 0.0f) ? 0.0f : std::pow(counted[i], temp);
         }
 
         std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -561,6 +580,10 @@ MCTS::~MCTS(){
 }
 
 void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild){
+    // root already proven won/lost: nothing to search.
+    if(root->forcedState != 0)
+        return;
+
     if(globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
 
@@ -581,8 +604,17 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         //     std::cerr << m/colSize << m%colSize << " ";
         // std::cerr << std::endl;
 
-        for(int i=0; i<minSearchPerChild; ++i){
-            for(int j=0; j<root->child.size(); ++j){
+        for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
+            for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
+                const Node* c = root->child[j];
+                // winning move found: root is proven won, same as selectChildInSearch would mark it.
+                if(c != nullptr && c->forcedState < 0){
+                    root->forcedState = -c->forcedState + 1;
+                    break;
+                }
+                // proven losing move: don't spend minimum visits on it (selectMove/selectMoveProb ignore it).
+                if(c != nullptr && c->forcedState > 0)
+                    continue;
                 playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                 playMode, timeLimit, j);
             }
@@ -647,7 +679,7 @@ MoveData MCTS::getMoveProb(float temp){
 std::pair<float, float> MCTS::getEval(){
     assert(root->N > 0);
     if(root->forcedState == 0)
-        return {static_cast<float>(-root->W) / root->N, static_cast<float>(-root->S) / root->N};
+        return {static_cast<float>(-root->W) / root->valueN(), static_cast<float>(-root->S) / root->valueN()};
     else if(root->forcedState > 0)
         return {1.0f, 0.0f};
     else
@@ -749,12 +781,23 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 
         searchCounter++;
         // set node visit stats
+        for(int i=0; i<childIdx.size(); ++i){
+            path[i]->edgeN[childIdx[i]] += 1.0f;
+        }
+
+        // Minimum-visit playouts must not affect root's Q, or forced looks at bad moves (e.g. ones
+        // that only set up traps) leak into root's value. Root still counts the visit in N (so N
+        // stays consistent with edgeN), but it is tracked in minN and dropped from the path, so it
+        // gets no VL and propagate never adds to its W/S/Wp. Use valueN() to read root's Q.
+        if(forcedFirstSearch >= 0 && !childIdx.empty()){
+            root->N += 1.0f;
+            root->minN += 1.0f;
+            path.erase(path.begin());
+        }
+
         for (Node* node : path) {
             node->N += 1.0f;
             node->W -= 1.0f; // apply VL
-        }
-        for(int i=0; i<childIdx.size(); ++i){
-            path[i]->edgeN[childIdx[i]] += 1.0f;
         }
 
         if(forced != 0){ // if forced win/loss is found in leaf node, propagate that result immediately.
@@ -775,7 +818,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             }
 
             if(analysis && analysis->getDebugMode())
-                analysis->printPlayoutDebugLine(path, 0.0f, 0.0f, forced);
+                analysis->printPlayoutDebugLine(debugPath(path), 0.0f, 0.0f, forced);
         }
         else{ // if final search node is non-determined node, ask for evaluation
             // enqueue evaluation
@@ -832,7 +875,7 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
         evalQ = cur->initQ;
 
         if(analysis && analysis->getDebugMode())
-            analysis->printPlayoutDebugLine(path, evalW, evalS, 0);
+            analysis->printPlayoutDebugLine(debugPath(path), evalW, evalS, 0);
     }
     else{
         evalQ = calculateQ(buf->result, cur->game).first;
@@ -841,6 +884,16 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
     propagate(path, evalQ, evalW, evalS);
 }
 
+
+std::vector<Node*> MCTS::debugPath(const std::vector<Node*>& path) const{
+    // minimum-visit playouts have root dropped from their path (see playout); put it back so the
+    // printed move sequence still starts from root.
+    if(path.front() == root)
+        return path;
+    std::vector<Node*> full{root};
+    full.insert(full.end(), path.begin(), path.end());
+    return full;
+}
 
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
     if (globalConfig.detailedStat) { // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.

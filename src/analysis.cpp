@@ -68,8 +68,8 @@ void Analysis::printVariation(MCTS& mcts){
         if(node == nullptr)
             return;
         std::cout << (int)m / colSize << " " << (int)m % colSize << " " << visit << " forced " << node->forcedState << " Q: " <<
-            node->W/node->N << " initQ : " << node->initQ << " Wp : " << node->Wp/node->N
-            << " S : " << node->S / node->N << std::endl;
+            node->W/node->valueN() << " initQ : " << node->initQ << " Wp : " << node->Wp/node->valueN()
+            << " S : " << node->S / node->valueN() << std::endl;
     }
 }
 
@@ -166,7 +166,7 @@ void Analysis::printAnalysis(MCTS& mcts){
         // the *highest* unnegated value, not the lowest), root's own line needs the negation to
         // land on the same scale: "root winrate" ends up the weighted average of the move winrates
         // printed below, rather than their complement.
-        std::cout << "winrate : " << (-root->Wp / root->N) << std::endl;
+        std::cout << "winrate : " << (-root->Wp / root->valueN()) << std::endl;
     else
         std::cout << "winrate : 0" << std::endl;
     std::cout << "visits : " << root->N << std::endl;
@@ -187,7 +187,7 @@ void Analysis::printAnalysis(MCTS& mcts){
     // (always just the network's untouched one-shot guess at the current position), this one moves
     // as search deepens, so together the pair mirrors initQ/winrate for the score head.
     if(root->N > 0)
-        std::cout << "scoreSearch : " << (-root->S / root->N) << std::endl;
+        std::cout << "scoreSearch : " << (-root->S / root->valueN()) << std::endl;
     else
         std::cout << "scoreSearch : 0" << std::endl;
 

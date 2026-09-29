@@ -44,6 +44,9 @@ private:
 
     Game game; // includes position, territory, valid moves etc. for heuristic
     float N, W, initQ, S, Wp; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    float minN; // # of minimum-visit playouts counted in N but not backed up into W/S/Wp (only ever nonzero on root)
+    // # of visits W/S/Wp are summed over. Divide by this, not N, to get this node's own Q.
+    inline float valueN() const { return N - minN; }
     // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP, edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
     const Color turn;
@@ -125,12 +128,13 @@ private:
     // does (printAnalysis, printVariation, ...) is driven the other way, by a caller handing its
     // own MCTS instance into an Analysis method, so doesn't need MCTS to hold this at all.
     Analysis* analysis = nullptr;
-
     void playout(int& searchCounter, int& evaluateCounter, std::vector<Node*>& inEvaluation,
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
     const int playMode, const int timeLimit, int forcedFirstSearch = -1);
 
     void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
+
+    std::vector<Node*> debugPath(const std::vector<Node*>& path) const;
 
     void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
 };
