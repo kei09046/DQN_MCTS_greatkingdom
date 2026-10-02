@@ -6,11 +6,16 @@
 #include <algorithm>
 #include <vector>
 
-extern std::random_device rd;
-extern std::mt19937 gen;
+// not "random": glibc declares a global random() function, which a namespace of the same name collides with.
+namespace rnd {
+	// one generator per thread, so self-play threads never share generator state.
+	extern thread_local std::mt19937 gen;
 
-std::vector<int> select_indices(int range, int many);
+	std::vector<int> select_indices(int range, int many);
 
-int pick0or1(float zeroProb);
+	int pick0or1(float zeroProb);
+
+	std::vector<float> sample_dirichlet(int k, float alpha);
+}
 
 #endif
