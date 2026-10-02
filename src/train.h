@@ -5,11 +5,10 @@
 #include "memory.h"
 #include "neuralNet.h"
 #include "random.h"
-#include "rotation.h"
+#include "replaybuffer.h"
 #include "consts.h"
 #include "modelcompare.h"
 #include <string>
-#include <deque>
 #include <utility>
 #include <random>
 #include <algorithm>
@@ -30,7 +29,6 @@ private:
 	float captureRatio;
 	int save_cnt; // indicate how many games have been played; used for model naming
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
-	PolicyValueNet prev_policy; // used for comparison
 	PolicyValueNet inference_model, train_model;
 	bool gpu;
 	std::mutex buffer_mutex;
@@ -48,7 +46,7 @@ private:
 	void displayTrainData(const std::shared_ptr<const TrainData> data) const;
 
 public:
-    std::deque<std::shared_ptr<TrainData>>* gameBuffer;
+	ReplayBuffer replayBuffer;
 	std::vector<float>* state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch;
 	std::vector<Trainhead>* type_batch;
 

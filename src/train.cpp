@@ -2,15 +2,14 @@
 
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
-	prev_policy(globalConfig.modelPath + test_model, gpu), current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f){
+	current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f),
+	replayBuffer(globalConfig.capacity){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
 	map_batch = new std::vector<float>(globalConfig.batchSize * boardSize);
 	type_batch = new std::vector<Trainhead>(globalConfig.batchSize);
-
-	gameBuffer = new std::deque<std::shared_ptr<TrainData>>();
 	
 	save_cnt = 0;
 	std::smatch match;
@@ -232,16 +231,10 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					TrainData& data = buffer.at(i);
 					if(i >= startingTurn){
 						std::get<2>(data) = result;
-						if(result < 0) 
-							std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
-						else
-							std::get<5>(data) = VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
+						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
 					}
 					else{
-						if(std::get<2>(data) < 0)
-							std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
-						else
-							std::get<5>(data) = VALUEHEAD | SCOREHEAD;
+						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
 					}
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[i % 2];
@@ -272,72 +265,17 @@ void TrainPipeline::insertData(TrainData& data, const int& forced, const bool& o
 	if(forced < 0 || (forced == 0 && only))
 		std::get<5>(data) &= ~POLICYHEAD;
 
-	std::vector<std::shared_ptr<TrainData>> rotatedData = generateDihedralTransformations(data);
-
-	buffer_mutex.lock();
-	for(std::shared_ptr<TrainData> data : rotatedData){ // add data to the buffer
-		gameBuffer->push_back(data);
-	}
-
-	if (gameBuffer->size() > globalConfig.capacity) {
-		auto excess = gameBuffer->size() - globalConfig.capacity;
-		gameBuffer->erase(gameBuffer->begin(), gameBuffer->begin() + excess);
-	}
-	buffer_mutex.unlock();
+	replayBuffer.add(data); // stored once; a random symmetry is applied when it is sampled
 }
 
 void TrainPipeline::train(){
-	int B = std::min((int)(gameBuffer->size()), globalConfig.batchSize);
+	int B = std::min(static_cast<int>(replayBuffer.size()), globalConfig.batchSize);
 	if(B == 0)
 		return;
 
 	for(int iter = 0; iter < 2; ++iter){
-		std::vector<int> indices = select_indices(std::min((int)(gameBuffer->size()), globalConfig.capacity), B); // randomly select samples from buffer
-		std::vector<std::shared_ptr<TrainData>> batch_data;
-		batch_data.reserve(B);
+		replayBuffer.sampleBatch(B, *state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch);
 
-		buffer_mutex.lock(); 
-		for(int i=0; i<B; ++i){
-			std::shared_ptr<TrainData> data = (*(gameBuffer))[indices[i]];
-			batch_data.push_back(data);
-		}
-		buffer_mutex.unlock();
-
-		// static int cntr = 0;
-		// if(cntr++ % 1 == 0){
-		// 	for(int i=0; i<B; ++i){
-		// 		if(std::get<5>(*batch_data[i]) != NONE){
-		// 			displayTrainData(batch_data[i]);
-		// 			break;
-		// 		}
-		// 	}
-		// }
-
-		// copy data from gameBuffer to batch
-		for (int i = 0; i < B; ++i) {
-			const auto& data = *batch_data[i];
-
-			const auto& state = std::get<0>(data);
-			const auto& nextmove = std::get<1>(data);
-			const auto& map = std::get<4>(data);
-
-			int state_offset = i * globalConfig.inputChannel * inputSize;
-			int available_offset = i * (boardSize + 1);
-			int transfer_offset = i * (boardSize + 1);
-			int move_offset  = i * outputSize;
-			int map_offset = i * boardSize;
-
-			// NN inputs
-			std::copy(state.begin(), state.end(), state_batch->begin() + state_offset);
-
-			// NN outputs
-			std::copy(nextmove.begin(), nextmove.end(), nextmove_batch->begin() + move_offset);
-			(*result_batch)[i] = std::get<2>(data);
-			(*score_batch)[i] = std::get<3>(data);
-			std::copy(map.begin(), map.end(), map_batch->begin() + map_offset);
-			(*type_batch)[i] = std::get<5>(data);
-		}
-		
 		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch,
 			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		train_losses[0].push_back(pLoss);
@@ -380,7 +318,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				self_play_paused[j].store(true);
 				pause_cv.notify_one();
 
-				if(!start_flag && gameBuffer->size() > globalConfig.batchSize){
+				if(!start_flag && replayBuffer.size() > globalConfig.batchSize){
 					start_flag = true; // signal that self-play has started
 					train_cv.notify_one(); // notify train thread
 				}
@@ -477,7 +415,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
     std::thread train_thread([&] {
         while (true) {
             std::unique_lock<std::mutex> lock(train_mutex);
-            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || gameBuffer->size() > globalConfig.batchSize; });
+            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || replayBuffer.size() > globalConfig.batchSize; });
 
 			if(stop_flag){
 				break;
@@ -490,7 +428,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				train_paused.store(pause_flag.load());
 				pause_cv.notify_one();
 			}
-            else if (gameBuffer->size() > globalConfig.batchSize && !pause_flag) {
+            else if (replayBuffer.size() > globalConfig.batchSize && !pause_flag) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(globalConfig.train_wait_time / inference_thread_num));
 				train_iter++;
                 train(); 

@@ -5,7 +5,6 @@
 #include "random.h"
 #include "hash.h"
 #include "evaluator.h"
-#include "dirichlet.h"
 #include <cmath>
 #include <iostream>
 #include <random>
@@ -350,7 +349,7 @@ Move Node::selectMove(float temp, int minVisit){
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
     std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-    float rnd = dist(gen);
+    float rnd = dist(rnd::gen);
 
     auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
     index = std::distance(cumulative.begin(), it);
@@ -426,7 +425,7 @@ MoveData Node::selectMoveProb(float temp, int minVisit){
         std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
         std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-        float rnd = dist(gen);
+        float rnd = dist(rnd::gen);
 
         auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
         int index = std::distance(cumulative.begin(), it);
@@ -551,7 +550,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
 
     // Dirichlet noise is only applied when position is undetermined or lost.
     if(forcedState <= 0 && game.getAvailableMoves().size() > 0){
-        std::vector<float> eta = sample_dirichlet(edgeP.size(), globalConfig.alpha); 
+        std::vector<float> eta = rnd::sample_dirichlet(edgeP.size(), globalConfig.alpha); 
         for(int i=0; i<edgeP.size(); ++i)
             edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
     }

@@ -138,7 +138,7 @@ NNInput PolicyValueNet::getData(const Game& game){
 
 	float diff = game.scoreDiff(turn);
 	for(int i=0; i<inputSize; ++i){ // channel 11 : difference of current score
-		ret.at(11*inputSize + i) = diff;
+		ret.at(11*inputSize + i) = diff / boardSize;
 	}
 
 	// channel 12 ~ 21 : liberty count(inf if adjacent to territory)
@@ -184,24 +184,10 @@ NNInput PolicyValueNet::getData(const Game& game){
 		}
 	}
 
-	// channel 22 : opponent's threat
-	// channel 23 : best move to avoid threat
-	Move threat = game.getThreat();
-	if(threat != RESIGNMOVE){
-		ret.at(22 * inputSize + threat.first * colSize + threat.second) = 1.0f;
-		ret.at(23 * inputSize + game.getAvailableMoves()[0]) = 1.0f;
-	}
-
-	// channel 24 : winning move
-	Move winmove = game.getWin();
-	if(winmove != RESIGNMOVE){
-		ret.at(24 * inputSize + winmove.first * colSize + winmove.second) = 1.0f;
-	}
-
-	// channel 25 : available moves
+	// channel 22 : available moves
 	for(const auto& m : game.getAvailableMoves()){
 		if(m < inputSize)
-			ret.at(25 * inputSize + m) = 1.0f;
+			ret.at(22 * inputSize + m) = 1.0f;
 	}
 
     return {ret};
@@ -247,7 +233,6 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 		{B, globalConfig.inputChannel, rowSize, colSize},
 		options).to(device);
 
-	torch::Tensor stones = inputBatch.index({Slice(), Slice(8, 12), Slice(), Slice()}).sum(1) + inputBatch.index({Slice(), Slice(13, 17), Slice(), Slice()}).sum(1);
 	// ---- Forward pass ----
 	torch::NoGradGuard no_grad;
 	if(use_gpu){
@@ -610,6 +595,9 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
 	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f;
 
+	// BatchNorm uses batch statistics (and updates its running statistics) only while training.
+	policy_value_net->train();
+
 	//static int cntr = 0;
 	for(int i=0; i<globalConfig.epochs; ++i){
 		optimizer->zero_grad();
@@ -650,7 +638,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		torch::Tensor loss = policy_loss + value_loss + score_loss + score_map_loss;
+		torch::Tensor loss = policy_loss + value_loss + score_loss * 0.25f + score_map_loss * 0.25f;
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();
@@ -663,6 +651,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		optimizer->step();
 	}
 	//cntr++;
+	policy_value_net->eval();
 
 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, cmLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 }
@@ -682,23 +671,27 @@ void PolicyValueNet::save_model(const std::string& model_file) const
 }
 
 std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
-	if(model_type == "J") // stone positions of last two turns instead of last two moves; 10 blocks, larger heads
-		return std::make_shared<Net>(26, 10);
-	// A ~ I used the previous Net architecture (2-channel heads) and input layout; they can no longer be loaded.
-	throw std::runtime_error("Unsupported model type: " + model_type);
+	if(model_type == "J") //  23 channel model
+		return std::make_shared<Net>(23, 10);
 }
 
 void PolicyValueNet::load_model(const std::string& model_file){
 	std::shared_ptr<NetBase> net = makeNet();
-	// otherwise start from an untrained network.
 	if (model_file.ends_with(".pt")) {
 		torch::load(net, model_file);
 	}
 	policy_value_net = std::move(net);
 
 	policy_value_net->to(device);
-	torch::optim::AdamOptions opts(l2_const);
-	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), opts);
+	// inference mode: BatchNorm normalizes with its running statistics, so an evaluation doesn't depend on the rest of the batch.
+	policy_value_net->eval();
+
+	// learning rate would be modified by train.cpp later.
+	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), 
+	torch::optim::AdamOptions(0.001f)
+	.betas({0.9, 0.999})
+	.weight_decay(l2_const));
+
 	std::cout << "Model loaded: " << model_file << std::endl;
 }
 

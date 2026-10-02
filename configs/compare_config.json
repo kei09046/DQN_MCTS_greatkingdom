@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "I",
+     "model_prefix": "J",
      "drive_path": "../drive/MyDrive"
   },
 
@@ -37,9 +37,14 @@
     "minVisitRatio": 0.005
   },
 
+  "engines": [
+    {"FPU": -1.0, "minVisitRatio": 0.005},
+    {"FPU": -1.0, "minVisitRatio": 0.005}
+  ],
+
   "nn": {
     "batchSize": 512,
-    "inputChannel": 22
+    "inputChannel": 23
   },
 
   "cache": {
@@ -48,7 +53,7 @@
   },
 
   "train": {
-    "epochs": 5,
+    "epochs": 1,
     "check_freq": 960,
     "compare_game_cnt": 96,
     "compare_thread_num": 12,

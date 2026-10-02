@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "I",
+     "model_prefix": "J",
      "drive_path": "../drive/MyDrive"
   },
 
@@ -39,7 +39,7 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 22
+    "inputChannel": 23
   },
 
   "cache": {
@@ -48,7 +48,7 @@
   },
 
   "train": {
-    "epochs": 5,
+    "epochs": 1,
     "check_freq": 960,
     "compare_game_cnt": 120,
     "compare_thread_num": 12,
