@@ -269,10 +269,7 @@ void TrainPipeline::insertData(TrainData& data, const int& forced, const bool& o
 }
 
 void TrainPipeline::train(){
-	int B = std::min(static_cast<int>(replayBuffer.size()), globalConfig.batchSize);
-	if(B == 0)
-		return;
-
+	const int B = globalConfig.batchSize;
 	for(int iter = 0; iter < 2; ++iter){
 		replayBuffer.sampleBatch(B, *state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch);
 
@@ -289,6 +286,8 @@ void TrainPipeline::train(){
 void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp, const std::string& model_prefix)
 {
 	std::string model_file;
+	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
+	const size_t trainStartPoint = globalConfig.trainStartPoint;
 
 	std::atomic<bool> stop_flag = false;
 	std::atomic<bool> start_flag = false; // flag to indicate if self-play has started
@@ -318,7 +317,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				self_play_paused[j].store(true);
 				pause_cv.notify_one();
 
-				if(!start_flag && replayBuffer.size() > globalConfig.batchSize){
+				if(!start_flag && replayBuffer.size() >= trainStartPoint){
 					start_flag = true; // signal that self-play has started
 					train_cv.notify_one(); // notify train thread
 				}
@@ -415,7 +414,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
     std::thread train_thread([&] {
         while (true) {
             std::unique_lock<std::mutex> lock(train_mutex);
-            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || replayBuffer.size() > globalConfig.batchSize; });
+            train_cv.wait(lock, [&] { return stop_flag || start_flag || pause_flag ^ train_paused || replayBuffer.size() >= trainStartPoint; });
 
 			if(stop_flag){
 				break;
@@ -428,7 +427,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 				train_paused.store(pause_flag.load());
 				pause_cv.notify_one();
 			}
-            else if (replayBuffer.size() > globalConfig.batchSize && !pause_flag) {
+            else if (replayBuffer.size() >= trainStartPoint && !pause_flag) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(globalConfig.train_wait_time / inference_thread_num));
 				train_iter++;
                 train(); 

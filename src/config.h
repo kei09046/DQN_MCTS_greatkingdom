@@ -83,6 +83,7 @@ struct Config {
     int train_wait_time; // decide train/inference thread balance.
     int save_freq; // 96
     int capacity;
+    int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
 };
 extern Config globalConfig;
 

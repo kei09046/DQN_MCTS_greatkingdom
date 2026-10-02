@@ -673,6 +673,7 @@ void PolicyValueNet::save_model(const std::string& model_file) const
 std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
 	if(model_type == "J") //  23 channel model
 		return std::make_shared<Net>(23, 10);
+	throw std::runtime_error("Unsupported model type: " + model_type);
 }
 
 void PolicyValueNet::load_model(const std::string& model_file){

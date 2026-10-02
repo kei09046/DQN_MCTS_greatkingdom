@@ -1,5 +1,6 @@
 #include "config.h"
 #include <fstream>
+#include <stdexcept>
 #include "nlohmann/json.hpp"
 
 
@@ -75,6 +76,9 @@ Config loadConfig(const std::string& path) {
     c.train_wait_time    = T.at("train_wait_time");
     c.save_freq          = T.at("save_freq");
     c.capacity           = T.at("capacity");
+    c.trainStartPoint    = T.at("trainStartPoint");
+    if(c.trainStartPoint < c.batchSize)
+        throw std::runtime_error("trainStartPoint must be at least batchSize");
 
     //dirichlet noise
     auto& D = j.at("dirichlet_noise");

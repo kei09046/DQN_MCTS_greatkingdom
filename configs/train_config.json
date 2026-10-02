@@ -55,6 +55,7 @@
     "search_thread_num": 4,
     "train_wait_time": 30000,
     "save_freq": 96,
-    "capacity": 300000
+    "capacity": 300000,
+    "trainStartPoint": 20000
   }
 }
