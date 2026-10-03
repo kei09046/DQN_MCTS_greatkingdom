@@ -26,10 +26,15 @@ struct PackedSample {
 };
 
 // Fixed-capacity ring buffer of self-play positions. Thread-safe: self-play threads add, the train thread samples.
+// Samples are drawn from a window of the newest positions that grows with the number of positions added,
+// so early in training the latest games aren't drowned out by the first, weakest ones.
 class ReplayBuffer {
 private:
 	std::vector<PackedSample> samples;
 	const size_t capacity;
+	const size_t minWindow;
+	const float windowFraction;
+	size_t added = 0; // positions added in total, including overwritten ones
 	size_t next = 0; // slot overwritten by the next add() once the buffer is full
 	std::atomic<size_t> count = 0;
 	std::mutex mtx;
@@ -37,17 +42,24 @@ private:
 
 	static PackedSample pack(const TrainData& data);
 
+	size_t windowLocked() const; // window(), with mtx already held
+
 	// writes s, transformed by symmetry sym, into the given rows of the batch arrays.
 	static void unpack(const PackedSample& s, int sym, float* state, float* policy, float* map);
 
 public:
-	explicit ReplayBuffer(size_t capacity);
+	ReplayBuffer(size_t capacity, size_t minWindow, float windowFraction);
 
 	void add(const TrainData& data);
 
 	size_t size() const { return count.load(); }
 
-	// Draws B positions uniformly at random (with replacement) and applies a random symmetry to each.
+	size_t totalAdded();
+
+	// number of newest positions sampleBatch draws from: max(minWindow, windowFraction * totalAdded()), at most size().
+	size_t window();
+
+	// Draws B positions uniformly at random (with replacement) from the window and applies a random symmetry to each.
 	// The batch vectors must already hold at least B rows.
 	void sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
 		std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch);

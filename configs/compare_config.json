@@ -61,6 +61,7 @@
     "train_wait_time": 200000,
     "save_freq": 96,
     "capacity": 10000,
-    "trainStartPoint": 20000
+    "trainStartPoint": 20000,
+    "windowFraction": 0.25
   }
 }

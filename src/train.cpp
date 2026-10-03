@@ -3,7 +3,7 @@
 TrainPipeline::TrainPipeline(std::string init_model,
 	std::string test_model, bool gpu) : train_model(globalConfig.modelPath + init_model, gpu), inference_model(globalConfig.modelPath + init_model, gpu),
 	current_best_model_file(test_model), gpu(gpu), captureRatio(0.5f),
-	replayBuffer(globalConfig.capacity){
+	replayBuffer(globalConfig.capacity, globalConfig.trainStartPoint, globalConfig.windowFraction){
 	state_batch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
@@ -152,6 +152,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 	std::vector<Move> sequence;
 	std::vector<TrainData> buffer;
+	// moves before the first capture: the real game. Later positions can't occur in a real game (captured stones stay on the board).
+	int firstCapture = -1;
 	std::vector<int> forced;
 	std::vector<bool> only; 
 
@@ -226,6 +228,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				total_score_diff.fetch_add((int)score_diff);
 				total_game_length.fetch_add(sequence.size());
 
+				const int realGameEnd = (firstCapture < 0) ? sequence.size() : firstCapture;
+
 				//insert Data
 				for(int i=0; i<sequence.size(); ++i){
 					TrainData& data = buffer.at(i);
@@ -236,6 +240,9 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					else{
 						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
 					}
+					// continuation after the first capture is only played to get score / occupy targets.
+					if(i >= realGameEnd)
+						std::get<5>(data) &= ~(POLICYHEAD | VALUEHEAD);
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[i % 2];
 					insertData(data, forced.at(i), only.at(i));
@@ -253,6 +260,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				}
 				player->reset(game_manager);
 				startingTurn = sequence.size();
+				if(firstCapture < 0)
+					firstCapture = sequence.size();
 			}
 		}
 	}
@@ -273,13 +282,14 @@ void TrainPipeline::train(){
 	for(int iter = 0; iter < 2; ++iter){
 		replayBuffer.sampleBatch(B, *state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch);
 
-		auto [pLoss, vLoss, sLoss, cmLoss, smLoss] = train_model.train(*state_batch,
+		auto [pLoss, vLoss, sLoss, cmLoss, smLoss, pEntropy] = train_model.train(*state_batch,
 			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		train_losses[0].push_back(pLoss);
 		train_losses[1].push_back(vLoss);
 		train_losses[2].push_back(sLoss);
 		train_losses[3].push_back(cmLoss);
 		train_losses[4].push_back(smLoss); 
+		train_losses[5].push_back(pEntropy);
 	}
 }
 
@@ -349,8 +359,15 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					captureRatio = static_cast<float>((wintype_counter[1] + wintype_counter[3])) / game_played;
 					std::cout << "games played : " << game_played << std::endl;
 					std::cout << "capture ratio : " << captureRatio << std::endl;
+					std::cout << "replay buffer : " << replayBuffer.size() << " stored, sampling window " << replayBuffer.window()
+						<< ", " << replayBuffer.totalAdded() << " positions added in total" << std::endl;
 					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
+					if(!train_losses[0].empty()){
+						const auto mean = [](const std::vector<float>& v){ return std::accumulate(v.begin(), v.end(), 0.0f) / v.size(); };
+						std::cout << "mean policy loss : " << mean(train_losses[0]) << " policy target entropy : " << mean(train_losses[5])
+							<< " policy KL : " << mean(train_losses[0]) - mean(train_losses[5]) << " value loss : " << mean(train_losses[1]) << std::endl;
+					}
 					std::cout << "train losses : " << std::endl;
 					for(int i=0; i<9; ++i){
 						for(float l : train_losses[i])

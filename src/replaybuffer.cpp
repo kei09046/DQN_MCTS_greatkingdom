@@ -32,7 +32,8 @@ namespace {
 	}();
 }
 
-ReplayBuffer::ReplayBuffer(size_t capacity) : capacity(capacity), rng(std::random_device{}()) {
+ReplayBuffer::ReplayBuffer(size_t capacity, size_t minWindow, float windowFraction)
+	: capacity(capacity), minWindow(minWindow), windowFraction(windowFraction), rng(std::random_device{}()) {
 	if(capacity == 0)
 		throw std::invalid_argument("replay buffer capacity must be positive");
 }
@@ -108,6 +109,7 @@ void ReplayBuffer::add(const TrainData& data){
 	PackedSample s = pack(data); // outside the lock
 
 	std::lock_guard<std::mutex> lock(mtx);
+	++added;
 	if(samples.size() < capacity){
 		samples.push_back(std::move(s));
 		count.store(samples.size());
@@ -116,6 +118,21 @@ void ReplayBuffer::add(const TrainData& data){
 		samples[next] = std::move(s);
 		next = (next + 1) % capacity;
 	}
+}
+
+size_t ReplayBuffer::windowLocked() const{
+	const size_t grown = static_cast<size_t>(windowFraction * added);
+	return std::min(std::max(minWindow, grown), samples.size());
+}
+
+size_t ReplayBuffer::totalAdded(){
+	std::lock_guard<std::mutex> lock(mtx);
+	return added;
+}
+
+size_t ReplayBuffer::window(){
+	std::lock_guard<std::mutex> lock(mtx);
+	return windowLocked();
 }
 
 void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
@@ -130,11 +147,13 @@ void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vect
 		|| score_batch.size() < static_cast<size_t>(B) || type_batch.size() < static_cast<size_t>(B))
 		throw std::runtime_error("batch arrays are smaller than the requested batch");
 
-	std::uniform_int_distribution<size_t> pickSample(0, samples.size() - 1);
+	// age 0 is the newest position. Before the buffer is full the newest is at the back, afterwards just before next.
+	const size_t newest = (samples.size() < capacity) ? samples.size() - 1 : (next + capacity - 1) % capacity;
+	std::uniform_int_distribution<size_t> pickAge(0, windowLocked() - 1);
 	std::uniform_int_distribution<int> pickSym(0, 7);
 
 	for(int b = 0; b < B; ++b){
-		const PackedSample& s = samples[pickSample(rng)];
+		const PackedSample& s = samples[(newest + samples.size() - pickAge(rng)) % samples.size()];
 		unpack(s, pickSym(rng), state_batch.data() + b * channels * inputSize,
 			nextmove_batch.data() + b * outputSize, map_batch.data() + b * boardSize);
 		result_batch[b] = s.result;

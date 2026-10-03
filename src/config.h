@@ -84,6 +84,7 @@ struct Config {
     int save_freq; // 96
     int capacity;
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
+    float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
 };
 extern Config globalConfig;
 

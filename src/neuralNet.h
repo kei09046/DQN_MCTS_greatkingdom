@@ -195,7 +195,8 @@ public:
 	// std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
 	// 	std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 	
-	std::tuple<float, float, float, float, float> train(std::vector<float>& state_batch,
+	// returns policy, value, score, capture map, score map loss and the entropy of the policy targets.
+	std::tuple<float, float, float, float, float, float> train(std::vector<float>& state_batch,
          std::vector<float>& nextmove_batch,
 		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr);
 

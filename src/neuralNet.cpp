@@ -548,7 +548,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 // }
 
-std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
+std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
 	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
 	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr){
 
@@ -578,11 +578,13 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	auto mask = torch::from_blob(type_batch.data(), {B, 1}, torch::kUInt8).to(device);
 
 	auto pmask = (mask & POLICYHEAD).to(torch::kBool);
+	auto vmask = (mask & VALUEHEAD).to(torch::kBool);
 	auto smask = (mask & SCOREHEAD).to(torch::kBool);
 	auto sm_mask = (mask & OCCUPYHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
 	auto cap_mask = (mask & CMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
 
 	auto policy_active_elements = pmask.sum().item<float>() + 1e-8f;
+	auto value_active_elements = vmask.sum().item<float>() + 1e-8f;
 	auto score_active_elements = smask.sum().item<float>() + 1e-8f;
 	auto smap_active_elements = sm_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
 	auto cap_active_elements = cap_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
@@ -594,6 +596,14 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
 	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f;
+
+	// entropy of the policy targets: the lowest policy loss reachable on this batch. policy loss - entropy = KL(target || net).
+	float pEntropy;
+	{
+		torch::NoGradGuard no_grad;
+		auto entropy_per_sample = -torch::sum(mp * torch::log(mp.clamp_min(1e-12f)), 1, /*keepdim=*/true); // [B, 1]
+		pEntropy = ((entropy_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements).item<float>();
+	}
 
 	// BatchNorm uses batch statistics (and updates its running statistics) only while training.
 	policy_value_net->train();
@@ -617,7 +627,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 		torch::Tensor policy_loss_per_sample = -torch::sum(mp * log_move_probs, 1, /*keepdim=*/true); // [B, 1]
 		torch::Tensor policy_loss = (policy_loss_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements;
 
-		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
+		torch::Tensor value_loss = ((r2 - wb).pow(2) * vmask.to(torch::kFloat32)).sum() / value_active_elements;
 
 		auto masked_r3 = r3 * smask;
 		torch::Tensor score_loss = huber_loss(masked_r3, sd);
@@ -653,7 +663,7 @@ std::tuple<float, float, float, float, float> PolicyValueNet::train(std::vector<
 	//cntr++;
 	policy_value_net->eval();
 
-	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, cmLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
+	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, cmLoss / globalConfig.epochs, smLoss / globalConfig.epochs, pEntropy};
 }
 
 void PolicyValueNet::save_model(const std::string& model_file) const
