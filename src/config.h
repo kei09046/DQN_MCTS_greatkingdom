@@ -28,6 +28,7 @@ struct Config {
     std::string modelPath;
     std::string modelPrefix;
     std::string drivePath;
+    std::string dataPath; // replay buffer snapshots
 
     // board
     float komi;

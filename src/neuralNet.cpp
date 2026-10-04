@@ -550,7 +550,7 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 
 std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
 	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
-	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr){
+	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr, bool update){
 
 	int B = result_batch.size();
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
@@ -606,10 +606,12 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 	}
 
 	// BatchNorm uses batch statistics (and updates its running statistics) only while training.
-	policy_value_net->train();
+	policy_value_net->train(update);
+	torch::AutoGradMode grad_mode(update);
+	const int passes = update ? globalConfig.epochs : 1;
 
 	//static int cntr = 0;
-	for(int i=0; i<globalConfig.epochs; ++i){
+	for(int i=0; i<passes; ++i){
 		optimizer->zero_grad();
 
 		auto [r1, r2, r3, r4] = policy_value_net->forward(sb);
@@ -656,14 +658,16 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 		smLoss += score_map_loss.item<float>();
 		// cmLoss += capture_loss.item<float>();
 
-		loss.backward();
-		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
-		optimizer->step();
+		if(update){
+			loss.backward();
+			torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
+			optimizer->step();
+		}
 	}
 	//cntr++;
 	policy_value_net->eval();
 
-	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, cmLoss / globalConfig.epochs, smLoss / globalConfig.epochs, pEntropy};
+	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy};
 }
 
 void PolicyValueNet::save_model(const std::string& model_file) const
@@ -699,11 +703,28 @@ void PolicyValueNet::load_model(const std::string& model_file){
 
 	// learning rate would be modified by train.cpp later.
 	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), 
-	torch::optim::AdamOptions(0.001f)
+	torch::optim::AdamOptions(0.0002f)
 	.betas({0.9, 0.999})
 	.weight_decay(l2_const));
 
 	std::cout << "Model loaded: " << model_file << std::endl;
+}
+
+void PolicyValueNet::load_weights(const std::string& model_file){
+	std::shared_ptr<NetBase> loaded = makeNet();
+	torch::load(loaded, model_file);
+
+	// copy into the existing tensors: the optimizer refers to them, so its state carries over.
+	torch::NoGradGuard no_grad;
+	auto dst_params = policy_value_net->named_parameters();
+	for(const auto& item : loaded->named_parameters())
+		dst_params[item.key()].copy_(item.value());
+	auto dst_buffers = policy_value_net->named_buffers();
+	for(const auto& item : loaded->named_buffers())
+		dst_buffers[item.key()].copy_(item.value());
+
+	policy_value_net->eval();
+	std::cout << "Model weights loaded: " << model_file << std::endl;
 }
 
 

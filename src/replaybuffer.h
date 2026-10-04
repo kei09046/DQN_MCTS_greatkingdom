@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <mutex>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,17 @@ public:
 	ReplayBuffer(size_t capacity, size_t minWindow, float windowFraction);
 
 	void add(const TrainData& data);
+
+	void addPacked(PackedSample s);
+
+	// writes every stored position, oldest first, to path (directories are created). Atomic: written to path.tmp, then renamed.
+	void save(const std::string& path);
+
+	// replaces the contents with the positions in path (keeping the newest capacity of them).
+	void load(const std::string& path);
+
+	// positions in a file written by save(), oldest first. added : total positions added when it was saved.
+	static std::vector<PackedSample> readFile(const std::string& path, size_t& added);
 
 	size_t size() const { return count.load(); }
 

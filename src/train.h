@@ -61,4 +61,8 @@ public:
 	void run(const int game_batch_num=10000, const int inference_thread_num=4, const bool is_shown=false, float temp=0.5f, const std::string& model_prefix="model");
 };
 
+// Trains an untrained network on positions saved by ReplayBuffer::save, reporting training and validation
+// losses as it goes. The newest validation_fraction of the positions are held out. Saves <prefix>static.pt.
+void trainOnStaticData(const std::string& data_file, int steps, float lr, float validation_fraction = 0.1f);
+
 #endif

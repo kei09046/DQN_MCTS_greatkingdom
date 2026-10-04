@@ -28,6 +28,7 @@ Config loadConfig(const std::string& path) {
     c.modelPath   = P.at("model_path");
     c.modelPrefix = P.at("model_prefix");
     c.drivePath   = P.at("drive_path");
+    c.dataPath    = P.value("data_path", std::string("../data/"));
 
     // rating
     auto& R = j.at("rating");

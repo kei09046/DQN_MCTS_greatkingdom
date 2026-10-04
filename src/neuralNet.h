@@ -196,13 +196,18 @@ public:
 	// 	std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 	
 	// returns policy, value, score, capture map, score map loss and the entropy of the policy targets.
+	// update = false only measures the losses (inference mode, no optimizer step), e.g. on validation data.
 	std::tuple<float, float, float, float, float, float> train(std::vector<float>& state_batch,
          std::vector<float>& nextmove_batch,
-		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr);
+		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr,
+		bool update = true);
 
 	void save_model(const std::string& model_file) const;
 
 	void load_model(const std::string& model_file);
+
+	// replaces the weights (and BatchNorm statistics) with the ones in model_file, keeping the optimizer state.
+	void load_weights(const std::string& model_file);
 };
 
 #endif

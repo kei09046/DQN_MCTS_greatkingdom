@@ -10,7 +10,8 @@
   "path": {
      "model_path": "../models/",
      "model_prefix": "J",
-     "drive_path": "../drive/MyDrive"
+     "drive_path": "../drive/MyDrive",
+     "data_path": "../data/"
   },
 
   "rating": {

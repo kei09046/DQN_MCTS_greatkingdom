@@ -6,6 +6,7 @@
 #include <tuple>
 #include <string>
 #include <algorithm>
+#include <filesystem>
 
 Config globalConfig;
 
@@ -87,6 +88,17 @@ int main(int argc, char** argv) {
         for(int i=0; i<n_models; ++i)
             params.push_back(globalConfig.engineParams(i));
         ModelCompare::policy_evaluate(model_list, std::cout, false, true, temp, n_games, params);
+    }
+    else if(mod == "test"){
+        // ./play test <data file> [steps] [learning rate] : train an untrained network on a saved replay buffer.
+        // a bare file name is looked up in data_path.
+        globalConfig = loadConfig("../configs/train_config.json");
+        std::string data_file = argv[2];
+        if(!std::filesystem::exists(data_file))
+            data_file = globalConfig.dataPath + data_file;
+        int steps = (argc > 3) ? std::stoi(argv[3]) : 20000;
+        float lr = (argc > 4) ? std::stof(argv[4]) : 0.0002f;
+        trainOnStaticData(data_file, steps, lr);
     }
     else if(mod == "test_hash"){
         Hash hash;

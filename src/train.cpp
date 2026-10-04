@@ -383,6 +383,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						train_losses[i].clear();
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
+						// training data at the time of this checkpoint, for offline training (./play test <file>)
+						const std::string data_file = globalConfig.dataPath + model_prefix + std::to_string(games_played + save_cnt) + ".bin";
+						replayBuffer.save(data_file);
+						std::cout << "training data saved : " << data_file << " (" << replayBuffer.size() << " positions)" << std::endl;
+
 						globalConfig = loadConfig("../configs/compare_config.json");
 
 						float winrate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
@@ -406,7 +411,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						}
 						else if(winrate < 0.35f){
 							std::cout << "model fallback!" << std::endl;
-							train_model.load_model(globalConfig.modelPath + current_best_model_file);
+							train_model.load_weights(globalConfig.modelPath + current_best_model_file); // keeps the optimizer state
 						}
 						
 						globalConfig = loadConfig("../configs/train_config.json");
@@ -474,7 +479,7 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	learning_rate = (games_played < 65280) ? 0.001f : 0.001f * std::pow(0.95f, (games_played - 65280) / 960);
+	learning_rate = (games_played < 65280) ? 0.0002f : 0.0002f * std::pow(0.95f, (games_played - 65280) / 960);
 	//learning_rate = 0.001f;
 }
 
@@ -544,4 +549,67 @@ void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data
 			std::cout << "\n";
 		}
 	}
+}
+void trainOnStaticData(const std::string& data_file, int steps, float lr, float validation_fraction){
+	size_t added = 0;
+	std::vector<PackedSample> samples = ReplayBuffer::readFile(data_file, added);
+	const int B = globalConfig.batchSize;
+
+	// positions are stored oldest first and a game's positions are consecutive, so taking the newest ones as
+	// validation keeps (all but one) games entirely on one side. A random split would put positions of the same
+	// game on both sides, and the value head could pass validation by remembering game outcomes.
+	const size_t n_val = static_cast<size_t>(samples.size() * validation_fraction);
+	const size_t n_train = samples.size() - n_val;
+	if(n_val < static_cast<size_t>(B) || n_train < static_cast<size_t>(B))
+		throw std::runtime_error("not enough positions in " + data_file + " for a batch of " + std::to_string(B) + " on each side");
+
+	ReplayBuffer train_buffer(n_train, n_train, 1.0f), val_buffer(n_val, n_val, 1.0f);
+	for(size_t i = 0; i < samples.size(); ++i)
+		(i < n_train ? train_buffer : val_buffer).addPacked(std::move(samples[i]));
+	samples.clear();
+	std::cout << data_file << " : " << n_train << " training / " << n_val << " validation positions, "
+		<< steps << " steps, learning rate " << lr << std::endl;
+
+	PolicyValueNet net("none", torch::cuda::is_available()); // untrained
+	std::vector<float> state(B * globalConfig.inputChannel * inputSize), move(B * outputSize), result(B), score(B), map(B * boardSize);
+	std::vector<Trainhead> type(B);
+
+	using Losses = std::array<float, 6>; // policy, value, score, capture map, score map, target entropy
+	const auto print = [](const char* name, const Losses& l){
+		std::cout << " | " << name << " policy " << l[0] << " (entropy " << l[5] << ", KL " << l[0] - l[5] << ") value " << l[1]
+			<< " score " << l[2] << " score map " << l[4];
+	};
+
+	const int report_every = 200, val_batches = 8;
+	Losses train_sum{};
+	for(int step = 1; step <= steps; ++step){
+		train_buffer.sampleBatch(B, state, move, result, score, map, type);
+		const auto [p, v, s, cm, sm, e] = net.train(state, move, result, score, map, type, lr);
+		const Losses l{p, v, s, cm, sm, e};
+		for(int k = 0; k < 6; ++k)
+			train_sum[k] += l[k];
+
+		if(step % report_every == 0 || step == steps){
+			const int n = (step % report_every == 0) ? report_every : step % report_every;
+			Losses train_mean, val_mean{};
+			for(int k = 0; k < 6; ++k)
+				train_mean[k] = train_sum[k] / n;
+			for(int b = 0; b < val_batches; ++b){
+				val_buffer.sampleBatch(B, state, move, result, score, map, type);
+				const auto [vp, vv, vs, vcm, vsm, ve] = net.train(state, move, result, score, map, type, lr, /*update=*/false);
+				const Losses vl{vp, vv, vs, vcm, vsm, ve};
+				for(int k = 0; k < 6; ++k)
+					val_mean[k] += vl[k] / val_batches;
+			}
+			std::cout << "step " << step;
+			print("train", train_mean);
+			print("validation", val_mean);
+			std::cout << std::endl;
+			train_sum = {};
+		}
+	}
+
+	const std::string model_file = globalConfig.modelPath + globalConfig.modelPrefix + "static.pt";
+	net.save_model(model_file);
+	std::cout << "model saved : " << model_file << std::endl;
 }
