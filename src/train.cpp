@@ -479,7 +479,7 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 }
 
 void TrainPipeline::setLearningRate(const int games_played){
-	learning_rate = (games_played < 65280) ? 0.0002f : 0.0002f * std::pow(0.95f, (games_played - 65280) / 960);
+	learning_rate = (games_played < 26880) ? 0.0002f : 0.0002f * std::pow(0.95f, (games_played - 26880) / 960);
 	//learning_rate = 0.001f;
 }
 
