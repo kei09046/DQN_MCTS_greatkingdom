@@ -284,6 +284,10 @@ void TrainPipeline::train(){
 
 		auto [pLoss, vLoss, sLoss, cmLoss, smLoss, pEntropy] = train_model.train(*state_batch,
 			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
+		if(!std::isfinite(pLoss) || !std::isfinite(vLoss) || !std::isfinite(sLoss) || !std::isfinite(smLoss)){
+			skipped_steps++; // train_model.train skipped the optimizer step
+			continue;
+		}
 		train_losses[0].push_back(pLoss);
 		train_losses[1].push_back(vLoss);
 		train_losses[2].push_back(sLoss);
@@ -361,6 +365,10 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					std::cout << "capture ratio : " << captureRatio << std::endl;
 					std::cout << "replay buffer : " << replayBuffer.size() << " stored, sampling window " << replayBuffer.window()
 						<< ", " << replayBuffer.totalAdded() << " positions added in total" << std::endl;
+					if(skipped_steps > 0 || replayBuffer.dropped() > 0)
+						std::cout << "non-finite data : " << skipped_steps << " training steps skipped, "
+							<< replayBuffer.dropped() << " positions dropped in total" << std::endl;
+					skipped_steps = 0;
 					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
 					if(!train_losses[0].empty()){

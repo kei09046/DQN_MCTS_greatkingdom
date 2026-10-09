@@ -38,6 +38,7 @@ private:
 	size_t added = 0; // positions added in total, including overwritten ones
 	size_t next = 0; // slot overwritten by the next add() once the buffer is full
 	std::atomic<size_t> count = 0;
+	std::atomic<size_t> droppedCount = 0; // positions rejected by add() for a non-finite value
 	std::mutex mtx;
 	std::mt19937 rng; // used only under mtx
 
@@ -51,7 +52,10 @@ private:
 public:
 	ReplayBuffer(size_t capacity, size_t minWindow, float windowFraction);
 
+	// positions with a non-finite number anywhere (input, policy, value, score, map) are logged and dropped.
 	void add(const TrainData& data);
+
+	size_t dropped() const { return droppedCount.load(); }
 
 	void addPacked(PackedSample s);
 

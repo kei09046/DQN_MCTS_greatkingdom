@@ -120,7 +120,7 @@ void Evaluator::updateModel(PolicyValueNet* updatedNet) {
 		dst_state[item.key()].copy_(item.value());
 	}
 
-	// BatchNorm running mean / variance are buffers, not parameters.
+	// BatchNorm params.
 	auto src_buf = updatedNet->policy_value_net->named_buffers();
 	auto dst_buf = net->policy_value_net->named_buffers();
 

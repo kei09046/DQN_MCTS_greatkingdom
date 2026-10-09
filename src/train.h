@@ -28,6 +28,7 @@ private:
 	float learning_rate;
 	float captureRatio;
 	int save_cnt; // indicate how many games have been played; used for model naming
+	int skipped_steps = 0; // training steps skipped for a non-finite loss since the last save
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet inference_model, train_model;
 	bool gpu;

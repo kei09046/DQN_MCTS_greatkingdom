@@ -659,8 +659,17 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 		// cmLoss += capture_loss.item<float>();
 
 		if(update){
+			// a single non-finite loss or gradient would write NaN into every weight: skip the step instead.
+			if(!std::isfinite(loss.item<float>())){
+				std::cerr << "non-finite loss: optimizer step skipped" << std::endl;
+				continue;
+			}
 			loss.backward();
-			torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
+			const double grad_norm = torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
+			if(!std::isfinite(grad_norm)){
+				std::cerr << "non-finite gradient norm: optimizer step skipped" << std::endl;
+				continue; // zero_grad() at the start of the next pass clears it
+			}
 			optimizer->step();
 		}
 	}

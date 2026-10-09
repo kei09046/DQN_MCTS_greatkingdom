@@ -387,18 +387,32 @@ MoveData Node::selectMoveProb(float temp, int minVisit){
         }
     }
 
-    // proven lost root (forcedState < -1) only gets here with every move losing: just take the most visited one.
+    // select most visited move. 
     else if(temp >= 5.0f || game.getMoveCount() >= 10 || forcedState < 0){
         const float visitSum = std::accumulate(edgeN.begin(), edgeN.end(), 0.0f);
-        int maxi, maxn = -1;
-        for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            if(edgeN[i] > maxn){
-                maxn = edgeN[i];
-                maxi = i;
+
+        if(visitSum != 0.0f){
+            int maxi, maxn = -1;
+            for(int i=0; i<game.getAvailableMoves().size(); ++i){
+                if(edgeN[i] > maxn){
+                    maxn = edgeN[i];
+                    maxi = i;
+                }
+                visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/visitSum;
             }
-            visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/visitSum;
+            selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
         }
-        selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
+        // very rare case where we enter a lost position without any search count on it. This can happen by 
+        // continuing the game at the point where it's lost.
+        // Fallback : make first available move and visitPortion (1/n, 1/n, ... , 1/n)
+        // Since forcedState < 0, policy head would not be trained with this empty value.
+        else{
+            const auto& moves = game.getAvailableMoves();
+            assert(!moves.empty());
+            for(const auto& m : moves)
+                visitPortion[m] = 1.0f / moves.size();
+            selectedMove = {moves.front() / colSize, moves.front() % colSize};
+        }
     }
 
     else{
@@ -415,6 +429,8 @@ MoveData Node::selectMoveProb(float temp, int minVisit){
             counted[i] = edgeN[i] - minVisit;
         }
         const float visitSum = std::accumulate(counted.begin(), counted.end(), 0.0f);
+        // only possible if minVisitRatio * (number of available moves) >= 1.
+        assert(visitSum > 0.0f && "no visits above minVisit at the root");
 
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
             visitPortion[game.getAvailableMoves()[i]] = counted[i]/visitSum;

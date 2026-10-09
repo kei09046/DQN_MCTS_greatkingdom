@@ -3,6 +3,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 
@@ -190,7 +191,28 @@ void ReplayBuffer::unpack(const PackedSample& s, int sym, float* state, float* p
 		map[to[i]] = s.map[i];
 }
 
+namespace {
+	// name of the first part of data holding a non-finite number, or nullptr if everything is finite.
+	const char* nonFinitePart(const TrainData& data){
+		const auto& [state, policy, result, score, map, type] = data;
+		const auto finite = [](const std::vector<float>& v){
+			return std::all_of(v.begin(), v.end(), [](float x){ return std::isfinite(x); });
+		};
+		if(!finite(state)) return "input";
+		if(!finite(policy)) return "policy target";
+		if(!std::isfinite(result)) return "value target";
+		if(!std::isfinite(score)) return "score target";
+		if(!finite(map)) return "map target";
+		return nullptr;
+	}
+}
+
 void ReplayBuffer::add(const TrainData& data){
+	if(const char* bad = nonFinitePart(data)){
+		++droppedCount;
+		std::cerr << "replay buffer : dropped a position with a non-finite " << bad << std::endl;
+		return;
+	}
 	addPacked(pack(data)); // packed outside the lock
 }
 
