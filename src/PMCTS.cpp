@@ -415,21 +415,23 @@ MoveData Node::selectMoveProb(float temp, int minVisit){
         }
     }
 
+    // root is not determined win/loss after playouts.
     else{
         std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
 
         // visits above minVisit. Proven losing moves get no minimum visits (see MCTS::runSimulation) and count as 0.
-        std::vector<float> counted(game.getAvailableMoves().size());
+        std::vector<float> counted(game.getAvailableMoves().size(), 0.0f);
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            if(child[i] != nullptr && child[i]->forcedState > 0){
-                counted[i] = 0.0f;
-                continue;
+            if(child[i] == nullptr || child[i]->forcedState <= 0){
+                assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
+                counted[i] = edgeN[i] - minVisit;
             }
-            assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
-            counted[i] = edgeN[i] - minVisit;
         }
+
         const float visitSum = std::accumulate(counted.begin(), counted.end(), 0.0f);
-        // only possible if minVisitRatio * (number of available moves) >= 1.
+        if(visitSum == 0.0f){
+            game.displayBoardGUI(true);
+        }
         assert(visitSum > 0.0f && "no visits above minVisit at the root");
 
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
