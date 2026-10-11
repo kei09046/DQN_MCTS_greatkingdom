@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <array>
+#include <optional>
 #include <iostream>
 #include "config.h"
 
@@ -16,7 +17,8 @@ using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vect
 
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
-using MoveData = std::tuple<Move, std::vector<float>, int, bool>; // move + move probability + forcedState + onlyMove?
+// move + move probability + forcedState + onlyMove? + root value after search (see Node::selectMoveWithStat)
+using MoveData = std::tuple<Move, std::vector<float>, int, bool, std::optional<float>>;
 
 // for training heads
 using Trainhead = uint8_t;

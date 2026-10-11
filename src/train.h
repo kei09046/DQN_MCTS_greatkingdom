@@ -21,13 +21,38 @@
 #include <mutex>
 #include <regex>
 #include <chrono>
+#include <cmath>
+#include <optional>
+#include <tuple>
 
+
+// running comparison of the search's root value q with the game result z over value-trained positions.
+// A negative correlation means q is read from the wrong perspective.
+class ValueTargetStats {
+	std::mutex mtx;
+	double n = 0, sq = 0, sz = 0, sqq = 0, szz = 0, sqz = 0, sabs = 0;
+public:
+	void add(float q, float z){
+		std::lock_guard<std::mutex> lock(mtx);
+		n += 1; sq += q; sz += z; sqq += q * q; szz += z * z; sqz += q * z; sabs += std::abs(q - z);
+	}
+	// (count, Pearson correlation, mean |q - z|) since the last call; resets the counters.
+	std::tuple<long, double, double> takeSummary(){
+		std::lock_guard<std::mutex> lock(mtx);
+		const double cov = sqz / n - (sq / n) * (sz / n);
+		const double var = (sqq / n - (sq / n) * (sq / n)) * (szz / n - (sz / n) * (sz / n));
+		const std::tuple<long, double, double> out{static_cast<long>(n), (n > 1 && var > 0) ? cov / std::sqrt(var) : 0.0, n > 0 ? sabs / n : 0.0};
+		n = sq = sz = sqq = szz = sqz = sabs = 0;
+		return out;
+	}
+};
 
 class TrainPipeline {
 private:
 	float learning_rate;
 	float captureRatio;
 	int save_cnt; // indicate how many games have been played; used for model naming
+	ValueTargetStats valueTargetStats;
 	int skipped_steps = 0; // training steps skipped for a non-finite loss since the last save
 	int games_played = 0; // used to check how many games have been played by inference model. Used for multiple inference threads case. 
 	PolicyValueNet inference_model, train_model;

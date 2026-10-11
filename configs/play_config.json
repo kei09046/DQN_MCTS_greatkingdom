@@ -58,6 +58,7 @@
     "save_freq": 96,
     "capacity": 10000,
     "trainStartPoint": 20000,
-    "windowFraction": 0.25
+    "windowFraction": 0.25,
+    "valueQMix": 0.5
   }
 }

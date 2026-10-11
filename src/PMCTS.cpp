@@ -358,7 +358,7 @@ Move Node::selectMove(float temp, int minVisit){
 }
 
 
-MoveData Node::selectMoveProb(float temp, int minVisit){
+MoveData Node::selectMoveWithStat(float temp, int minVisit){
     std::vector<float> visitPortion(outputSize, 0.0f);
     Move selectedMove;
 
@@ -457,7 +457,17 @@ MoveData Node::selectMoveProb(float temp, int minVisit){
     // std::cerr << "Selected moves : ";
     // printMove(selectedMove);
 
-    return {selectedMove, visitPortion, forcedState, game.getAvailableMoves().size() == 1};
+    // forcedState > 0 : the side to move has a proven win, so the player who moved into this node loses.
+    // forced leaves back up +-1; clamp to the +-0.9 scale of the game result targets.
+    std::optional<float> value;
+    if(forcedState > 0)
+        value = -0.9f;
+    else if(forcedState < 0)
+        value = 0.9f;
+    else if(valueN() > 0.0f)
+        value = std::clamp(Wp / valueN(), -0.9f, 0.9f);
+
+    return {selectedMove, visitPortion, forcedState, game.getAvailableMoves().size() == 1, value};
 }
 
 Node* Node::jump(Move move){
@@ -621,21 +631,20 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 
         if(minSearchPerChild > 0 && root->forcedState == 0){
             // returns false if child j should not get minimum visits. Marks root as won if child j is a proven loss for opponent.
-            auto needsVisit = [&](int j){
-                const Node* c = root->child[j];
+            auto needsVisit = [&](const Node* c){
                 // winning move found: root is proven won, same as selectChildInSearch would mark it.
                 if(c != nullptr && c->forcedState < 0){
                     root->forcedState = -c->forcedState + 1;
                     return false;
                 }
-                // proven losing move: don't spend minimum visits on it (selectMove/selectMoveProb ignore it).
+                // proven losing move: don't spend minimum visits on it (selectMove/selectMoveWithStat ignore it).
                 return !(c != nullptr && c->forcedState > 0);
             };
 
             const std::vector<float> initialN = root->edgeN;
             for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
                 for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
-                    if(needsVisit(j))
+                    if(needsVisit(root->child[j]))
                         playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                         playMode, timeLimit, j);
                 }
@@ -647,7 +656,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             while(shortfall && root->forcedState == 0){
                 shortfall = false;
                 for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
-                    if(root->edgeN[j] < initialN[j] + minSearchPerChild && needsVisit(j)){
+                    if(root->edgeN[j] < initialN[j] + minSearchPerChild && needsVisit(root->child[j])){
                         shortfall = true;
                         playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                         playMode, timeLimit, j);
@@ -714,10 +723,10 @@ Move MCTS::selectMove(float temp){
     return root->selectMove(temp, rootMinVisits);
 }
 
-MoveData MCTS::getMoveProb(float temp){
+MoveData MCTS::getMoveWithStat(float temp){
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
-    return root->selectMoveProb(temp, rootMinVisits);
+    return root->selectMoveWithStat(temp, rootMinVisits);
 }
 
 std::pair<float, float> MCTS::getEval(){
@@ -850,18 +859,10 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             evaluateCounter++;
             //propagate(path, childIdx, forced);
 
-            if(globalConfig.detailedStat){
-                if(forced > 0)
-                    propagate(path, -1.0f, -1.0f, -cur->game.scoreDiff(cur->turn));
-                else
-                    propagate(path, 1.0f, 1.0f, -cur->game.scoreDiff(cur->turn));
-            }
-            else{
-                if(forced > 0)
-                    propagate(path, -1.0f);
-                else
-                    propagate(path, 1.0f);
-            }
+            if(forced > 0)
+                propagate(path, -1.0f, -1.0f, -cur->game.scoreDiff(cur->turn));
+            else
+                propagate(path, 1.0f, 1.0f, -cur->game.scoreDiff(cur->turn));
 
             if(analysis && analysis->getDebugMode())
                 analysis->printPlayoutDebugLine(debugPath(path), 0.0f, 0.0f, forced);
@@ -915,17 +916,13 @@ void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<
     cur->evaluation = buf->result;
     // std::cout << "get evaluation : " << cur << " " << buf->result << " " << cur->evaluation << std::endl;
 
-    if(globalConfig.detailedStat){ // if detailedStat = true, then update S, Wp variable. Else, ignore those values.
-        std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
-        evalS = std::get<2>(*(buf->result));
-        evalQ = cur->initQ;
+    // S and Wp are always backed up: Wp (mean win probability) is the root value used for value targets in self-play.
+    std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
+    evalS = std::get<2>(*(buf->result));
+    evalQ = cur->initQ;
 
-        if(analysis && analysis->getDebugMode())
-            analysis->printPlayoutDebugLine(debugPath(path), evalW, evalS, 0);
-    }
-    else{
-        evalQ = calculateQ(buf->result, cur->game).first;
-    }
+    if(analysis && analysis->getDebugMode())
+        analysis->printPlayoutDebugLine(debugPath(path), evalW, evalS, 0);
 
     propagate(path, evalQ, evalW, evalS);
 }
@@ -942,24 +939,14 @@ std::vector<Node*> MCTS::debugPath(const std::vector<Node*>& path) const{
 }
 
 void MCTS::propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS){
-    if (globalConfig.detailedStat) { // if detailedStat = true, update S, Wp variable as well. Otherwise, ignore those.
-        for (auto it = path.rbegin(); it != path.rend(); ++it) {
-            Node* n = *it;
-            n->W += 1.0f;   // revert VL
-            n->W += evalQ;
-            n->Wp += evalW;
-            n->S += evalS;
-            evalQ = -evalQ;
-            evalS = -evalS;
-            evalW = -evalW;
-        }
-    }
-    else {
-        for (auto it = path.rbegin(); it != path.rend(); ++it) {
-            Node* n = *it;
-            n->W += 1.0f;   // revert VL
-            n->W += evalQ;
-            evalQ = -evalQ;
-        }
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        Node* n = *it;
+        n->W += 1.0f;   // revert VL
+        n->W += evalQ;
+        n->Wp += evalW;
+        n->S += evalS;
+        evalQ = -evalQ;
+        evalS = -evalS;
+        evalW = -evalW;
     }
 }

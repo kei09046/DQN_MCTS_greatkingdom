@@ -85,6 +85,7 @@ struct Config {
     int save_freq; // 96
     int capacity;
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
+    float valueQMix; // value target = (1 - valueQMix) * game result + valueQMix * root value after search. 0 = game result only.
     float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
 };
 extern Config globalConfig;

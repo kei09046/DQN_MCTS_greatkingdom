@@ -46,7 +46,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 // 		game_manager.setPolicyMask();
 // 		state = PolicyValueNet::getData(game_manager);
 
-// 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
+// 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveWithStat(temp);
 // 		//printMove(m);
 
 // 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
@@ -156,6 +156,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	int firstCapture = -1;
 	std::vector<int> forced;
 	std::vector<bool> only; 
+	std::vector<std::optional<float>> rootValue; // search's value of each position, in the value target's perspective
 
 	#ifdef measureTime
 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -165,7 +166,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		game_manager.setPolicyMask();
 		state = PolicyValueNet::getData(game_manager);
 
-		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveProb(temp);
+		const auto [m, prob, forcedState, isOnlyMove, q] = player->getMoveWithStat(temp);
 		//printMove(m);
 
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
@@ -177,6 +178,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
 			forced.push_back(forcedState);
 			only.push_back(isOnlyMove);
+			rootValue.push_back(q);
 		}
 
 		if (winner == EMPTY) {
@@ -230,19 +232,28 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 
 				const int realGameEnd = (firstCapture < 0) ? sequence.size() : firstCapture;
 
-				//insert Data
+				//insert data
 				for(int i=0; i<sequence.size(); ++i){
 					TrainData& data = buffer.at(i);
+					// position after latest capture
 					if(i >= startingTurn){
 						std::get<2>(data) = result;
 						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
 					}
+					// position determined before.
 					else{
-						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD;
+						std::get<5>(data) = POLICYHEAD | VALUEHEAD;
 					}
 					// continuation after the first capture is only played to get score / occupy targets.
 					if(i >= realGameEnd)
 						std::get<5>(data) &= ~(POLICYHEAD | VALUEHEAD);
+					// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later.
+					if(i < realGameEnd && rootValue.at(i)){
+						const float z = std::get<2>(data);
+						const float q = *rootValue.at(i);
+						valueTargetStats.add(q, z);
+						std::get<2>(data) = (1.0f - globalConfig.valueQMix) * z + globalConfig.valueQMix * q;
+					}
 					std::get<3>(data) = score_diff;
 					std::get<4>(data) = maps[i % 2];
 					insertData(data, forced.at(i), only.at(i));
@@ -369,6 +380,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						std::cout << "non-finite data : " << skipped_steps << " training steps skipped, "
 							<< replayBuffer.dropped() << " positions dropped in total" << std::endl;
 					skipped_steps = 0;
+					{
+						const auto [n, corr, mae] = valueTargetStats.takeSummary();
+						std::cout << "value targets : search value vs game result correlation " << corr
+							<< ", mean |q - z| " << mae << " over " << n << " positions (valueQMix " << globalConfig.valueQMix << ")" << std::endl;
+					}
 					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
 					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
 					if(!train_losses[0].empty()){

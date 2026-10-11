@@ -80,6 +80,9 @@ Config loadConfig(const std::string& path) {
     c.trainStartPoint    = T.at("trainStartPoint");
     if(c.trainStartPoint < c.batchSize)
         throw std::runtime_error("trainStartPoint must be at least batchSize");
+    c.valueQMix          = T.at("valueQMix");
+    if(c.valueQMix < 0.0f || c.valueQMix > 1.0f)
+        throw std::runtime_error("valueQMix must be in [0, 1]");
     c.windowFraction     = T.at("windowFraction");
     if(c.windowFraction <= 0.0f || c.windowFraction > 1.0f)
         throw std::runtime_error("windowFraction must be in (0, 1]");

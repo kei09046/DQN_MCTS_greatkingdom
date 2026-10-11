@@ -4,6 +4,7 @@
 #include "consts.h"
 #include "evaluator.h"
 #include "gamerules.h"
+#include <optional>
 #include <vector>
 #include <utility>
 #include <unordered_map>
@@ -24,7 +25,9 @@ public:
 
     Move selectMove(float temperature, int minVisit);
 
-    MoveData selectMoveProb(float temperature, int minVisit);
+    // also returns this node's mean win probability after search (Wp / valueN()), from the perspective of the player
+    // who moved into it (the convention of value training targets), on the +-0.9 scale. +-0.9 if proven; nullopt if never evaluated.
+    MoveData selectMoveWithStat(float temperature, int minVisit);
 
     Node* jump(Move move);
 
@@ -80,7 +83,7 @@ public:
     // pick a move from the current root's search result (no additional search).
     Move selectMove(float temperature);
 
-    MoveData getMoveProb(float temperature);
+    MoveData getMoveWithStat(float temperature);
 
     // getEval returns evaluation from player's perspective, which is opposite from internally stored value.
     std::pair<float, float> getEval();
@@ -145,6 +148,6 @@ private:
 
     std::vector<Node*> debugPath(const std::vector<Node*>& path) const;
 
-    void propagate(const std::vector<Node*>& path, float evalQ, float evalW=0.0f, float evalS=0.0f);
+    void propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS);
 };
 #endif
