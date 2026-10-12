@@ -337,13 +337,13 @@ Move Node::selectMove(float temp, int minVisit){
 
     std::vector<float> weights(game.getAvailableMoves().size());
     std::vector<float> cumulative(game.getAvailableMoves().size());
+    
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
         // proven losing moves get no minimum visits (see MCTS::runSimulation) and are never picked.
         if(child[i] != nullptr && child[i]->forcedState > 0){
             weights[i] = 0.0f;
             continue;
         }
-        assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
         weights[i] = (edgeN[i] - minVisit <= 0) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
@@ -362,13 +362,23 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
     std::vector<float> visitPortion(outputSize, 0.0f);
     Move selectedMove;
 
+    // fallback which gets called when every children have no effective visit besides minVisit.
+    auto selectRandomMove = [&](){
+        const auto& moves = game.getAvailableMoves();
+        assert(!moves.empty());
+        for(const auto& m : moves)
+            visitPortion[m] = 1.0f / moves.size();
+        selectedMove = {moves.front() / colSize, moves.front() % colSize};
+    };
+
+
     if(forcedState == -1 || forcedState == 1){
         game.displayBoardGUI(true);
         assert(false && "trying to make move on terminated position!");
     }
 
     if(forcedState > 0){
-        // label smoothing is applied here.
+        // apply label smoothing.
         //std::fill(visitPortion.begin(), visitPortion.end(), 0.02f/(outputSize - 1));
 
         if(game.getWin() != RESIGNMOVE){
@@ -386,7 +396,6 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
             }
         }
     }
-
     // select most visited move. 
     else if(temp >= 5.0f || game.getMoveCount() >= 10 || forcedState < 0){
         const float visitSum = std::accumulate(edgeN.begin(), edgeN.end(), 0.0f);
@@ -402,16 +411,8 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
             }
             selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
         }
-        // very rare case where we enter a lost position without any search count on it. This can happen by 
-        // continuing the game at the point where it's lost.
-        // Fallback : make first available move and visitPortion (1/n, 1/n, ... , 1/n)
-        // Since forcedState < 0, policy head would not be trained with this empty value.
         else{
-            const auto& moves = game.getAvailableMoves();
-            assert(!moves.empty());
-            for(const auto& m : moves)
-                visitPortion[m] = 1.0f / moves.size();
-            selectedMove = {moves.front() / colSize, moves.front() % colSize};
+            selectRandomMove();
         }
     }
 
@@ -423,31 +424,31 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
         std::vector<float> counted(game.getAvailableMoves().size(), 0.0f);
         for(int i=0; i<game.getAvailableMoves().size(); ++i){
             if(child[i] == nullptr || child[i]->forcedState <= 0){
-                assert(edgeN[i] >= minVisit && "root child visited less than minVisit");
-                counted[i] = edgeN[i] - minVisit;
+                counted[i] = std::max(edgeN[i] - minVisit, 0.0f);
             }
         }
 
         const float visitSum = std::accumulate(counted.begin(), counted.end(), 0.0f);
-        if(visitSum == 0.0f){
-            game.displayBoardGUI(true);
+
+        if(visitSum > 0.0f){
+            for(int i=0; i<game.getAvailableMoves().size(); ++i){
+                visitPortion[game.getAvailableMoves()[i]] = counted[i]/visitSum;
+                //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
+                weights[i] = (counted[i] <= 0.0f) ? 0.0f : std::pow(counted[i], temp);
+            }
+
+            std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
+
+            std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
+            float rnd = dist(rnd::gen);
+
+            auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
+            int index = std::distance(cumulative.begin(), it);
+            selectedMove = {game.getAvailableMoves().at(index) / colSize, game.getAvailableMoves().at(index) % colSize};
         }
-        assert(visitSum > 0.0f && "no visits above minVisit at the root");
-
-        for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            visitPortion[game.getAvailableMoves()[i]] = counted[i]/visitSum;
-            //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-            weights[i] = (counted[i] <= 0.0f) ? 0.0f : std::pow(counted[i], temp);
+        else{
+            selectRandomMove();
         }
-
-        std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
-
-        std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-        float rnd = dist(rnd::gen);
-
-        auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-        int index = std::distance(cumulative.begin(), it);
-        selectedMove = {game.getAvailableMoves().at(index) / colSize, game.getAvailableMoves().at(index) % colSize};
     }
 
     // std::cerr << "Available moves : ";
@@ -457,8 +458,6 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
     // std::cerr << "Selected moves : ";
     // printMove(selectedMove);
 
-    // forcedState > 0 : the side to move has a proven win, so the player who moved into this node loses.
-    // forced leaves back up +-1; clamp to the +-0.9 scale of the game result targets.
     std::optional<float> value;
     if(forcedState > 0)
         value = -0.9f;
@@ -619,60 +618,55 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
     std::vector<std::shared_ptr<NNResultBuf>> result_buffer;
     bool stuck_during_search = false; // happens if meet evaluating node while searching
 
+    auto flushPendingEval = [&](){
+        if(!current_evaluating_nodes.empty()){
+            std::shared_ptr<NNResultBuf> rb = result_buffer.back();
+            std::unique_lock<std::mutex> lk2(rb->resultmutex);
+            rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; });
+
+            for(size_t i=0; i<current_evaluating_nodes.size(); ++i){
+                updateEval(result_buffer[i], need_update_chain[i], current_evaluating_nodes[i]);
+            }
+            evaluate_counter += current_evaluating_nodes.size();
+            result_buffer.clear();
+            need_update_chain.clear();
+            current_evaluating_nodes.clear();
+        }
+    };
+
     if(playMode == PLAYOUT){
+        // step 0. expand root.
         while(!root->expanded && root->forcedState == 0)
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                 playMode, timeLimit);
-        // std::cerr << "first phase done" << std::endl;
-        // std::cerr << "available moves : ";
-        // for(const auto& m : root->game.getAvailableMoves())
-        //     std::cerr << m/colSize << m%colSize << " ";
-        // std::cerr << std::endl;
 
+        // step 1 : force minSearchPerChild visit for all children.
         if(minSearchPerChild > 0 && root->forcedState == 0){
-            // returns false if child j should not get minimum visits. Marks root as won if child j is a proven loss for opponent.
-            auto needsVisit = [&](const Node* c){
-                // winning move found: root is proven won, same as selectChildInSearch would mark it.
-                if(c != nullptr && c->forcedState < 0){
-                    root->forcedState = -c->forcedState + 1;
-                    return false;
-                }
-                // proven losing move: don't spend minimum visits on it (selectMove/selectMoveWithStat ignore it).
-                return !(c != nullptr && c->forcedState > 0);
-            };
-
             const std::vector<float> initialN = root->edgeN;
             for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
-                for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
-                    if(needsVisit(root->child[j]))
-                        playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
-                        playMode, timeLimit, j);
-                }
-            }
-
-            // a playout call may not reach its child: it returns early when its path meets a node still in evaluation,
-            // and the following call only flushes pending evaluations. Keep going over the children that fell short.
-            bool shortfall = true;
-            while(shortfall && root->forcedState == 0){
-                shortfall = false;
-                for(int j=0; j<root->child.size() && root->forcedState == 0; ++j){
-                    if(root->edgeN[j] < initialN[j] + minSearchPerChild && needsVisit(root->child[j])){
-                        shortfall = true;
+                for(int j=0; j<root->child.size(); ++j){
+                    auto c = root->child[j];
+                    
+                    // if child is undetermined.
+                    if(c == nullptr || c->forcedState != 0){
                         playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                         playMode, timeLimit, j);
                     }
+                    // if child is proven lost. -> root is proven won.
+                    else if(c != nullptr && c->forcedState < 0){
+                        root->forcedState = -c->forcedState + 1;
+                        break;
+                    }
                 }
+                flushPendingEval();
             }
-
-            if(root->forcedState == 0)
-                rootMinVisits += minSearchPerChild;
         }
-        // std::cerr << "second phase done" << std::endl;
+
+        // step 2. continue searching normally.
         while(search_counter < nPlayout && (root->forcedState == 0)){
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
             playMode, timeLimit);
         }
-        // std::cerr << "third phase done" << std::endl;
     }
     else{
         auto duration = std::chrono::seconds(timeLimit);
@@ -683,31 +677,14 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         }
     }
 
-    // wait until pending evaluation finishes.
-    if(!current_evaluating_nodes.empty()){
-        std::shared_ptr<NNResultBuf> rb = result_buffer.back();
-        std::unique_lock<std::mutex> lk2(rb->resultmutex);
-        rb->resultcv.wait(lk2, [&]{ return rb->result != nullptr; });
-
-        for(size_t i=0; i<current_evaluating_nodes.size(); ++i){
-            updateEval(result_buffer[i], need_update_chain[i], current_evaluating_nodes[i]);
-        }
-        evaluate_counter += current_evaluating_nodes.size();
-        result_buffer.clear();
-        need_update_chain.clear();
-        current_evaluating_nodes.clear();
-    }
+    // flush pending evaluations.
+    flushPendingEval();
 
     if(globalConfig.detailedStat)
         std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
-
-    // if(globalConfig.detailedStat)
-    //     printVariation();
 }
 
 Move MCTS::getMove(float temp){
-    // spread the total forced visits over the 10 chunks so each child ends up with exactly
-    // minVisits(nPlayout). runSimulation counts them in rootMinVisits, which is what selectMove subtracts.
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     for(int i=0; i<10; ++i){
         runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
@@ -720,13 +697,13 @@ Move MCTS::getMove(float temp){
 }
 
 Move MCTS::selectMove(float temp){
-    return root->selectMove(temp, rootMinVisits);
+    return root->selectMove(temp, params.minVisits(globalConfig.nPlayout));
 }
 
 MoveData MCTS::getMoveWithStat(float temp){
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
-    return root->selectMoveWithStat(temp, rootMinVisits);
+    return root->selectMoveWithStat(temp, minVisit);
 }
 
 std::pair<float, float> MCTS::getEval(){
@@ -742,8 +719,6 @@ std::pair<float, float> MCTS::getEval(){
 bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
-    old_root->deleteTree(root);
-    rootMinVisits = 0;
     return root != nullptr;
 }
 
@@ -751,7 +726,6 @@ void MCTS::reset(const Game& startPos){
     root->deleteTree();
     root = new Node(startPos, hash.computeHash(startPos), transposTable);
     root->game.resetMask();
-    rootMinVisits = 0;
 
     if(globalConfig.transTable){
         transposTable->clear();
