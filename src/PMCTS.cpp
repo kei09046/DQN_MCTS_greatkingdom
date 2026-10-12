@@ -619,6 +619,7 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
             need_update_chain.clear();
             current_evaluating_nodes.clear();
         }
+        stuck_during_search = false;
     };
 
     if(playMode == PLAYOUT){
