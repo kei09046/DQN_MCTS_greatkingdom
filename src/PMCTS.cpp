@@ -362,15 +362,31 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
     std::vector<float> visitPortion(outputSize, 0.0f);
     Move selectedMove;
 
-    // fallback which gets called when every children have no effective visit besides minVisit.
-    auto selectRandomMove = [&](){
-        const auto& moves = game.getAvailableMoves();
-        assert(!moves.empty());
-        for(const auto& m : moves)
-            visitPortion[m] = 1.0f / moves.size();
-        selectedMove = {moves.front() / colSize, moves.front() % colSize};
+    const auto& moves = game.getAvailableMoves();
+    assert(!moves.empty());
+
+    auto targetWeights = [&](){
+        std::vector<float> w(moves.size(), 0.0f);
+        for(int i=0; i<moves.size(); ++i)
+            w[i] = std::max(edgeN[i] - minVisit, 0.0f);
+        if(std::accumulate(w.begin(), w.end(), 0.0f) > 0.0f)
+            return w;
+
+        for(int i=0; i<moves.size(); ++i)
+            w[i] = edgeN[i];
+        if(std::accumulate(w.begin(), w.end(), 0.0f) > 0.0f)
+            return w;
+
+        std::fill(w.begin(), w.end(), 1.0f);
+        return w;
     };
 
+    // writes the normalized weights into visitPortion.
+    auto setVisitPortion = [&](const std::vector<float>& w){
+        const float sum = std::accumulate(w.begin(), w.end(), 0.0f);
+        for(int i=0; i<moves.size(); ++i)
+            visitPortion[moves[i]] = w[i] / sum;
+    };
 
     if(forcedState == -1 || forcedState == 1){
         game.displayBoardGUI(true);
@@ -398,57 +414,28 @@ MoveData Node::selectMoveWithStat(float temp, int minVisit){
     }
     // select most visited move. 
     else if(temp >= 5.0f || game.getMoveCount() >= 10 || forcedState < 0){
-        const float visitSum = std::accumulate(edgeN.begin(), edgeN.end(), 0.0f);
-
-        if(visitSum != 0.0f){
-            int maxi, maxn = -1;
-            for(int i=0; i<game.getAvailableMoves().size(); ++i){
-                if(edgeN[i] > maxn){
-                    maxn = edgeN[i];
-                    maxi = i;
-                }
-                visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/visitSum;
-            }
-            selectedMove = {game.getAvailableMoves().at(maxi) / colSize, game.getAvailableMoves().at(maxi) % colSize};
-        }
-        else{
-            selectRandomMove();
-        }
+        const std::vector<float> w = targetWeights();
+        setVisitPortion(w);
+        const int maxi = std::distance(w.begin(), std::max_element(w.begin(), w.end()));
+        selectedMove = {moves.at(maxi) / colSize, moves.at(maxi) % colSize};
     }
 
     // root is not determined win/loss after playouts.
     else{
-        std::vector<float> cumulative(game.getAvailableMoves().size()), weights(game.getAvailableMoves().size());
+        const std::vector<float> w = targetWeights();
+        setVisitPortion(w);
 
-        // visits above minVisit. Proven losing moves get no minimum visits (see MCTS::runSimulation) and count as 0.
-        std::vector<float> counted(game.getAvailableMoves().size(), 0.0f);
-        for(int i=0; i<game.getAvailableMoves().size(); ++i){
-            if(child[i] == nullptr || child[i]->forcedState <= 0){
-                counted[i] = std::max(edgeN[i] - minVisit, 0.0f);
-            }
-        }
+        std::vector<float> cumulative(moves.size()), weights(moves.size());
+        for(int i=0; i<moves.size(); ++i)
+            weights[i] = (w[i] <= 0.0f) ? 0.0f : std::pow(w[i], temp);
+        std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
 
-        const float visitSum = std::accumulate(counted.begin(), counted.end(), 0.0f);
+        std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
+        float rnd = dist(rnd::gen);
 
-        if(visitSum > 0.0f){
-            for(int i=0; i<game.getAvailableMoves().size(); ++i){
-                visitPortion[game.getAvailableMoves()[i]] = counted[i]/visitSum;
-                //visitPortion[game.getAvailableMoves()[i]] = edgeN[i]/N;
-                weights[i] = (counted[i] <= 0.0f) ? 0.0f : std::pow(counted[i], temp);
-            }
-
-            std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
-
-            std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
-            float rnd = dist(rnd::gen);
-
-            auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
-            int index = std::distance(cumulative.begin(), it);
-            selectedMove = {game.getAvailableMoves().at(index) / colSize, game.getAvailableMoves().at(index) % colSize};
-        }
-        else{
-            selectRandomMove();
-        }
+        auto it = std::lower_bound(cumulative.begin(), cumulative.end(), rnd);
+        int index = std::distance(cumulative.begin(), it);
+        selectedMove = {moves.at(index) / colSize, moves.at(index) % colSize};
     }
 
     // std::cerr << "Available moves : ";
@@ -642,13 +629,12 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
 
         // step 1 : force minSearchPerChild visit for all children.
         if(minSearchPerChild > 0 && root->forcedState == 0){
-            const std::vector<float> initialN = root->edgeN;
             for(int i=0; i<minSearchPerChild && root->forcedState == 0; ++i){
                 for(int j=0; j<root->child.size(); ++j){
                     auto c = root->child[j];
                     
                     // if child is undetermined.
-                    if(c == nullptr || c->forcedState != 0){
+                    if(c == nullptr || c->forcedState == 0){
                         playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                         playMode, timeLimit, j);
                     }
@@ -719,6 +705,7 @@ std::pair<float, float> MCTS::getEval(){
 bool MCTS::jump(Move move){
     Node* old_root = root;
     root = root->jump(move);
+    old_root->deleteTree(root);
     return root != nullptr;
 }
 
