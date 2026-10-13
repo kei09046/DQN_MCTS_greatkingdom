@@ -8,6 +8,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	nextmove_batch = new std::vector<float>(globalConfig.batchSize * outputSize);
 	score_batch = new std::vector<float>(globalConfig.batchSize);
 	result_batch = new std::vector<float>(globalConfig.batchSize);
+	outcome_batch = new std::vector<float>(globalConfig.batchSize);
 	map_batch = new std::vector<float>(globalConfig.batchSize * boardSize);
 	type_batch = new std::vector<Trainhead>(globalConfig.batchSize);
 	
@@ -17,7 +18,22 @@ TrainPipeline::TrainPipeline(std::string init_model,
     if (std::regex_search(init_model, match, re)) {
         save_cnt = std::stoi(match[1]);
     }
-	setLearningRate(save_cnt);
+	learning_rate = initial_learning_rate;
+
+	// optimizer state saved with the data snapshot of init_model (see run), e.g. ../data/J53760.opt for J53760.pt
+	const std::string opt_file = globalConfig.dataPath + std::filesystem::path(init_model).stem().string() + ".opt";
+	if(std::filesystem::exists(opt_file)){
+		try{
+			train_model.load_optimizer(opt_file);
+			learning_rate = train_model.get_learning_rate(); // continues any halving from the earlier run
+		}
+		catch(const std::exception& e){
+			std::cerr << "could not load optimizer state " << opt_file << " (" << e.what() << "), starting with a fresh optimizer" << std::endl;
+		}
+	}
+	else
+		std::cout << "no optimizer state " << opt_file << ", starting with a fresh optimizer" << std::endl;
+	std::cout << "learning rate : " << learning_rate << std::endl;
 
 	total_game_length = 0;
 	total_score_diff = 0;
@@ -175,7 +191,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		if(m != RESIGNMOVE){
 			sequence.push_back(m);
 			// add placeHolder value to buffer
-			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
+			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL, 0.0f);
 			forced.push_back(forcedState);
 			only.push_back(isOnlyMove);
 			rootValue.push_back(q);
@@ -247,6 +263,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 					// continuation after the first capture is only played to get score / occupy targets.
 					if(i >= realGameEnd)
 						std::get<5>(data) &= ~(POLICYHEAD | VALUEHEAD);
+					std::get<6>(data) = std::get<2>(data); // game result z, before any mixing
 					// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later.
 					if(i < realGameEnd && rootValue.at(i)){
 						const float z = std::get<2>(data);
@@ -278,6 +295,12 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	}
 }
 
+void TrainPipeline::loadReplayBuffer(const std::string& data_file){
+	replayBuffer.load(data_file);
+	std::cout << "replay buffer loaded : " << data_file << " (" << replayBuffer.size() << " positions, sampling window "
+		<< replayBuffer.window() << ", " << replayBuffer.totalAdded() << " positions added in total)" << std::endl;
+}
+
 void TrainPipeline::insertData(TrainData& data, const int& forced, const bool& only) {
 	// if forced < 0 -> don't train policy head.
 	// if forced = 0 and only = true -> don't train policy head.
@@ -291,10 +314,10 @@ void TrainPipeline::insertData(TrainData& data, const int& forced, const bool& o
 void TrainPipeline::train(){
 	const int B = globalConfig.batchSize;
 	for(int iter = 0; iter < 2; ++iter){
-		replayBuffer.sampleBatch(B, *state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch);
+		replayBuffer.sampleBatch(B, *state_batch, *nextmove_batch, *result_batch, *outcome_batch, *score_batch, *map_batch, *type_batch);
 
-		auto [pLoss, vLoss, sLoss, cmLoss, smLoss, pEntropy] = train_model.train(*state_batch,
-			*nextmove_batch, *result_batch, *score_batch, *map_batch, *type_batch, learning_rate);
+		auto [pLoss, vLoss, sLoss, cmLoss, smLoss, pEntropy, vzLoss] = train_model.train(*state_batch,
+			*nextmove_batch, *result_batch, *outcome_batch, *score_batch, *map_batch, *type_batch, learning_rate);
 		if(!std::isfinite(pLoss) || !std::isfinite(vLoss) || !std::isfinite(sLoss) || !std::isfinite(smLoss)){
 			skipped_steps++; // train_model.train skipped the optimizer step
 			continue;
@@ -305,6 +328,7 @@ void TrainPipeline::train(){
 		train_losses[3].push_back(cmLoss);
 		train_losses[4].push_back(smLoss); 
 		train_losses[5].push_back(pEntropy);
+		train_losses[6].push_back(vzLoss);
 	}
 }
 
@@ -359,7 +383,6 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
 							return s; }); // wait until all train and self_play threads are paused
 
-					setLearningRate(games_played + save_cnt);
 					model_file = model_prefix + std::to_string(games_played + save_cnt) + ".pt";
 					const std::string save_path = globalConfig.modelPath + model_file;
 					train_model.save_model(save_path); // save model to file
@@ -390,7 +413,8 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					if(!train_losses[0].empty()){
 						const auto mean = [](const std::vector<float>& v){ return std::accumulate(v.begin(), v.end(), 0.0f) / v.size(); };
 						std::cout << "mean policy loss : " << mean(train_losses[0]) << " policy target entropy : " << mean(train_losses[5])
-							<< " policy KL : " << mean(train_losses[0]) - mean(train_losses[5]) << " value loss : " << mean(train_losses[1]) << std::endl;
+							<< " policy KL : " << mean(train_losses[0]) - mean(train_losses[5]) << " value loss : " << mean(train_losses[1])
+							<< " value MSE vs z : " << mean(train_losses[6]) << std::endl;
 					}
 					std::cout << "train losses : " << std::endl;
 					for(int i=0; i<9; ++i){
@@ -411,6 +435,9 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						const std::string data_file = globalConfig.dataPath + model_prefix + std::to_string(games_played + save_cnt) + ".bin";
 						replayBuffer.save(data_file);
 						std::cout << "training data saved : " << data_file << " (" << replayBuffer.size() << " positions)" << std::endl;
+						// saved after the comparison, so it carries a learning rate halved by it. Comparing doesn't train, so the
+						// optimizer state still matches the model file.
+						const std::string opt_file = globalConfig.dataPath + model_prefix + std::to_string(games_played + save_cnt) + ".opt";
 
 						globalConfig = loadConfig("../configs/compare_config.json");
 
@@ -437,6 +464,21 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							std::cout << "model fallback!" << std::endl;
 							train_model.load_weights(globalConfig.modelPath + current_best_model_file); // keeps the optimizer state
 						}
+
+						// no clear improvement for lr_patience comparisons in a row : halve the learning rate.
+						if(winrate >= lr_improvement_winrate)
+							comparisons_without_improvement = 0;
+						else if(++comparisons_without_improvement >= lr_patience){
+							learning_rate *= 0.5f;
+							comparisons_without_improvement = 0;
+							std::cout << "no improvement in " << lr_patience << " comparisons : learning rate halved to " << learning_rate << std::endl;
+						}
+						std::cout << "comparisons without improvement : " << comparisons_without_improvement << " / " << lr_patience
+							<< ", learning rate " << learning_rate << std::endl;
+
+						train_model.set_learning_rate(learning_rate);
+						train_model.save_optimizer(opt_file);
+						std::cout << "optimizer state saved : " << opt_file << std::endl;
 						
 						globalConfig = loadConfig("../configs/train_config.json");
 					}
@@ -502,14 +544,9 @@ void TrainPipeline::pin_threads_to_core(std::thread& th, int core_id){
 #endif
 }
 
-void TrainPipeline::setLearningRate(const int games_played){
-	//learning_rate = (games_played < 26880) ? 0.0002f : 0.0002f * std::pow(0.95f, (games_played - 26880) / 960);
-	learning_rate = 0.001f;
-}
-
 void TrainPipeline::displayTrainData(const std::shared_ptr<const TrainData> data) const{
 	// TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead>
-	const auto& [state, policy, value, score, map, wintype] = *data;
+	const auto& [state, policy, value, score, map, wintype, outcome] = *data;
 	const auto& boardState = state;
 
 	char display[rowSize][colSize];
@@ -595,34 +632,34 @@ void trainOnStaticData(const std::string& data_file, int steps, float lr, float 
 		<< steps << " steps, learning rate " << lr << std::endl;
 
 	PolicyValueNet net("none", torch::cuda::is_available()); // untrained
-	std::vector<float> state(B * globalConfig.inputChannel * inputSize), move(B * outputSize), result(B), score(B), map(B * boardSize);
+	std::vector<float> state(B * globalConfig.inputChannel * inputSize), move(B * outputSize), result(B), outcome(B), score(B), map(B * boardSize);
 	std::vector<Trainhead> type(B);
 
-	using Losses = std::array<float, 6>; // policy, value, score, capture map, score map, target entropy
+	using Losses = std::array<float, 7>; // policy, value, score, capture map, score map, target entropy, value MSE vs z
 	const auto print = [](const char* name, const Losses& l){
 		std::cout << " | " << name << " policy " << l[0] << " (entropy " << l[5] << ", KL " << l[0] - l[5] << ") value " << l[1]
-			<< " score " << l[2] << " score map " << l[4];
+			<< " (vs z " << l[6] << ") score " << l[2] << " score map " << l[4];
 	};
 
 	const int report_every = 200, val_batches = 8;
 	Losses train_sum{};
 	for(int step = 1; step <= steps; ++step){
-		train_buffer.sampleBatch(B, state, move, result, score, map, type);
-		const auto [p, v, s, cm, sm, e] = net.train(state, move, result, score, map, type, lr);
-		const Losses l{p, v, s, cm, sm, e};
-		for(int k = 0; k < 6; ++k)
+		train_buffer.sampleBatch(B, state, move, result, outcome, score, map, type);
+		const auto [p, v, s, cm, sm, e, vz] = net.train(state, move, result, outcome, score, map, type, lr);
+		const Losses l{p, v, s, cm, sm, e, vz};
+		for(int k = 0; k < 7; ++k)
 			train_sum[k] += l[k];
 
 		if(step % report_every == 0 || step == steps){
 			const int n = (step % report_every == 0) ? report_every : step % report_every;
 			Losses train_mean, val_mean{};
-			for(int k = 0; k < 6; ++k)
+			for(int k = 0; k < 7; ++k)
 				train_mean[k] = train_sum[k] / n;
 			for(int b = 0; b < val_batches; ++b){
-				val_buffer.sampleBatch(B, state, move, result, score, map, type);
-				const auto [vp, vv, vs, vcm, vsm, ve] = net.train(state, move, result, score, map, type, lr, /*update=*/false);
-				const Losses vl{vp, vv, vs, vcm, vsm, ve};
-				for(int k = 0; k < 6; ++k)
+				val_buffer.sampleBatch(B, state, move, result, outcome, score, map, type);
+				const auto [vp, vv, vs, vcm, vsm, ve, vvz] = net.train(state, move, result, outcome, score, map, type, lr, /*update=*/false);
+				const Losses vl{vp, vv, vs, vcm, vsm, ve, vvz};
+				for(int k = 0; k < 7; ++k)
 					val_mean[k] += vl[k] / val_batches;
 			}
 			std::cout << "step " << step;

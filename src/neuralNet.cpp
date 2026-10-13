@@ -548,8 +548,8 @@ PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
 // 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 // }
 
-std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
-	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& score_batch,
+std::tuple<float, float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
+	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& outcome_batch, std::vector<float>& score_batch,
 	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr, bool update){
 
 	int B = result_batch.size();
@@ -564,6 +564,10 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 		options).to(device);
 
 	auto wb = torch::from_blob(result_batch.data(),
+		{B, 1},
+		options).to(device);
+
+	auto zb = torch::from_blob(outcome_batch.data(),
 		{B, 1},
 		options).to(device);
 
@@ -595,7 +599,7 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
-	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f;
+	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f, vzLoss = 0.0f;
 
 	// entropy of the policy targets: the lowest policy loss reachable on this batch. policy loss - entropy = KL(target || net).
 	float pEntropy;
@@ -654,6 +658,8 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();
+		// diagnostic only: same positions, measured against the game result z instead of the (possibly mixed) target.
+		vzLoss += ((r2.detach() - zb).pow(2) * vmask.to(torch::kFloat32)).sum().item<float>() / value_active_elements;
 		sLoss += score_loss.item<float>();
 		smLoss += score_map_loss.item<float>();
 		// cmLoss += capture_loss.item<float>();
@@ -676,7 +682,7 @@ std::tuple<float, float, float, float, float, float> PolicyValueNet::train(std::
 	//cntr++;
 	policy_value_net->eval();
 
-	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy};
+	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy, vzLoss / passes};
 }
 
 void PolicyValueNet::save_model(const std::string& model_file) const
@@ -717,6 +723,23 @@ void PolicyValueNet::load_model(const std::string& model_file){
 	.weight_decay(l2_const));
 
 	std::cout << "Model loaded: " << model_file << std::endl;
+}
+
+void PolicyValueNet::save_optimizer(const std::string& file) const{
+	torch::save(*optimizer, file);
+}
+
+void PolicyValueNet::load_optimizer(const std::string& file){
+	torch::load(*optimizer, file, device);
+	std::cout << "Optimizer state loaded: " << file << std::endl;
+}
+
+float PolicyValueNet::get_learning_rate() const{
+	return static_cast<float>(static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr());
+}
+
+void PolicyValueNet::set_learning_rate(float lr){
+	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 }
 
 void PolicyValueNet::load_weights(const std::string& model_file){

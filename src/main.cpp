@@ -10,6 +10,11 @@
 
 Config globalConfig;
 
+// a file name that doesn't exist as given is looked up in data_path.
+static std::string resolveDataFile(const std::string& name){
+    return std::filesystem::exists(name) ? name : globalConfig.dataPath + name;
+}
+
 
 int main(int argc, char** argv) {
     std::cout << "starting ..." << std::endl;
@@ -19,12 +24,18 @@ int main(int argc, char** argv) {
     
     if(mod == "train"){
         globalConfig = loadConfig("../configs/train_config.json");
+        // ./play train <model> <data file> <games> <threads> <is_shown>
+        // model "none" starts from an untrained network. The optimizer state data_path/<model>.opt is loaded if it exists.
+        // data file : replay buffer snapshot (e.g. J53760.bin) to start from; "none" starts with an empty buffer.
         std::string model_file = argv[2];
-        int game_num = std::stoi(argv[3]);
-        int num_thread = std::stoi(argv[4]);
-        bool is_shown = static_cast<bool>(std::stoi(argv[5]));
+        std::string data_file = argv[3];
+        int game_num = std::stoi(argv[4]);
+        int num_thread = std::stoi(argv[5]);
+        bool is_shown = static_cast<bool>(std::stoi(argv[6]));
 
         TrainPipeline line(model_file, model_file, true); // use gpu
+        if(data_file != "none")
+            line.loadReplayBuffer(resolveDataFile(data_file));
         line.run(game_num, num_thread, is_shown, globalConfig.temp, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, 1/temp, model_prefix
     }
     else if(mod == "human_play"){
@@ -93,9 +104,7 @@ int main(int argc, char** argv) {
         // ./play test <data file> [steps] [learning rate] : train an untrained network on a saved replay buffer.
         // a bare file name is looked up in data_path.
         globalConfig = loadConfig("../configs/train_config.json");
-        std::string data_file = argv[2];
-        if(!std::filesystem::exists(data_file))
-            data_file = globalConfig.dataPath + data_file;
+        std::string data_file = resolveDataFile(argv[2]);
         int steps = (argc > 3) ? std::stoi(argv[3]) : 20000;
         float lr = (argc > 4) ? std::stof(argv[4]) : 0.0002f;
         trainOnStaticData(data_file, steps, lr);

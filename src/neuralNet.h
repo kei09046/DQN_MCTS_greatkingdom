@@ -7,8 +7,9 @@
 using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 using NNInput = std::vector<float>;
 
-// board, moveprob, result, score diff, (score map/capture map), wintype
-using TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead>; 
+// board, moveprob, value target, score diff, (score map/capture map), heads to train, game result z.
+// The value target may mix z with the search's value; z is kept separately to measure how well the value head predicts games.
+using TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead, float>;
 
 
 struct ResidualBlockImpl : torch::nn::Module {
@@ -195,11 +196,12 @@ public:
 	// std::tuple<float, float, float, float> trainSc(std::vector<float>& state_batch, std::vector<float>& nextmove_batch,
 	// 	std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr);
 	
-	// returns policy, value, score, capture map, score map loss and the entropy of the policy targets.
+	// returns policy, value, score, capture map, score map loss, the entropy of the policy targets and the value head's
+	// squared error against the game result z alone (outcome_batch; not trained on, for comparing value targets).
 	// update = false only measures the losses (inference mode, no optimizer step), e.g. on validation data.
-	std::tuple<float, float, float, float, float, float> train(std::vector<float>& state_batch,
+	std::tuple<float, float, float, float, float, float, float> train(std::vector<float>& state_batch,
          std::vector<float>& nextmove_batch,
-		std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr,
+		std::vector<float>& result_batch, std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr,
 		bool update = true);
 
 	void save_model(const std::string& model_file) const;
@@ -208,6 +210,16 @@ public:
 
 	// replaces the weights (and BatchNorm statistics) with the ones in model_file, keeping the optimizer state.
 	void load_weights(const std::string& model_file);
+
+	// Adam state (moment estimates), so a resumed run continues where the optimizer stopped.
+	void save_optimizer(const std::string& file) const;
+
+	void load_optimizer(const std::string& file);
+
+	// learning rate stored in the optimizer: saved and loaded with its state. train() sets it on every call.
+	float get_learning_rate() const;
+
+	void set_learning_rate(float lr);
 };
 
 #endif

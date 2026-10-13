@@ -39,9 +39,9 @@ namespace {
 	// file layout : header, then per position (oldest first)
 	//   planes : channels x 2 uint64 (bit i = point i), constPlanes : u8 count + (u8 channel, float),
 	//   densePlanes : u8 count + (u8 channel, boardSize floats), policy : u8 count + (u8 index, float),
-	//   map : boardSize int8, result float, score float, type u8.
+	//   map : boardSize int8, result float, outcome float (version >= 2), score float, type u8.
 	constexpr char fileMagic[4] = {'G', 'K', 'R', 'B'};
-	constexpr uint32_t fileVersion = 1;
+	constexpr uint32_t fileVersion = 2; // 2 : added outcome (game result z)
 	static_assert(boardSize <= 128, "planes are stored as two 64-bit words");
 
 	template <typename T>
@@ -84,11 +84,12 @@ namespace {
 		}
 		out.write(reinterpret_cast<const char*>(s.map.data()), boardSize);
 		put(out, s.result);
+		put(out, s.outcome);
 		put(out, s.score);
 		put(out, s.type);
 	}
 
-	PackedSample readSample(std::istream& in, uint32_t channels){
+	PackedSample readSample(std::istream& in, uint32_t channels, uint32_t version){
 		PackedSample s;
 		s.planes.resize(channels);
 		for(auto& plane : s.planes){
@@ -112,6 +113,7 @@ namespace {
 		}
 		in.read(reinterpret_cast<char*>(s.map.data()), boardSize);
 		s.result = get<float>(in);
+		s.outcome = (version >= 2) ? get<float>(in) : s.result; // version 1 has no separate game result
 		s.score = get<float>(in);
 		s.type = get<Trainhead>(in);
 		return s;
@@ -125,7 +127,7 @@ ReplayBuffer::ReplayBuffer(size_t capacity, size_t minWindow, float windowFracti
 }
 
 PackedSample ReplayBuffer::pack(const TrainData& data){
-	const auto& [state, policy, result, score, map, type] = data;
+	const auto& [state, policy, result, score, map, type, outcome] = data;
 	PackedSample s;
 
 	if(state.size() % inputSize != 0)
@@ -161,6 +163,7 @@ PackedSample ReplayBuffer::pack(const TrainData& data){
 	}
 
 	s.result = result;
+	s.outcome = outcome;
 	s.score = score;
 	s.type = type;
 	return s;
@@ -194,13 +197,14 @@ void ReplayBuffer::unpack(const PackedSample& s, int sym, float* state, float* p
 namespace {
 	// name of the first part of data holding a non-finite number, or nullptr if everything is finite.
 	const char* nonFinitePart(const TrainData& data){
-		const auto& [state, policy, result, score, map, type] = data;
+		const auto& [state, policy, result, score, map, type, outcome] = data;
 		const auto finite = [](const std::vector<float>& v){
 			return std::all_of(v.begin(), v.end(), [](float x){ return std::isfinite(x); });
 		};
 		if(!finite(state)) return "input";
 		if(!finite(policy)) return "policy target";
 		if(!std::isfinite(result)) return "value target";
+		if(!std::isfinite(outcome)) return "game result";
 		if(!std::isfinite(score)) return "score target";
 		if(!finite(map)) return "map target";
 		return nullptr;
@@ -245,7 +249,7 @@ size_t ReplayBuffer::window(){
 }
 
 void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
-	std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch){
+	std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch){
 	std::lock_guard<std::mutex> lock(mtx);
 	if(samples.empty())
 		throw std::runtime_error("sampling from an empty replay buffer");
@@ -253,6 +257,7 @@ void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vect
 	const int channels = samples.front().planes.size();
 	if(state_batch.size() < static_cast<size_t>(B) * channels * inputSize || nextmove_batch.size() < static_cast<size_t>(B) * outputSize
 		|| map_batch.size() < static_cast<size_t>(B) * boardSize || result_batch.size() < static_cast<size_t>(B)
+		|| outcome_batch.size() < static_cast<size_t>(B)
 		|| score_batch.size() < static_cast<size_t>(B) || type_batch.size() < static_cast<size_t>(B))
 		throw std::runtime_error("batch arrays are smaller than the requested batch");
 
@@ -266,6 +271,7 @@ void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vect
 		unpack(s, pickSym(rng), state_batch.data() + b * channels * inputSize,
 			nextmove_batch.data() + b * outputSize, map_batch.data() + b * boardSize);
 		result_batch[b] = s.result;
+		outcome_batch[b] = s.outcome;
 		score_batch[b] = s.score;
 		type_batch[b] = s.type;
 	}
@@ -313,8 +319,11 @@ std::vector<PackedSample> ReplayBuffer::readFile(const std::string& path, size_t
 	in.read(magic, sizeof(magic));
 	if(!in || !std::equal(magic, magic + sizeof(magic), fileMagic))
 		throw std::runtime_error(path + " is not a replay buffer file");
-	if(const auto version = get<uint32_t>(in); version != fileVersion)
+	const auto version = get<uint32_t>(in);
+	if(version < 1 || version > fileVersion)
 		throw std::runtime_error(path + " has unsupported version " + std::to_string(version));
+	if(version < 2)
+		std::cerr << path << " : version " << version << " file has no game results; the value error against z is measured against its value targets instead" << std::endl;
 	if(const auto points = get<uint32_t>(in); points != boardSize)
 		throw std::runtime_error(path + " is for a board of " + std::to_string(points) + " points");
 
@@ -325,7 +334,7 @@ std::vector<PackedSample> ReplayBuffer::readFile(const std::string& path, size_t
 	std::vector<PackedSample> result;
 	result.reserve(count);
 	for(uint64_t i = 0; i < count; ++i)
-		result.push_back(readSample(in, channels));
+		result.push_back(readSample(in, channels, version));
 	return result;
 }
 

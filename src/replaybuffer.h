@@ -21,7 +21,8 @@ struct PackedSample {
 	std::vector<std::pair<uint8_t, std::vector<float>>> densePlanes; // any other non-binary channel, stored as is
 	std::vector<std::pair<uint8_t, float>> policy; // nonzero entries of the move probability (index into outputSize)
 	std::array<int8_t, boardSize> map; // occupy map, values in {-1, 0, 1}
-	float result;
+	float result; // value target
+	float outcome; // game result z
 	float score;
 	Trainhead type;
 };
@@ -78,7 +79,7 @@ public:
 	// Draws B positions uniformly at random (with replacement) from the window and applies a random symmetry to each.
 	// The batch vectors must already hold at least B rows.
 	void sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
-		std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch);
+		std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch);
 };
 
 #endif

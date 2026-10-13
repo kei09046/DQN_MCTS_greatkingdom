@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
-LOSS_ROWS = {0: "policy", 1: "value", 2: "score", 4: "score_map", 5: "entropy"}
+LOSS_ROWS = {0: "policy", 1: "value", 2: "score", 4: "score_map", 5: "entropy", 6: "value_z"}
 
 
 def mean(values):
@@ -125,7 +125,13 @@ def plot(saves, ratings, out, show):
     if any(s.get("entropy") is not None for s in saves):
         ax[0].legend(fontsize=8, frameon=False)
 
-    for a, key, title in ((ax[1], "value", "Value loss"), (ax[2], "score", "Score loss"), (ax[3], "score_map", "Score map loss")):
+    series(ax[1], saves, "value", BLUE, "vs training target")
+    series(ax[1], saves, "value_z", ORANGE, "vs game result z")
+    style(ax[1], "Value loss", "MSE")
+    if any(s.get("value_z") is not None for s in saves):
+        ax[1].legend(fontsize=8, frameon=False, loc="upper left")
+
+    for a, key, title in ((ax[2], "score", "Score loss"), (ax[3], "score_map", "Score map loss")):
         series(a, saves, key, BLUE)
         style(a, title, "loss")
 
@@ -178,7 +184,7 @@ def plot(saves, ratings, out, show):
 
 def print_table(saves, ratings):
     cols = ["games", "train_iter", "samples_per_position", "capture_ratio", "segment_length",
-            "policy", "entropy", "kl", "value", "score", "score_map", "window"]
+            "policy", "entropy", "kl", "value", "value_z", "score", "score_map", "window"]
     print(" ".join(f"{c[:10]:>10}" for c in cols))
     for s in saves:
         print(" ".join(f"{s[c]:>10.3f}" if isinstance(s.get(c), float) else f"{str(s.get(c, '-')):>10}" for c in cols))

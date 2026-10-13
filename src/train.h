@@ -21,6 +21,7 @@
 #include <mutex>
 #include <regex>
 #include <chrono>
+#include <filesystem>
 #include <cmath>
 #include <optional>
 #include <tuple>
@@ -49,7 +50,13 @@ public:
 
 class TrainPipeline {
 private:
+	static constexpr float initial_learning_rate = 0.001f; // used unless the optimizer state of the starting model is loaded
+	static constexpr int lr_patience = 5; // comparisons in a row without a clear improvement before the learning rate is halved
+	// win rate a checkpoint needs against the current best to reset the learning-rate counter. Above 0.5 so that a
+	// checkpoint of equal strength (which beats 0.5 in ~46% of 96-game comparisons by chance) doesn't keep resetting it.
+	static constexpr float lr_improvement_winrate = 0.55f;
 	float learning_rate;
+	int comparisons_without_improvement = 0;
 	float captureRatio;
 	int save_cnt; // indicate how many games have been played; used for model naming
 	ValueTargetStats valueTargetStats;
@@ -67,13 +74,12 @@ private:
 
 	void pin_threads_to_core(std::thread& th, int core_id);
 
-	void setLearningRate(const int games_played);
 
 	void displayTrainData(const std::shared_ptr<const TrainData> data) const;
 
 public:
 	ReplayBuffer replayBuffer;
-	std::vector<float>* state_batch, *nextmove_batch, *result_batch, *score_batch, *map_batch;
+	std::vector<float>* state_batch, *nextmove_batch, *result_batch, *outcome_batch, *score_batch, *map_batch;
 	std::vector<Trainhead>* type_batch;
 
 	TrainPipeline(std::string init_model, std::string test_model, bool gpu = false);
@@ -81,6 +87,9 @@ public:
 	void start_self_play(MCTS* player, bool is_shown = false, float temp = 0.1f, int n_games = 1); // used during training
 
 	void insertData(TrainData& data, const int& forced = 0, const bool& only = false);
+
+	// fills the replay buffer from a snapshot written during an earlier run (data/<model>.bin), before run().
+	void loadReplayBuffer(const std::string& data_file);
 
 	void train();
 

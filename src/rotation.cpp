@@ -164,7 +164,7 @@ std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const Tr
 
     for(int i=0; i<8; ++i){
         transformed_data.push_back(std::make_shared<TrainData>(rotatedStates[i],
-             rotatedMoves[i], value, scoreDiff, rotatedMap[i], type));
+             rotatedMoves[i], value, scoreDiff, rotatedMap[i], type, std::get<6>(data)));
     }
 
     return transformed_data;
