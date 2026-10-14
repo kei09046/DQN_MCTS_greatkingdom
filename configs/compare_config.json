@@ -64,6 +64,6 @@
     "capacity": 10000,
     "trainStartPoint": 20000,
     "windowFraction": 0.25,
-    "valueQMix": 0.5
+    "valueQMix": 0.1
   }
 }
