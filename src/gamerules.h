@@ -60,14 +60,15 @@ public:
 
     void onGameEnd(Color winner);
 
-    // 'makeMove' does not support game continuation after the capture; Which follows the rule. 
-    // For continued play after the capture, 'makeMoveWithStat' should be called.
+    // Neither function supports continuing the game after a capture.
     std::pair<Color, Wintype> makeMove(Move move);
 
     // optimized version of makeMove. Used inside MCTS search only. resetMask(), setPolicyMask() should be called beforehand.
     Color makeMoveGivenScore(const Move& move);
 
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
+    // At game end also returns a map : the captured stones (1) for a capture, the occupancy (black -1 / white +1) for a score ending.
+    // After a capture the board is left as it was (captured stones are not turned into territory) : the game must not continue.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
     // list of possible moves, logit transfer list.
@@ -194,7 +195,7 @@ private:
 
     Color captureResultbyMove(uint8_t r, uint8_t c);
 
-    Color captureResultWithStat(uint8_t r, uint8_t c);
+    std::pair<Color, std::vector<int>> captureResultWithStat(uint8_t r, uint8_t c);
 
     // score related functions
     void updateScore(uint8_t r, uint8_t c);

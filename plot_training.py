@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
-LOSS_ROWS = {0: "policy", 1: "value", 2: "score", 4: "score_map", 5: "entropy", 6: "value_z"}
+LOSS_ROWS = {0: "policy", 1: "value", 2: "score", 3: "capture_map", 4: "score_map", 5: "entropy", 6: "value_z"}
 
 
 def mean(values):
@@ -115,7 +115,7 @@ def series(ax, saves, key, color, label=None):
 
 
 def plot(saves, ratings, out, show):
-    fig, axes = plt.subplots(3, 3, figsize=(15, 11))
+    fig, axes = plt.subplots(3, 4, figsize=(19, 11))
     ax = axes.flat
 
     series(ax[0], saves, "policy", BLUE, "policy loss")
@@ -131,7 +131,8 @@ def plot(saves, ratings, out, show):
     if any(s.get("value_z") is not None for s in saves):
         ax[1].legend(fontsize=8, frameon=False, loc="upper left")
 
-    for a, key, title in ((ax[2], "score", "Score loss"), (ax[3], "score_map", "Score map loss")):
+    for a, key, title in ((ax[2], "score", "Score loss"), (ax[3], "score_map", "Score map loss"),
+                          (ax[9], "capture_map", "Capture map loss (BCE)")):
         series(a, saves, key, BLUE)
         style(a, title, "loss")
 
@@ -167,14 +168,16 @@ def plot(saves, ratings, out, show):
     style(ax[5], "Each checkpoint vs current best (label = opponent)", "Elo difference")
 
     series(ax[6], saves, "capture_ratio", BLUE)
-    style(ax[6], "Capture ratio (share of segments ending in capture)", "ratio")
+    style(ax[6], "Capture ratio (share of games / segments ending in capture)", "ratio")
     series(ax[7], saves, "segment_length", BLUE)
-    style(ax[7], "Average segment length", "moves")
+    style(ax[7], "Average game length (segments before games ended at the first capture)", "moves")
     series(ax[8], saves, "samples_per_position", BLUE)
     style(ax[8], "Training samples per new position", "samples / position")
 
     for a in axes.flat:
         a.set_xlabel("self-play games", fontsize=8, color=MUTED)
+    for a in axes.flat[10:]:
+        a.set_visible(False)
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     print(f"saved {out}")
@@ -184,7 +187,7 @@ def plot(saves, ratings, out, show):
 
 def print_table(saves, ratings):
     cols = ["games", "train_iter", "samples_per_position", "capture_ratio", "segment_length",
-            "policy", "entropy", "kl", "value", "value_z", "score", "score_map", "window"]
+            "policy", "entropy", "kl", "value", "value_z", "score", "score_map", "capture_map", "window"]
     print(" ".join(f"{c[:10]:>10}" for c in cols))
     for s in saves:
         print(" ".join(f"{s[c]:>10.3f}" if isinstance(s.get(c), float) else f"{str(s.get(c, '-')):>10}" for c in cols))

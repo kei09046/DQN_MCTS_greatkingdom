@@ -48,6 +48,14 @@ public:
 	}
 };
 
+// Fills in the training targets of a finished self-play game, in place. buffer[i] holds position i's input and policy
+// target, sequence[i] the move played from it, rootValue[i] the search's value there. map comes from the move that ended
+// the game (Game::makeMoveWithStat) : the captured stones for a capture, the occupancy map for a score ending.
+// blackLead : black's territory lead at the end, komi not applied (used for score endings). stats may be null.
+void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& sequence,
+	const std::vector<std::optional<float>>& rootValue, Color winner, Wintype wintype,
+	const std::vector<float>& map, float blackLead, float valueQMix, ValueTargetStats* stats = nullptr);
+
 class TrainPipeline {
 private:
 	static constexpr float initial_learning_rate = 0.001f; // used unless the optimizer state of the starting model is loaded

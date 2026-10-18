@@ -160,16 +160,76 @@ TrainPipeline::TrainPipeline(std::string init_model,
 // 	}
 // }
 
+void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& sequence,
+	const std::vector<std::optional<float>>& rootValue, Color winner, Wintype wintype,
+	const std::vector<float>& map, float blackLead, float valueQMix, ValueTargetStats* stats){
+	const bool byCapture = (wintype == CAPTURE);
+
+	// value target of position 0, from the perspective of the player who just moved (white). Flips every move.
+	float result = (winner == BLACK) ? -0.9f : 0.9f;
+
+	// score ending : occupancy map from black's (= position 0's) perspective, negated on odd positions.
+	// score target of position 0 is white's lead (komi not applied), flipped every move like the value.
+	std::vector<float> occupancy[2];
+	float score_diff = 0.0f;
+	if(!byCapture){
+		occupancy[0] = map;
+		for(auto v : occupancy[0])
+			occupancy[1].push_back(-v);
+		score_diff = -blackLead;
+	}
+
+	// capture ending : map marks the captured stones. A position's target marks only those already on the board there,
+	// so it never asks for stones that haven't been played yet. Unsigned : the input shows whose stone each one is.
+	std::vector<int> placedAt(boardSize, -1); // index into sequence of the move that placed the stone on each point
+	if(byCapture){
+		for(int k = 0; k < static_cast<int>(sequence.size()); ++k)
+			if(sequence[k].first < rowSize)
+				placedAt[sequence[k].first * colSize + sequence[k].second] = k;
+	}
+
+	for(int i=0; i<sequence.size(); ++i){
+		TrainData& data = buffer.at(i);
+		std::get<2>(data) = result;
+		std::get<6>(data) = result; // game result z, before any mixing
+
+		if(byCapture){
+			// score / occupancy only mean something at a score ending. Capture map on every position (zeros if
+			// none of the captured stones is on the board yet: none of the current stones gets captured).
+			std::get<5>(data) = POLICYHEAD | VALUEHEAD | CMAPHEAD;
+			std::vector<float> capture(boardSize, 0.0f);
+			for(int p = 0; p < boardSize; ++p)
+				if(map[p] != 0.0f && placedAt[p] >= 0 && placedAt[p] < i) // position i holds the stones of moves 0..i-1
+					capture[p] = 1.0f;
+			std::get<4>(data) = std::move(capture);
+		}
+		else{
+			// nothing was captured : the capture map target is all zero (derived from OCCUPYHEAD in the loss).
+			std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD | CMAPHEAD;
+			std::get<3>(data) = score_diff;
+			std::get<4>(data) = occupancy[i % 2];
+		}
+
+		// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later.
+		if(rootValue.at(i)){
+			const float z = std::get<2>(data);
+			const float qv = *rootValue.at(i);
+			if(stats)
+				stats->add(qv, z);
+			std::get<2>(data) = (1.0f - valueQMix) * z + valueQMix * qv;
+		}
+
+		result = -result; // switch color
+		score_diff = -score_diff;
+	}
+}
+
 void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
 	Game game_manager = Game();
-	int startingTurn = 0;
-	
 	NNInput state;
 
 	std::vector<Move> sequence;
 	std::vector<TrainData> buffer;
-	// moves before the first capture: the real game. Later positions can't occur in a real game (captured stones stay on the board).
-	int firstCapture = -1;
 	std::vector<int> forced;
 	std::vector<bool> only; 
 	std::vector<std::optional<float>> rootValue; // search's value of each position, in the value target's perspective
@@ -212,86 +272,33 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 				#endif
 				return;
 			}
+			continue;
 		}
 
-		else {
-			// update stats
-			wintype_counter[((winner == BLACK) ? 2 : 0) + ((wintype == CAPTURE) ? 1 : 0)].fetch_add(1);
+		// game over : by capture, or by score (no legal moves / move limit). The game is never continued.
+		wintype_counter[((winner == BLACK) ? 2 : 0) + ((wintype == CAPTURE) ? 1 : 0)].fetch_add(1);
+		total_game_length.fetch_add(sequence.size());
 
-			if (is_shown) {
-				std::cout << "\n";
-				for(const auto& i : sequence){
-					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
-				}
-				std::cout << "\n";
-				// game_manager.displayBoardGUI(true);
-				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
+		if (is_shown) {
+			std::cout << "\n";
+			for(const auto& i : sequence){
+				std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 			}
-
-			// Generate NN training input.
-			// if position is black's turn to move, judge from white's perspective.
-			float result = ((winner == BLACK) ^ (startingTurn % 2 == 0)) ? 0.9f : -0.9f;
-
-			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
-				// compute occupation map
-				std::vector<float> maps[2];
-				maps[0] = std::move(map);
-				maps[1].reserve(boardSize);
-				for(auto v : maps[0])
-					maps[1].push_back(-v);
-
-				// score with komi not applied.
-				float score_diff = -game_manager.scoreDiff(BLACK);
-				// calculate train stats
-				total_score_diff.fetch_add((int)score_diff);
-				total_game_length.fetch_add(sequence.size());
-
-				const int realGameEnd = (firstCapture < 0) ? sequence.size() : firstCapture;
-
-				//insert data
-				for(int i=0; i<sequence.size(); ++i){
-					TrainData& data = buffer.at(i);
-					// position after latest capture
-					if(i >= startingTurn){
-						std::get<2>(data) = result;
-						std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
-					}
-					// position determined before.
-					else{
-						std::get<5>(data) = POLICYHEAD | VALUEHEAD;
-					}
-					// continuation after the first capture is only played to get score / occupy targets.
-					if(i >= realGameEnd)
-						std::get<5>(data) &= ~(POLICYHEAD | VALUEHEAD);
-					std::get<6>(data) = std::get<2>(data); // game result z, before any mixing
-					// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later.
-					if(i < realGameEnd && rootValue.at(i)){
-						const float z = std::get<2>(data);
-						const float q = *rootValue.at(i);
-						valueTargetStats.add(q, z);
-						std::get<2>(data) = (1.0f - globalConfig.valueQMix) * z + globalConfig.valueQMix * q;
-					}
-					std::get<3>(data) = score_diff;
-					std::get<4>(data) = maps[i % 2];
-					insertData(data, forced.at(i), only.at(i));
-					result = -result; // switch color
-					score_diff = -score_diff;
-				}
-				player->reset(Game());
-				return;
-			}
-			// play until score termination.
-			else if(wintype == CAPTURE){
-				for(int i=startingTurn; i<sequence.size(); ++i){
-					std::get<2>(buffer.at(i)) = result;
-					result = -result; // switch color
-				}
-				player->reset(game_manager);
-				startingTurn = sequence.size();
-				if(firstCapture < 0)
-					firstCapture = sequence.size();
-			}
+			std::cout << "\n";
+			// game_manager.displayBoardGUI(true);
+			std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
 		}
+
+		if(wintype != CAPTURE)
+			total_score_diff.fetch_add(static_cast<int>(-game_manager.scoreDiff(BLACK)));
+
+		labelFinishedGame(buffer, sequence, rootValue, winner, wintype, map, game_manager.scoreDiff(BLACK),
+			globalConfig.valueQMix, &valueTargetStats);
+		for(int i=0; i<sequence.size(); ++i)
+			insertData(buffer.at(i), forced.at(i), only.at(i));
+
+		player->reset(Game());
+		return;
 	}
 }
 

@@ -3,9 +3,12 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <cctype>
+#include <filesystem>
 
 // For 9*9 board.
-Net::Net(int channelSize, int blockSize, int headChannels, int valueHidden): channelSize(channelSize), headChannels(headChannels),
+Net::Net(int channelSize, int blockSize, int headChannels, int valueHidden, bool captureHead): channelSize(channelSize), headChannels(headChannels),
+captureHead(captureHead),
 cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
@@ -56,6 +59,12 @@ sc_map_cv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
 	register_module("sc_map_cv1", sc_map_cv1);
 	register_module("sc_map_bn1", sc_map_bn1);
 	register_module("sc_map_cv2", sc_map_cv2);
+
+	if(captureHead){
+		cap_map_cv1 = register_module("cap_map_cv1", torch::nn::Conv2d(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)));
+		cap_map_bn1 = register_module("cap_map_bn1", torch::nn::BatchNorm2d(headChannels));
+		cap_map_cv2 = register_module("cap_map_cv2", torch::nn::Conv2d(torch::nn::Conv2dOptions(headChannels, 1, 1)));
+	}
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
@@ -81,7 +90,12 @@ NNOutput Net::forward(const torch::Tensor& state)
 	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn1(sc_map_cv1(x)));
 	exp_score_map = sc_map_cv2(exp_score_map).tanh();
 
-	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map);
+	// capture map head : logits, sigmoid is applied in the loss.
+	torch::Tensor capture_logit = captureHead
+		? cap_map_cv2(torch::nn::functional::relu(cap_map_bn1(cap_map_cv1(x))))
+		: torch::zeros_like(exp_score_map);
+
+	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, capture_logit);
 }
 
 NNInput PolicyValueNet::getData(const Game& game){
@@ -213,8 +227,15 @@ PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string&
 }
 
 PolicyValueNet::PolicyValueNet(const std::string& model_file, bool use_gpu): 
-PolicyValueNet(model_file, globalConfig.modelPrefix, use_gpu)
+PolicyValueNet(model_file, modelTypeOf(model_file), use_gpu)
 {}
+
+std::string PolicyValueNet::modelTypeOf(const std::string& model_file){
+	const std::string name = std::filesystem::path(model_file).filename().string();
+	if(name.ends_with(".pt") && !name.empty() && std::isupper(static_cast<unsigned char>(name[0])))
+		return name.substr(0, 1);
+	return globalConfig.modelPrefix;
+}
 
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
@@ -595,7 +616,9 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 	sd *= smask;
 	auto smap = map * sm_mask;
-	auto cmap = map * cap_mask;
+	// capture map target : the map holds the capture map for games ending by capture. For games ending by score it holds
+	// the occupancy map (OCCUPYHEAD), and the capture target is all zero : nothing was captured.
+	auto cmap = map * (~sm_mask) * cap_mask;
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
@@ -618,7 +641,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	for(int i=0; i<passes; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4] = policy_value_net->forward(sb);
+		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb);
 		// if(cntr % 1 == 0){
 		// 	std::cout << "iter " << i << "\n";
 		// 	for(int j=0; j<B; ++j){
@@ -643,18 +666,15 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(masked_r4, smap, torch::nn::MSELossOptions().reduction(torch::kSum));
 		score_map_loss = score_map_loss / smap_active_elements;
 
-		// float pos_weight = 1.0f;
-		// auto masked_r5 = r5 * cap_mask;
-		// torch::Tensor loss_tensor = -(cmap * torch::log(masked_r5 + 1e-9) * pos_weight + (1 - cmap) * torch::log(1 - masked_r5 + 1e-9));
-		
-		// Mask the loss tensor explicitly to zero out non-capture samples
-		// loss_tensor = loss_tensor * cap_mask; 
-		// torch::Tensor capture_loss = loss_tensor.sum() / cap_active_elements;
-		/////////////////////////
+		// captured stones are few of 81 points : weight them up so that predicting "nothing captured" everywhere doesn't pay.
+		torch::Tensor capture_loss_per_point = torch::nn::functional::binary_cross_entropy_with_logits(r5, cmap,
+			torch::nn::functional::BinaryCrossEntropyWithLogitsFuncOptions().pos_weight(torch::full({1}, capture_pos_weight, options).to(device))
+				.reduction(torch::kNone));
+		torch::Tensor capture_loss = (capture_loss_per_point * cap_mask.to(torch::kFloat32)).sum() / cap_active_elements;
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		torch::Tensor loss = policy_loss + value_loss + score_loss * 0.25f + score_map_loss * 0.25f;
+		torch::Tensor loss = policy_loss + value_loss + score_loss * 0.25f + score_map_loss * 0.25f + capture_loss * 0.25f;
 
 		pLoss += policy_loss.item<float>();
 		vLoss += value_loss.item<float>();
@@ -662,7 +682,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		vzLoss += ((r2.detach() - zb).pow(2) * vmask.to(torch::kFloat32)).sum().item<float>() / value_active_elements;
 		sLoss += score_loss.item<float>();
 		smLoss += score_map_loss.item<float>();
-		// cmLoss += capture_loss.item<float>();
+		cmLoss += capture_loss.item<float>();
 
 		if(update){
 			// a single non-finite loss or gradient would write NaN into every weight: skip the step instead.
@@ -687,21 +707,18 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 void PolicyValueNet::save_model(const std::string& model_file) const
 {
-	if(model_type == "J"){
-		auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
-		if(!net){
-			throw std::runtime_error("Model type mismatch when saving: " + model_file);
-		}
-		torch::save(net, model_file);
+	auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
+	if(!net){
+		throw std::runtime_error("Model type mismatch when saving: " + model_file);
 	}
-	else{
-		throw std::runtime_error("Unknown model type when saving: " + model_type);
-	}
+	torch::save(net, model_file);
 }
 
 std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
 	if(model_type == "J") //  23 channel model
 		return std::make_shared<Net>(23, 10);
+	if(model_type == "K") // J + capture map head; games end at the first capture
+		return std::make_shared<Net>(23, 10, 32, 256, true);
 	throw std::runtime_error("Unsupported model type: " + model_type);
 }
 
@@ -799,7 +816,7 @@ void PolicyValueNet::load_weights(const std::string& model_file){
 
 void PolicyValueNet::displayNNOutput(const NNOutput& modelOut){
 	// policyLogit : [82] winP : [1] scoreDiff : [1] scoreMap : [81] captureMap : [81]
- 	const auto [policyLogit, winP, scoreDiff, scoreMap] = modelOut;
+ 	const auto [policyLogit, winP, scoreDiff, scoreMap, captureMap] = modelOut;
 
 	const torch::Tensor policy = torch::softmax(policyLogit, 0);
 	

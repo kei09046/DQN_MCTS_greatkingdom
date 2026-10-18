@@ -4,7 +4,8 @@
 #include <torch/torch.h>
 #include "gamerules.h"
 
-using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
+// policy logits, value, score, score (occupancy) map, capture map logits
+using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 using NNInput = std::vector<float>;
 
 // board, moveprob, value target, score diff, (score map/capture map), heads to train, game result z.
@@ -119,11 +120,13 @@ public:
 
 // Every head first reduces the trunk to headChannels channels, and the value / score heads have a
 // hidden fully connected layer of valueHidden units.
+// captureHead : adds the capture map head (logits of each stone being captured). Without it, forward returns zeros there.
 class Net : public NetBase{
 public:
-	Net(int channelSize, int blockSize, int headChannels = 32, int valueHidden = 256);
+	Net(int channelSize, int blockSize, int headChannels = 32, int valueHidden = 256, bool captureHead = false);
 	int channelSize;
 	int headChannels;
+	bool captureHead;
 
 	NNOutput forward(const torch::Tensor& state) override;
 	torch::nn::Conv2d cv1;
@@ -152,6 +155,11 @@ public:
 	torch::nn::Conv2d sc_map_cv1;
 	torch::nn::BatchNorm2d sc_map_bn1;
 	torch::nn::Conv2d sc_map_cv2;
+
+	// capture map (only with captureHead)
+	torch::nn::Conv2d cap_map_cv1{nullptr};
+	torch::nn::BatchNorm2d cap_map_bn1{nullptr};
+	torch::nn::Conv2d cap_map_cv2{nullptr};
 };
 
 
@@ -160,6 +168,7 @@ private:
 	bool use_gpu;
 	torch::Device device;
 	float l2_const = 0.0001f;
+	float capture_pos_weight = 5.0f; // BCE weight of captured points in the capture map loss
 	std::unique_ptr<torch::optim::Adam> optimizer;
 	const std::string model_type;
 
@@ -175,7 +184,10 @@ public:
 
 	PolicyValueNet(const std::string& model_file, const std::string& model_type, bool use_gpu);
 
+	// model type from the file name's first letter (e.g. J53760.pt -> J); config model_prefix for "none".
 	PolicyValueNet(const std::string& model_file, bool use_gpu);
+
+	static std::string modelTypeOf(const std::string& model_file);
 
 	static NNInput getData(const Game& game);
 

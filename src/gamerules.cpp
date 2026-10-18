@@ -162,22 +162,27 @@ std::tuple<Color, Wintype, std::vector<float>> Game::makeMoveWithStat(Move move)
     switchTurn();
     moveCount++;
 
-    auto clr = captureResultWithStat(r, c);
+    auto [clr, captured] = captureResultWithStat(r, c);
         
     if(moveCount >= 2)
         updateScore(r, c);
 
-    if(clr != EMPTY || getLegalMoveCount() == 0 || moveCount > boardSize){
+    // end by capture
+    if(clr != EMPTY){
+        std::vector<float> captureMap(boardSize, 0.0f);
+        for(int i : captured)
+            captureMap[i] = 1.0f;
+        return {clr, CAPTURE, captureMap};
+    }
+    // end by score
+    else if(getLegalMoveCount() == 0 || moveCount > boardSize){
         std::vector<float> occupyMap(boardSize);
         for(int i=0; i<rowSize; ++i){
             for(int j=0; j<colSize; ++j){
                 occupyMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
             }
         }
-        if(clr != EMPTY)
-            return {clr, CAPTURE, occupyMap};
-        else
-            return {scoreWinner(), SCORE, occupyMap};
+        return {scoreWinner(), SCORE, occupyMap};
     }
     return {EMPTY, NONE, {}};
 }
@@ -431,7 +436,7 @@ Color Game::captureResultbyMove(uint8_t r, uint8_t c){
     return EMPTY;
 }
 
-Color Game::captureResultWithStat(uint8_t r, uint8_t c){
+std::pair<Color, std::vector<int>> Game::captureResultWithStat(uint8_t r, uint8_t c){
     Color winner = EMPTY;
     std::vector<uint8_t> capturedChainIdx;
 
@@ -468,6 +473,8 @@ Color Game::captureResultWithStat(uint8_t r, uint8_t c){
     }
 
     if(winner != EMPTY){
+        std::vector<int> captured;
+
         for(auto idx : capturedChainIdx){
             int v = (winner == BLACK) ? 0 : 1;
             uint8_t repl = (winner == BLACK) ? BSCORE : WSCORE;
@@ -476,20 +483,21 @@ Color Game::captureResultWithStat(uint8_t r, uint8_t c){
 
             uint8_t cur = idx, start = idx;
             do {
+                captured.push_back(cur);
                 uint8_t cr = cur / colSize;
                 uint8_t cc = cur % colSize;
-                board[cr][cc] = repl;
-                for(int i=0; i<4; ++i){
-                    if(inbound(cr + dr[i], cc + dc[i]))
-                        chains[findHead(cr + dr[i], cc + dc[i])].liberties.set(cur, true);
-                }
+                // board[cr][cc] = repl;
+                // for(int i=0; i<4; ++i){
+                //     if(inbound(cr + dr[i], cc + dc[i]))
+                //         chains[findHead(cr + dr[i], cc + dc[i])].liberties.set(cur, true);
+                // }
                 cur = stones[cr][cc].next;
             } while (cur != start);
         }
-        return winner;
+        return {winner, captured};
     }
 
-    return EMPTY;
+    return {EMPTY, {}};
 }
 
 
