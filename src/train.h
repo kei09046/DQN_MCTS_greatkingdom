@@ -58,11 +58,6 @@ void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& 
 
 class TrainPipeline {
 private:
-	static constexpr float initial_learning_rate = 0.001f; // used unless the optimizer state of the starting model is loaded
-	static constexpr int lr_patience = 5; // comparisons in a row without a clear improvement before the learning rate is halved
-	// win rate a checkpoint needs against the current best to reset the learning-rate counter. Above 0.5 so that a
-	// checkpoint of equal strength (which beats 0.5 in ~46% of 96-game comparisons by chance) doesn't keep resetting it.
-	static constexpr float lr_improvement_winrate = 0.55f;
 	float learning_rate;
 	int comparisons_without_improvement = 0;
 	float captureRatio;

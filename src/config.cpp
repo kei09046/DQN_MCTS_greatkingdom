@@ -50,6 +50,12 @@ Config loadConfig(const std::string& path) {
     c.cPuct     = M.at("cPuct");
     c.temp = M.at("temp");
     c.minVisitRatio = M.value("minVisitRatio", 0.005f);
+    c.fullSearchProb = M.at("fullSearchProb");
+    if(!(c.fullSearchProb > 0.0f && c.fullSearchProb <= 1.0f))
+        throw std::runtime_error("fullSearchProb must be in (0, 1]");
+    c.fastPlayout = M.at("fastPlayout");
+    if(c.fastPlayout < 1)
+        throw std::runtime_error("fastPlayout must be at least 1");
 
     // per-engine overrides (optional). Missing fields fall back to the global values above.
     if (j.contains("engines")) {
@@ -86,6 +92,18 @@ Config loadConfig(const std::string& path) {
     c.windowFraction     = T.at("windowFraction");
     if(c.windowFraction <= 0.0f || c.windowFraction > 1.0f)
         throw std::runtime_error("windowFraction must be in (0, 1]");
+    c.fallbackWinrate    = T.at("fallbackWinrate");
+    if(c.fallbackWinrate < 0.0f || c.fallbackWinrate > 0.5f)
+        throw std::runtime_error("fallbackWinrate must be in [0, 0.5]");
+    c.lrPatience         = T.at("lrPatience");
+    if(c.lrPatience < 1)
+        throw std::runtime_error("lrPatience must be at least 1");
+    c.lrImprovementWinrate = T.at("lrImprovementWinrate");
+    if(c.lrImprovementWinrate < 0.5f || c.lrImprovementWinrate > 1.0f)
+        throw std::runtime_error("lrImprovementWinrate must be in [0.5, 1]");
+    c.initialLearningRate = T.at("initialLearningRate");
+    if(!(c.initialLearningRate > 0.0f))
+        throw std::runtime_error("initialLearningRate must be positive");
 
     //dirichlet noise
     auto& D = j.at("dirichlet_noise");

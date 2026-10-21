@@ -49,6 +49,10 @@ struct Config {
     float cPuct;
     float temp;
     float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
+    // playout cap randomization (self-play only) : each move gets a full search (nPlayout, recorded for training) with
+    // probability fullSearchProb, otherwise a fast search (fastPlayout, not recorded). 1 = every move is a full search.
+    float fullSearchProb;
+    int fastPlayout;
 
     // per-engine overrides of fpu / minVisitRatio, read from "engines" in the config. Index = engine order.
     std::vector<SearchParams> engines;
@@ -87,6 +91,10 @@ struct Config {
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
     float valueQMix; // value target = (1 - valueQMix) * game result + valueQMix * root value after search. 0 = game result only.
     float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
+    float fallbackWinrate; // a checkpoint winning less than this against the current best is replaced by the best model's weights.
+    int lrPatience; // comparisons in a row without a clear improvement before the learning rate is halved.
+    float lrImprovementWinrate; // win rate against the current best that counts as a clear improvement (resets the lrPatience counter).
+    float initialLearningRate; // used unless the optimizer state of the starting model is loaded.
 };
 extern Config globalConfig;
 

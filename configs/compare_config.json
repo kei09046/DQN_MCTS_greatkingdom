@@ -35,7 +35,9 @@
     "nPlayout": 400,
     "cPuct": 1.5,
     "temp": 1.0,
-    "minVisitRatio": 0.005
+    "minVisitRatio": 0.005,
+    "fullSearchProb": 0.25,
+    "fastPlayout": 80
   },
 
   "engines": [
@@ -64,6 +66,10 @@
     "capacity": 10000,
     "trainStartPoint": 20000,
     "windowFraction": 0.25,
-    "valueQMix": 0.1
+    "valueQMix": 0.1,
+    "fallbackWinrate": 0.35,
+    "lrPatience": 5,
+    "lrImprovementWinrate": 0.55,
+    "initialLearningRate": 0.001
   }
 }

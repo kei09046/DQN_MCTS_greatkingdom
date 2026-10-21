@@ -75,11 +75,16 @@ public:
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
-    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1);
+    // noise : add Dirichlet noise to the root (if enabled in the config).
+    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1, const bool noise = true);
 
     Move getMove(float temperature);
 
     MoveData getMoveWithStat(float temperature);
+
+    // fast search of playout cap randomization : fastPlayout more playouts, without Dirichlet noise or forced visits.
+    // Only moves the game forward; its result isn't a training target.
+    Move getFastMove(float temperature);
 
     // pick a move from the current root's search result (no additional search).
     Move selectMove(float temperature);

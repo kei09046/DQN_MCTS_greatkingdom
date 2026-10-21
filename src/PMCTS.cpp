@@ -347,6 +347,9 @@ Move Node::selectMove(float temp, int minVisit){
         weights[i] = (edgeN[i] - minVisit <= 0) ? 0.0f : std::pow(edgeN[i] - minVisit, temp);
     }
     std::partial_sum(weights.begin(), weights.end(), cumulative.begin());
+    // no move above minVisit (e.g. a short search) : take the most visited one.
+    if(cumulative.back() <= 0.0f)
+        return {game.getAvailableMoves()[maxi] / colSize, game.getAvailableMoves()[maxi] % colSize};
 
     std::uniform_real_distribution<float> dist(0.0f, cumulative.back());
     float rnd = dist(rnd::gen);
@@ -590,12 +593,12 @@ MCTS::~MCTS(){
     delete transposTable;
 }
 
-void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild){
+void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild, const bool noise){
     // root already proven won/lost: nothing to search.
     if(root->forcedState != 0)
         return;
 
-    if(globalConfig.dirichletNoise)
+    if(noise && globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
 
     int search_counter = 0;
@@ -691,6 +694,11 @@ MoveData MCTS::getMoveWithStat(float temp){
     const int minVisit = params.minVisits(globalConfig.nPlayout);
     runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
     return root->selectMoveWithStat(temp, minVisit);
+}
+
+Move MCTS::getFastMove(float temp){
+    runSimulation(PLAYOUT, globalConfig.fastPlayout, globalConfig.time, -1, false);
+    return root->selectMove(temp, 0);
 }
 
 std::pair<float, float> MCTS::getEval(){

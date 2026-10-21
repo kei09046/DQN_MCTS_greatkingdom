@@ -18,7 +18,7 @@ TrainPipeline::TrainPipeline(std::string init_model,
     if (std::regex_search(init_model, match, re)) {
         save_cnt = std::stoi(match[1]);
     }
-	learning_rate = initial_learning_rate;
+	learning_rate = globalConfig.initialLearningRate;
 
 	// optimizer state saved with the data snapshot of init_model (see run), e.g. ../data/J53760.opt for J53760.pt
 	const std::string opt_file = globalConfig.dataPath + std::filesystem::path(init_model).stem().string() + ".opt";
@@ -232,6 +232,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 	std::vector<TrainData> buffer;
 	std::vector<int> forced;
 	std::vector<bool> only; 
+	std::vector<bool> recorded; // full search : inserted into the replay buffer. Fast search positions are only labelled.
 	std::vector<std::optional<float>> rootValue; // search's value of each position, in the value target's perspective
 
 	#ifdef measureTime
@@ -242,7 +243,11 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		game_manager.setPolicyMask();
 		state = PolicyValueNet::getData(game_manager);
 
-		const auto [m, prob, forcedState, isOnlyMove, q] = player->getMoveWithStat(temp);
+		// playout cap randomization : a fast search position keeps its place in the sequence (labels alternate per move)
+		// but isn't recorded.
+		const bool full = (globalConfig.fullSearchProb >= 1.0f) || (rnd::pick0or1(globalConfig.fullSearchProb) == 0);
+		const MoveData md = full ? player->getMoveWithStat(temp) : MoveData{player->getFastMove(temp), {}, 0, false, std::nullopt};
+		const auto& [m, prob, forcedState, isOnlyMove, q] = md;
 		//printMove(m);
 
 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
@@ -254,7 +259,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL, 0.0f);
 			forced.push_back(forcedState);
 			only.push_back(isOnlyMove);
-			rootValue.push_back(q);
+			recorded.push_back(full);
+			rootValue.push_back(full ? q : std::nullopt); // fast search values stay out of the q / z statistics
 		}
 
 		if (winner == EMPTY) {
@@ -295,7 +301,8 @@ void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int
 		labelFinishedGame(buffer, sequence, rootValue, winner, wintype, map, game_manager.scoreDiff(BLACK),
 			globalConfig.valueQMix, &valueTargetStats);
 		for(int i=0; i<sequence.size(); ++i)
-			insertData(buffer.at(i), forced.at(i), only.at(i));
+			if(recorded.at(i))
+				insertData(buffer.at(i), forced.at(i), only.at(i));
 
 		player->reset(Game());
 		return;
@@ -344,6 +351,11 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 	std::string model_file;
 	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
 	const size_t trainStartPoint = globalConfig.trainStartPoint;
+	const float fallbackWinrate = globalConfig.fallbackWinrate;
+	const int lrPatience = globalConfig.lrPatience;
+	// above 0.5, so that a checkpoint of equal strength (which beats 0.5 in ~46% of 96-game comparisons by chance)
+	// doesn't keep resetting the learning-rate counter.
+	const float lrImprovementWinrate = globalConfig.lrImprovementWinrate;
 
 	std::atomic<bool> stop_flag = false;
 	std::atomic<bool> start_flag = false; // flag to indicate if self-play has started
@@ -467,20 +479,20 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + 
 							"B" + ".pt"); // best models are saved
 						}
-						else if(winrate < 0.35f){
+						else if(winrate < fallbackWinrate){
 							std::cout << "model fallback!" << std::endl;
 							train_model.load_weights(globalConfig.modelPath + current_best_model_file); // keeps the optimizer state
 						}
 
-						// no clear improvement for lr_patience comparisons in a row : halve the learning rate.
-						if(winrate >= lr_improvement_winrate)
+						// no clear improvement for lrPatience comparisons in a row : halve the learning rate.
+						if(winrate >= lrImprovementWinrate)
 							comparisons_without_improvement = 0;
-						else if(++comparisons_without_improvement >= lr_patience){
+						else if(++comparisons_without_improvement >= lrPatience){
 							learning_rate *= 0.5f;
 							comparisons_without_improvement = 0;
-							std::cout << "no improvement in " << lr_patience << " comparisons : learning rate halved to " << learning_rate << std::endl;
+							std::cout << "no improvement in " << lrPatience << " comparisons : learning rate halved to " << learning_rate << std::endl;
 						}
-						std::cout << "comparisons without improvement : " << comparisons_without_improvement << " / " << lr_patience
+						std::cout << "comparisons without improvement : " << comparisons_without_improvement << " / " << lrPatience
 							<< ", learning rate " << learning_rate << std::endl;
 
 						train_model.set_learning_rate(learning_rate);
