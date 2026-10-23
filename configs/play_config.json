@@ -56,14 +56,14 @@
     "compare_game_cnt": 120,
     "compare_thread_num": 12,
     "search_thread_num": 4,
-    "train_wait_time": 200000,
+    "train_wait_time": 300000,
     "save_freq": 96,
     "capacity": 10000,
     "trainStartPoint": 20000,
     "windowFraction": 0.25,
-    "valueQMix": 0.1,
-    "fallbackWinrate": 0.35,
-    "lrPatience": 5,
+    "valueQMix": 0.0,
+    "fallbackWinrate": 0.25,
+    "lrPatience": 15,
     "lrImprovementWinrate": 0.55,
     "initialLearningRate": 0.001
   }
