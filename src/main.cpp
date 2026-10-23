@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
         TrainPipeline line(model_file, model_file, true); // use gpu
         if(data_file != "none")
             line.loadReplayBuffer(resolveDataFile(data_file));
-        line.run(game_num, num_thread, is_shown, globalConfig.temp, globalConfig.modelPrefix); // game_batch_num, train_thread_num, is_shown, 1/temp, model_prefix
+        line.run(game_num, num_thread, is_shown, globalConfig.temp); // game_batch_num, train_thread_num, is_shown, 1/temp
     }
     else if(mod == "human_play"){
         globalConfig = loadConfig("../configs/play_config.json");

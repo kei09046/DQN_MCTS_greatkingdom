@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <cctype>
 #include <filesystem>
+#include <regex>
 
 // For 9*9 board.
 Net::Net(int channelSize, int blockSize, int headChannels, int valueHidden, bool captureHead): channelSize(channelSize), headChannels(headChannels),
@@ -220,21 +221,35 @@ NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 }
 
 
-PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string& model_type, bool use_gpu):
- use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type)
+PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu):
+ use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type), num_blocks(num_blocks)
 {
 	load_model(model_file);
 }
 
 PolicyValueNet::PolicyValueNet(const std::string& model_file, bool use_gpu): 
-PolicyValueNet(model_file, modelTypeOf(model_file), use_gpu)
+PolicyValueNet(model_file, parseModelName(model_file).type, parseModelName(model_file).blocks, use_gpu)
 {}
 
-std::string PolicyValueNet::modelTypeOf(const std::string& model_file){
+ModelName PolicyValueNet::parseModelName(const std::string& model_file){
 	const std::string name = std::filesystem::path(model_file).filename().string();
-	if(name.ends_with(".pt") && !name.empty() && std::isupper(static_cast<unsigned char>(name[0])))
-		return name.substr(0, 1);
-	return globalConfig.modelPrefix;
+	static const std::regex current("([A-Z])_(\\d+)b_(.*)\\.pt"), old("([A-Z])(\\d+)B?\\.pt");
+	std::smatch m;
+	if(std::regex_match(name, m, current)){
+		std::smatch g;
+		const std::string tag = m[3].str();
+		std::optional<int> games;
+		if(std::regex_search(tag, g, std::regex("^(\\d+)")))
+			games = std::stoi(g[1].str());
+		return {m[1].str(), std::stoi(m[2].str()), games};
+	}
+	if(std::regex_match(name, m, old))
+		return {m[1].str(), 10, std::stoi(m[2].str())}; // every model before numHiddenBlock had 10 blocks
+	return {globalConfig.modelPrefix, globalConfig.numHiddenBlock, std::nullopt};
+}
+
+std::string PolicyValueNet::modelFileName(const std::string& tag) const{
+	return model_type + "_" + std::to_string(num_blocks) + "b_" + tag + ".pt";
 }
 
 std::vector<PolicyValueOutput>
@@ -716,9 +731,9 @@ void PolicyValueNet::save_model(const std::string& model_file) const
 
 std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
 	if(model_type == "J") //  23 channel model
-		return std::make_shared<Net>(23, 10);
+		return std::make_shared<Net>(23, num_blocks);
 	if(model_type == "K") // J + capture map head; games end at the first capture
-		return std::make_shared<Net>(23, 10, 32, 256, true);
+		return std::make_shared<Net>(23, num_blocks, 32, 256, true);
 	throw std::runtime_error("Unsupported model type: " + model_type);
 }
 
@@ -739,7 +754,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 	.betas({0.9, 0.999})
 	.weight_decay(l2_const));
 
-	std::cout << "Model loaded: " << model_file << std::endl;
+	std::cout << "Model loaded: " << model_file << " (type " << model_type << ", " << num_blocks << " blocks)" << std::endl;
 }
 
 void PolicyValueNet::save_optimizer(const std::string& file) const{

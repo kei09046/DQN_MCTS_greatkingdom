@@ -96,7 +96,7 @@ public:
 
 	void train();
 
-	void run(const int game_batch_num=10000, const int inference_thread_num=4, const bool is_shown=false, float temp=0.5f, const std::string& model_prefix="model");
+	void run(const int game_batch_num=10000, const int inference_thread_num=4, const bool is_shown=false, float temp=0.5f);
 };
 
 // Trains an untrained network on positions saved by ReplayBuffer::save, reporting training and validation

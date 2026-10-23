@@ -37,6 +37,7 @@ struct Config {
     //neuralNet constants
     int batchSize;
     int inputChannel;
+    int numHiddenBlock; // residual blocks of a new (untrained) network. A loaded model takes its block count from its file name.
 
     //dirichlet noise
     float alpha; // dirichlet noise parameter

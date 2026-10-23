@@ -12,12 +12,10 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	map_batch = new std::vector<float>(globalConfig.batchSize * boardSize);
 	type_batch = new std::vector<Trainhead>(globalConfig.batchSize);
 	
-	save_cnt = 0;
-	std::smatch match;
-    std::regex re("(\\d+)");
-    if (std::regex_search(init_model, match, re)) {
-        save_cnt = std::stoi(match[1]);
-    }
+	save_cnt = PolicyValueNet::parseModelName(init_model).games.value_or(0);
+	if(train_model.modelType() != globalConfig.modelPrefix || train_model.numBlocks() != globalConfig.numHiddenBlock)
+		std::cout << "note : " << init_model << " is a " << train_model.modelType() << " model with " << train_model.numBlocks()
+			<< " blocks; config model_prefix / numHiddenBlock only apply to \"none\"" << std::endl;
 	learning_rate = globalConfig.initialLearningRate;
 
 	// optimizer state saved with the data snapshot of init_model (see run), e.g. ../data/J53760.opt for J53760.pt
@@ -346,8 +344,12 @@ void TrainPipeline::train(){
 	}
 }
 
-void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp, const std::string& model_prefix)
+void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp)
 {
+	// file names of this run's checkpoints, e.g. K_10b_13440.pt, ../data/K_10b_13440.bin
+	const auto checkpoint = [&](int games){ return train_model.modelFileName(std::to_string(games)); };
+	const auto dataFile = [&](int games, const char* ext){
+		return globalConfig.dataPath + std::filesystem::path(checkpoint(games)).stem().string() + ext; };
 	std::string model_file;
 	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
 	const size_t trainStartPoint = globalConfig.trainStartPoint;
@@ -402,7 +404,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
 							return s; }); // wait until all train and self_play threads are paused
 
-					model_file = model_prefix + std::to_string(games_played + save_cnt) + ".pt";
+					model_file = checkpoint(games_played + save_cnt);
 					const std::string save_path = globalConfig.modelPath + model_file;
 					train_model.save_model(save_path); // save model to file
 
@@ -451,12 +453,12 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
 						// training data at the time of this checkpoint, for offline training (./play test <file>)
-						const std::string data_file = globalConfig.dataPath + model_prefix + std::to_string(games_played + save_cnt) + ".bin";
+						const std::string data_file = dataFile(games_played + save_cnt, ".bin");
 						replayBuffer.save(data_file);
 						std::cout << "training data saved : " << data_file << " (" << replayBuffer.size() << " positions)" << std::endl;
 						// saved after the comparison, so it carries a learning rate halved by it. Comparing doesn't train, so the
 						// optimizer state still matches the model file.
-						const std::string opt_file = globalConfig.dataPath + model_prefix + std::to_string(games_played + save_cnt) + ".opt";
+						const std::string opt_file = dataFile(games_played + save_cnt, ".opt");
 
 						globalConfig = loadConfig("../configs/compare_config.json");
 
@@ -476,8 +478,7 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 						if(winrate > 0.5f){
 							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
 							current_best_model_file = model_file;
-							train_model.save_model(globalConfig.modelPath + model_prefix + std::to_string(games_played + save_cnt) + 
-							"B" + ".pt"); // best models are saved
+							train_model.save_model(globalConfig.modelPath + train_model.modelFileName(std::to_string(games_played + save_cnt) + "B")); // best models are saved
 						}
 						else if(winrate < fallbackWinrate){
 							std::cout << "model fallback!" << std::endl;
@@ -689,7 +690,7 @@ void trainOnStaticData(const std::string& data_file, int steps, float lr, float 
 		}
 	}
 
-	const std::string model_file = globalConfig.modelPath + globalConfig.modelPrefix + "static.pt";
+	const std::string model_file = globalConfig.modelPath + net.modelFileName("static");
 	net.save_model(model_file);
 	std::cout << "model saved : " << model_file << std::endl;
 }

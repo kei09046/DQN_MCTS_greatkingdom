@@ -2,6 +2,8 @@
 #define NEURALNET_H
 
 #include <torch/torch.h>
+#include <optional>
+#include <string>
 #include "gamerules.h"
 
 // policy logits, value, score, score (occupancy) map, capture map logits
@@ -163,6 +165,15 @@ public:
 };
 
 
+// model file name <type>_<blocks>b_<tag>.pt, e.g. K_10b_13440.pt (tag : games played, optionally + "B" for a best model).
+// Old names <type><games>.pt (e.g. K13440.pt) are read as 10 blocks. Anything else (e.g. "none") : an untrained network
+// of the config's model_prefix and numHiddenBlock.
+struct ModelName {
+	std::string type;
+	int blocks;
+	std::optional<int> games; // games played, if the tag starts with a number
+};
+
 class PolicyValueNet {
 private:
 	bool use_gpu;
@@ -171,6 +182,7 @@ private:
 	float capture_pos_weight = 5.0f; // BCE weight of captured points in the capture map loss
 	std::unique_ptr<torch::optim::Adam> optimizer;
 	const std::string model_type;
+	const int num_blocks;
 
 	// std::vector<float> makeScoreDistributionBatch(const std::vector<float>& scores, float scoreRange, float sigma, int window) const;
 
@@ -182,12 +194,19 @@ private:
 public:
 	std::shared_ptr<NetBase> policy_value_net;
 
-	PolicyValueNet(const std::string& model_file, const std::string& model_type, bool use_gpu);
+	PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu);
 
-	// model type from the file name's first letter (e.g. J53760.pt -> J); config model_prefix for "none".
+	// model type and block count from the file name (see ModelName).
 	PolicyValueNet(const std::string& model_file, bool use_gpu);
 
-	static std::string modelTypeOf(const std::string& model_file);
+	static ModelName parseModelName(const std::string& model_file);
+
+	// file name of a model of this type and size, e.g. modelFileName("13440") -> K_10b_13440.pt
+	std::string modelFileName(const std::string& tag) const;
+
+	const std::string& modelType() const { return model_type; }
+
+	int numBlocks() const { return num_blocks; }
 
 	static NNInput getData(const Game& game);
 

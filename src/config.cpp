@@ -67,6 +67,9 @@ Config loadConfig(const std::string& path) {
     auto& N = j.at("nn");
     c.batchSize    = N.at("batchSize");
     c.inputChannel = N.at("inputChannel");
+    c.numHiddenBlock = N.at("numHiddenBlock");
+    if(c.numHiddenBlock < 1)
+        throw std::runtime_error("numHiddenBlock must be at least 1");
 
     // cache (log2 sizes)
     auto& C = j.at("cache");

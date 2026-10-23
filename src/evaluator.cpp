@@ -63,8 +63,8 @@ void Evaluator::HandlerWork() {
 Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
     createHandlerThreads();
 }
-Evaluator::Evaluator(const std::string& model_file, const std::string& model_type, bool use_gpu)
-    : net(new PolicyValueNet(model_file, model_type, use_gpu)), stop(false){
+Evaluator::Evaluator(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu)
+    : net(new PolicyValueNet(model_file, model_type, num_blocks, use_gpu)), stop(false){
     createHandlerThreads();
 }
 Evaluator::Evaluator(const std::string& model_file, bool use_gpu)

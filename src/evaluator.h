@@ -40,7 +40,7 @@ private:
 
 public:
     Evaluator(PolicyValueNet* net);
-    Evaluator(const std::string& model_file, const std::string& model_type, bool use_gpu);
+    Evaluator(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu);
     Evaluator(const std::string& model_file, bool use_gpu);
     ~Evaluator();
     bool evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash); // return true if cache hit

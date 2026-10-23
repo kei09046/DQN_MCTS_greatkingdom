@@ -90,7 +90,8 @@ def elo_chain(comparisons, default_games):
         else:
             base, base_se = rating.get(c["opponent"], (0.0, 0.0))
             rating[c["model"]] = (base + elo, math.hypot(base_se, se))
-        games = int(re.search(r"(\d+)", c["model"]).group(1)) if re.search(r"(\d+)", c["model"]) else None
+        g = re.search(r"(\d+)B?\.pt$", c["model"])  # K_10b_13440.pt or old K13440.pt
+        games = int(g.group(1)) if g else None
         out.append({**c, "games_model": games, "elo": rating[c["model"]][0], "se": rating[c["model"]][1],
                     "diff": elo, "diff_se": se, "n": n})
     return out
