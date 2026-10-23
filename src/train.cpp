@@ -658,7 +658,7 @@ void trainOnStaticData(const std::string& data_file, int steps, float lr, float 
 	using Losses = std::array<float, 7>; // policy, value, score, capture map, score map, target entropy, value MSE vs z
 	const auto print = [](const char* name, const Losses& l){
 		std::cout << " | " << name << " policy " << l[0] << " (entropy " << l[5] << ", KL " << l[0] - l[5] << ") value " << l[1]
-			<< " (vs z " << l[6] << ") score " << l[2] << " score map " << l[4];
+			<< " (vs z " << l[6] << ") score " << l[2] << " score map " << l[4] << " capture map " << l[3];
 	};
 
 	const int report_every = 200, val_batches = 8;

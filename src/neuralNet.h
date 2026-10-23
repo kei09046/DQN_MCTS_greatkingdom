@@ -179,7 +179,6 @@ private:
 	bool use_gpu;
 	torch::Device device;
 	float l2_const = 0.0001f;
-	float capture_pos_weight = 5.0f; // BCE weight of captured points in the capture map loss
 	std::unique_ptr<torch::optim::Adam> optimizer;
 	const std::string model_type;
 	const int num_blocks;
@@ -192,6 +191,8 @@ private:
 	std::shared_ptr<NetBase> makeNet() const;
 
 public:
+	static constexpr float capture_pos_weight = 5.0f; // BCE weight of captured points in the capture map loss
+
 	std::shared_ptr<NetBase> policy_value_net;
 
 	PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu);

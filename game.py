@@ -366,6 +366,10 @@ OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit
 # to currently hold 100% of the visits" rather than another shade of the same gradient.
 FORCED_WIN_COLOR = "#1b8a3a"
 FORCED_LOSS_COLOR = "#b23b3b"
+# capture-risk overlay: stones whose capture probability (captureMap) reaches the threshold get a
+# red ring, blended from light to full red as the probability goes from the threshold to 1.
+CAPTURE_RISK_COLOR = "#d01818"
+CAPTURE_RISK_THRESHOLD = 0.3
 
 # A Node only gets its own per-move breakdown (edgeP/edgeN -- see Analysis::printAnalysis in
 # src/analysis.cpp) once *something* has searched through it as an internal node, not merely
@@ -536,6 +540,10 @@ _ANALYSIS_SCOREEXP_RE = re.compile(r"^scoreExp\s*:\s*" + _FLOAT)
 # in [-1, 1]: -1 = certain Black-owned point, +1 = certain White-owned point (see
 # Game::makeMove's end-of-game scoreMap in gamerules.cpp for the matching training label).
 _ANALYSIS_SCOREMAP_RE = re.compile(r"^scoreMap\s*:\s*(.*)$")
+# "captureMap : p0 p1 ... p80" -- row-major (r*9+c) probability that the stone on each point gets
+# captured (the game ends at the first capture). Only meaningful on stones; absent for models
+# without a capture head.
+_ANALYSIS_CAPTUREMAP_RE = re.compile(r"^captureMap\s*:\s*(.*)$")
 # "playout forced <F> winp <W> score <S> path <r1> <c1> <r2> <c2> ..." -- one playout's search
 # path (root -> leaf, as the moves selected along the way) and leaf NN evaluation, only sent
 # while debug mode is on (see Analysis::setDebugMode/printPlayoutDebugLine in
@@ -642,7 +650,8 @@ class AnalysisEngine:
             if line == "analysis begin":
                 in_block = True
                 current = {"winrate": None, "visits": None, "initQ": None, "moves": [],
-                           "scoreExp": None, "scoreSearch": None, "scoreMap": None, "forced": 0}
+                           "scoreExp": None, "scoreSearch": None, "scoreMap": None, "captureMap": None,
+                           "forced": 0}
                 continue
             if line == "analysis end":
                 in_block = False
@@ -702,6 +711,11 @@ class AnalysisEngine:
             m = _ANALYSIS_SCOREMAP_RE.match(line)
             if m:
                 current["scoreMap"] = [float(x) for x in m.group(1).split()]
+                continue
+
+            m = _ANALYSIS_CAPTUREMAP_RE.match(line)
+            if m:
+                current["captureMap"] = [float(x) for x in m.group(1).split()]
                 continue
 
     def _send(self, cmd):
@@ -1241,6 +1255,9 @@ class Game:
         self.show_territory_var = BooleanVar(value=False)
         Checkbutton(nn_map_row, text="Territory (scoreMap)", variable=self.show_territory_var,
                     command=self._on_overlay_mode_change).pack(side=LEFT)
+        self.show_capture_var = BooleanVar(value=False)
+        Checkbutton(nn_map_row, text="Capture risk (captureMap)", variable=self.show_capture_var,
+                    command=self._on_overlay_mode_change).pack(side=LEFT, padx=(10, 0))
 
         self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
         self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
@@ -1898,6 +1915,7 @@ class Game:
         # mode below is also active -- drawn unconditionally so it still shows up even with
         # overlay mode "none".
         self._draw_territory_overlay(result)
+        self._draw_capture_overlay(result)
 
         mode = self.overlay_var.get()
         moves = result.get("moves", [])
@@ -1966,9 +1984,40 @@ class Game:
         # coordinates), stones, overlay numbers. Sink the shapes below everything already on the
         # board (grid/star/stones) instead of raising grid/star, which would otherwise climb
         # above stones too; keep text on top of all of it so labels stay legible even over a
-        # star point.
+        # star point. Capture-risk rings go on top of the stones they mark.
         self.canvas.tag_lower("move_overlay_shape")
         self.canvas.tag_raise("move_overlay_text")
+        self.canvas.tag_raise("capture_ring")
+
+    def _draw_capture_overlay(self, result):
+        """Red ring around each stone the capture head expects to be captured with probability
+        >= CAPTURE_RISK_THRESHOLD; thicker and redder the higher the probability, with the
+        percentage at its upper right. The probability is already corrected for the training
+        loss's positive weight (see PolicyValueNet::captureProbabilities)."""
+        if not self.show_capture_var.get():
+            return
+        capture_map = result.get("captureMap")
+        if not capture_map:
+            return
+
+        r = int(self.stone_size * 0.5)
+        font_size = max(6, int(self.stone_size * 0.14))
+        for i, p in enumerate(capture_map):
+            if p < CAPTURE_RISK_THRESHOLD:
+                continue
+            x, y = divmod(i, self.boardSize)
+            if x >= self.boardSize or y >= self.boardSize or not self.on_stone[x][y]:
+                continue
+            t = (p - CAPTURE_RISK_THRESHOLD) / (1.0 - CAPTURE_RISK_THRESHOLD)
+            color = _blend_hex("#f2a0a0", CAPTURE_RISK_COLOR, t)
+            width = 2 + int(round(2 * t))
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline=color, width=width,
+                                     tags=("move_overlay", "capture_ring"))
+            self.canvas.create_text(cx + r, cy - r, text=f"{p * 100:.0f}%", fill=CAPTURE_RISK_COLOR,
+                                     anchor="sw", font=("Helvetica", font_size, "bold"),
+                                     tags=("move_overlay", "capture_ring"))
 
     def _draw_territory_overlay(self, result):
         """KataGo-style ownership dots: a small black dot on points the network expects to end
