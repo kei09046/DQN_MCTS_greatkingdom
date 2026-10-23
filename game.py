@@ -369,7 +369,7 @@ FORCED_LOSS_COLOR = "#b23b3b"
 # capture-risk overlay: stones whose capture probability (captureMap) reaches the threshold get a
 # red ring, blended from light to full red as the probability goes from the threshold to 1.
 CAPTURE_RISK_COLOR = "#d01818"
-CAPTURE_RISK_THRESHOLD = 0.3
+CAPTURE_RISK_THRESHOLD = 0.1
 
 # A Node only gets its own per-move breakdown (edgeP/edgeN -- see Analysis::printAnalysis in
 # src/analysis.cpp) once *something* has searched through it as an internal node, not merely

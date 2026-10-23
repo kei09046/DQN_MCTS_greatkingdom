@@ -466,6 +466,9 @@ Node* Node::jump(Move move){
     if(!expanded){
         expand();
     }
+    // a proven node (e.g. an immediate win found on its first visit) is never expanded, so it has no child slots yet.
+    if(child.size() < game.getAvailableMoves().size())
+        child.resize(game.getAvailableMoves().size(), nullptr);
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
