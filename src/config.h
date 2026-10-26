@@ -6,7 +6,7 @@
 
 // search options that can differ between engines (e.g. two engines in evaluate_two / evaluate_multi).
 struct SearchParams {
-    float fpu;
+    float fpu; // < 0 : unvisited children are valued 0. >= 0 : parent value - fpu * sqrt(policy mass of visited children).
     float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
 
     // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.

@@ -255,9 +255,19 @@ int Node::selectChildInSearch(float fpu){
     }
     assert(!game.getAvailableMoves().empty());
 
+    // KataGo style fpu.
+    float fpuValue = 0.0f;
+    if(fpu >= 0.0f){
+        float visitedPolicy = 0.0f;
+        for(int i=0; i<edgeN.size(); ++i)
+            if(edgeN[i] > 0.0f)
+                visitedPolicy += edgeP[i];
+        fpuValue = -W/valueN() - fpu * std::sqrt(visitedPolicy);
+    }
+
     for(int i=0; i<game.getAvailableMoves().size(); ++i){
         if(child[i] == nullptr){
-            pref = ((fpu < 0.0f) ? 0.0f : -W/valueN()-fpu) + globalConfig.cPuct * edgeP[i] * sqrt(N);
+            pref = fpuValue + globalConfig.cPuct * edgeP[i] * sqrt(N);
             lost = false;
         }
 
