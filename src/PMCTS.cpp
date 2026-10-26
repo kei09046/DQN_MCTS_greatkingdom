@@ -596,12 +596,13 @@ MCTS::~MCTS(){
     delete transposTable;
 }
 
-void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild, const bool noise){
+void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild, 
+    const bool fastSearch, const bool earlyQuit){
     // root already proven won/lost: nothing to search.
     if(root->forcedState != 0)
         return;
 
-    if(noise && globalConfig.dirichletNoise)
+    if(!fastSearch && globalConfig.dirichletNoise)
         root->addDirichletNoise(evaluator);
 
     int search_counter = 0;
@@ -633,6 +634,22 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
         while(!root->expanded && root->forcedState == 0)
             playout(search_counter, evaluate_counter, current_evaluating_nodes, need_update_chain, result_buffer, stuck_during_search,
                 playMode, timeLimit);
+
+        // step 0.5. If earlyQuit is set to true, check if |N most visited edge| - |N second most visited edge| > nPlayout and quit early.
+        if(earlyQuit){
+            float fv = 0.0f, sv = 0.0f;
+            for(const auto v : root->edgeN){
+                if(v >= fv){
+                    sv = fv;
+                    fv = v;
+                }
+                else if(v > sv){
+                    sv = v;
+                }
+            }
+            if(fv - sv > nPlayout)
+                return;
+        } 
 
         // step 1 : force minSearchPerChild visit for all children.
         if(minSearchPerChild > 0 && root->forcedState == 0){
@@ -695,12 +712,12 @@ Move MCTS::selectMove(float temp){
 
 MoveData MCTS::getMoveWithStat(float temp){
     const int minVisit = params.minVisits(globalConfig.nPlayout);
-    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit);
+    runSimulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit, false, true);
     return root->selectMoveWithStat(temp, minVisit);
 }
 
 Move MCTS::getFastMove(float temp){
-    runSimulation(PLAYOUT, globalConfig.fastPlayout, globalConfig.time, -1, false);
+    runSimulation(PLAYOUT, globalConfig.fastPlayout, globalConfig.time, -1, true, true);
     return root->selectMove(temp, 0);
 }
 

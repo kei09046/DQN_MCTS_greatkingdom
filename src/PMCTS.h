@@ -76,7 +76,8 @@ public:
     MCTS(MCTS&& other) noexcept;
 
     // noise : add Dirichlet noise to the root (if enabled in the config).
-    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1, const bool noise = true);
+    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1, const bool fastSearch = false,
+    const bool earlyQuit = false);
 
     Move getMove(float temperature);
 
