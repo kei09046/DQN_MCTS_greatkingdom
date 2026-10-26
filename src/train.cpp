@@ -208,13 +208,16 @@ void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& 
 			std::get<4>(data) = occupancy[i % 2];
 		}
 
-		// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later.
+		// game result z mixed with the search's value q: z alone is mostly decided by mistakes made much later, so q gets
+		// more weight early on. The weight falls linearly from valueQMix at position 0 to 0 at the terminal position
+		// (position sequence.size(), after the last move), where z is exact.
 		if(rootValue.at(i)){
 			const float z = std::get<2>(data);
 			const float qv = *rootValue.at(i);
 			if(stats)
 				stats->add(qv, z);
-			std::get<2>(data) = (1.0f - valueQMix) * z + valueQMix * qv;
+			const float lambda = valueQMix * static_cast<float>(sequence.size() - i) / sequence.size();
+			std::get<2>(data) = (1.0f - lambda) * z + lambda * qv;
 		}
 
 		result = -result; // switch color

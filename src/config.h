@@ -90,7 +90,7 @@ struct Config {
     int save_freq; // 96
     int capacity;
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
-    float valueQMix; // value target = (1 - valueQMix) * game result + valueQMix * root value after search. 0 = game result only.
+    float valueQMix; // value target = (1 - l) * game result + l * root value after search, l = valueQMix * (n - i) / n at move i of n. 0 = game result only.
     float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
     float fallbackWinrate; // a checkpoint winning less than this against the current best is replaced by the best model's weights.
     int lrPatience; // comparisons in a row without a clear improvement before the learning rate is halved.

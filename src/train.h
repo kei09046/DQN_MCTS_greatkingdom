@@ -52,6 +52,7 @@ public:
 // target, sequence[i] the move played from it, rootValue[i] the search's value there. map comes from the move that ended
 // the game (Game::makeMoveWithStat) : the captured stones for a capture, the occupancy map for a score ending.
 // blackLead : black's territory lead at the end, komi not applied (used for score endings). stats may be null.
+// valueQMix : weight of q in position 0's value target, falling linearly to 0 at the terminal position.
 void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& sequence,
 	const std::vector<std::optional<float>>& rootValue, Color winner, Wintype wintype,
 	const std::vector<float>& map, float blackLead, float valueQMix, ValueTargetStats* stats = nullptr);
