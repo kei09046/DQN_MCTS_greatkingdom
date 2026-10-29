@@ -237,5 +237,6 @@ void Evaluator::updateModel(PolicyValueNet* updatedNet) {
 	for (auto& item : src_buf) {
 		dst_buf[item.key()].copy_(item.value());
 	}
+    net->fuseBatchNorm(); // the folded weights were computed from the old weights
     cache.clear();
 }

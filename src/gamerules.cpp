@@ -51,6 +51,9 @@ std::pair<Color, Wintype> Game::makeMove(Move move){
 
     uint8_t r = move.first;
     uint8_t c = move.second;
+    // if(r >= rowSize || c >= colSize) [[unlikely]]
+    //     throw std::out_of_range("Game::makeMove : move off the board");
+
     assert(board[r][c] & EMPTY);
     // turn off the empty bit, turn on the color bit.
     board[r][c] ^= currentTurn | EMPTY;

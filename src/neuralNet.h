@@ -116,7 +116,21 @@ TORCH_MODULE(ResidualBlock);
 class NetBase : public torch::nn::Module {
 public:
     virtual NNOutput forward(const torch::Tensor& state) = 0;
+    // inference with each BatchNorm folded into the convolution before it (same outputs, fewer GPU kernels). fuse()
+    // computes the folded weights from the current weights and running statistics; forward uses them in eval mode
+    // until unfuse(). Call fuse() again after the weights change.
+    virtual void fuse() {}
+    virtual void unfuse() {}
     virtual ~NetBase() = default;
+};
+
+// a convolution with its BatchNorm folded in : BN(conv(x)) = conv(x; a W) + b, a = gamma / sqrt(var + eps), b = beta - a mean.
+struct FusedConv {
+	torch::Tensor weight, bias;
+	int padding;
+
+	FusedConv(const torch::nn::Conv2d& conv, const torch::nn::BatchNorm2d& bn);
+	torch::Tensor operator()(const torch::Tensor& x) const { return torch::conv2d(x, weight, bias, 1, padding); }
 };
 
 
@@ -131,6 +145,8 @@ public:
 	bool captureHead;
 
 	NNOutput forward(const torch::Tensor& state) override;
+	void fuse() override;
+	void unfuse() override;
 	torch::nn::Conv2d cv1;
 	torch::nn::BatchNorm2d bn1;
 
@@ -162,6 +178,16 @@ public:
 	torch::nn::Conv2d cap_map_cv1{nullptr};
 	torch::nn::BatchNorm2d cap_map_bn1{nullptr};
 	torch::nn::Conv2d cap_map_cv2{nullptr};
+
+private:
+	// folded convolutions (see NetBase::fuse), not saved with the model. Empty when not fused.
+	struct Fused {
+		std::vector<FusedConv> stem, blocks; // blocks : conv1, conv2 of each residual block
+		std::vector<FusedConv> at, v, sc, sc_map, cap_map;
+	};
+	std::optional<Fused> fused;
+
+	NNOutput forwardFused(const torch::Tensor& state);
 };
 
 
@@ -228,6 +254,9 @@ public:
 
 	// input : one position from getData.
 	PolicyValueOutput evaluate(NNInput& input);
+
+	// folds BatchNorm into the convolutions for inference (NetBase::fuse). Call after the weights change; train() undoes it.
+	void fuseBatchNorm() { policy_value_net->fuse(); }
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& nextmove_batch,
 	// 	std::array<float, batchSize>& result_batch, float lr);

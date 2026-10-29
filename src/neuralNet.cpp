@@ -68,8 +68,66 @@ sc_map_cv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
 	}
 }
 
+FusedConv::FusedConv(const torch::nn::Conv2d& conv, const torch::nn::BatchNorm2d& bn){
+	torch::NoGradGuard no_grad;
+	const torch::Tensor a = bn->weight / torch::sqrt(bn->running_var + bn->options.eps());
+	weight = (conv->weight * a.view({-1, 1, 1, 1})).contiguous();
+	bias = bn->bias - a * bn->running_mean;
+	if(conv->bias.defined())
+		bias += a * conv->bias;
+	padding = static_cast<int>(conv->weight.size(2) / 2); // "same" padding, as every convolution here uses
+}
+
+void Net::fuse(){
+	Fused f;
+	f.stem.emplace_back(cv1, bn1);
+	for(auto& block : *blocks){
+		auto b = block->as<ResidualBlock>();
+		f.blocks.emplace_back(b->conv1, b->bn1);
+		f.blocks.emplace_back(b->conv2, b->bn2);
+	}
+	f.at.emplace_back(at_cv, at_bn);
+	f.v.emplace_back(v_cv, v_bn);
+	f.sc.emplace_back(sc_cv, sc_bn);
+	f.sc_map.emplace_back(sc_map_cv1, sc_map_bn1);
+	if(captureHead)
+		f.cap_map.emplace_back(cap_map_cv1, cap_map_bn1);
+	fused = std::move(f);
+}
+
+void Net::unfuse(){
+	fused.reset();
+}
+
+NNOutput Net::forwardFused(const torch::Tensor& state)
+{
+	const Fused& f = *fused;
+
+	torch::Tensor x = torch::relu(f.stem[0](state));
+	for(size_t i = 0; i < f.blocks.size(); i += 2)
+		x = torch::relu(f.blocks[i + 1](torch::relu(f.blocks[i](x))) + x);
+
+	torch::Tensor log_act = at_fc(torch::relu(f.at[0](x)).view({-1, headChannels * inputSize}));
+
+	torch::Tensor val = torch::relu(f.v[0](x)).view({-1, headChannels * inputSize});
+	val = v_fc2(torch::relu(v_fc1(val))).tanh();
+
+	torch::Tensor score = torch::relu(f.sc[0](x)).view({-1, headChannels * inputSize});
+	torch::Tensor exp_score_diff = sc_fc2(torch::relu(sc_fc1(score)));
+
+	torch::Tensor exp_score_map = sc_map_cv2(torch::relu(f.sc_map[0](x))).tanh();
+
+	torch::Tensor capture_logit = captureHead ? cap_map_cv2(torch::relu(f.cap_map[0](x))) : torch::zeros_like(exp_score_map);
+
+	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, capture_logit);
+}
+
 NNOutput Net::forward(const torch::Tensor& state)
 {
+	// during self-play, use fused net instead.
+	if(fused && !is_training())
+		return forwardFused(state);
+
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& block : *blocks) {
 		x = block->as<ResidualBlock>()->forward(x);
@@ -224,6 +282,10 @@ NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu):
  use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type), num_blocks(num_blocks)
 {
+	// cuDNN times its convolution algorithms the first time it sees an input shape and keeps the fastest one.
+	// (Each new batch size pays that once.)
+	if(use_gpu)
+		at::globalContext().setBenchmarkCuDNN(true);
 	load_model(model_file);
 }
 
@@ -579,7 +641,9 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		pEntropy = ((entropy_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements).item<float>();
 	}
 
-	// BatchNorm uses batch statistics (and updates its running statistics) only while training.
+	// BatchNorm uses batch statistics (and updates its running statistics) only while training. The weights change from
+	// here on, so the folded inference weights (if any) are dropped.
+	policy_value_net->unfuse();
 	policy_value_net->train(update);
 	torch::AutoGradMode grad_mode(update);
 	const int passes = update ? globalConfig.epochs : 1;
@@ -679,6 +743,7 @@ void PolicyValueNet::load_model(const std::string& model_file){
 	policy_value_net->to(device);
 	// inference mode: BatchNorm normalizes with its running statistics, so an evaluation doesn't depend on the rest of the batch.
 	policy_value_net->eval();
+	policy_value_net->fuse();
 
 	// learning rate would be modified by train.cpp later.
 	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), 
@@ -720,6 +785,7 @@ void PolicyValueNet::load_weights(const std::string& model_file){
 		dst_buffers[item.key()].copy_(item.value());
 
 	policy_value_net->eval();
+	policy_value_net->fuse();
 	std::cout << "Model weights loaded: " << model_file << std::endl;
 }
 
