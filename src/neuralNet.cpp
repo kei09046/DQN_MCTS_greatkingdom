@@ -253,19 +253,19 @@ std::string PolicyValueNet::modelFileName(const std::string& tag) const{
 }
 
 std::vector<PolicyValueOutput>
-PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
+PolicyValueNet::batchEvaluate(NNInput& input, int batchSize){
 	using namespace torch::indexing;
 
-	const int B = gameBatch.size();
+	const int B = batchSize;
+	assert(input.size() == static_cast<size_t>(B) * globalConfig.inputChannel * inputSize);
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	auto gameData = getData(gameBatch);
 
 	torch::Tensor inputBatch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch;
 
-	inputBatch = torch::from_blob(gameData.data(), // [B, 18, 9, 9]
+	inputBatch = torch::from_blob(input.data(), // [B, inputChannel, 9, 9]
 		{B, globalConfig.inputChannel, rowSize, colSize},
 		options).to(device);
 
@@ -353,54 +353,8 @@ PolicyValueNet::batchEvaluate(const std::vector<const Game*>& gameBatch){
 // 	return outputs;
 // }
 
-PolicyValueOutput PolicyValueNet::evaluate(const Game& game){
-	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	auto gameData = getData(game);
-
-	torch::Tensor input = torch::from_blob(gameData.data(), // [B, 18, 9, 9]
-		{1, globalConfig.inputChannel, rowSize, colSize},
-		options).to(device);
-
-	NNOutput res;
-	torch::NoGradGuard no_grad;
-	if (use_gpu) {
-		auto r = policy_value_net->forward(input);
-		get<0>(res) = get<0>(r).to(torch::kCPU); // policy
-		get<1>(res) = get<1>(r).to(torch::kCPU); // evaluation (scalar)
-		get<2>(res) = get<2>(r).to(torch::kCPU); // score differential (scalar)
-		get<3>(res) = get<3>(r).to(torch::kCPU); // score map
-		get<4>(res) = get<4>(r).to(torch::kCPU); // capture map
-	}
-	else {
-		res = policy_value_net->forward(input);
-	}
-
-	std::vector<float> policy;
-	float* pt = get<0>(res).data_ptr<float>();
-	for (int i=0; i<outputSize; ++i) {
-		policy.push_back(pt[i]);
-	}
-
-	std::vector<float> winprob;
-	pt = get<1>(res).data_ptr<float>();
-	winprob.push_back(pt[0]);
-	
-
-	std::vector<float> scoremap;
-	scoremap.reserve(boardSize);
-	pt = get<3>(res).data_ptr<float>();
-	for(int i=0; i<boardSize; ++i){
-		scoremap.push_back(pt[i]);
-	}
-
-	std::vector<float> capturemap;
-	capturemap.reserve(boardSize);
-	pt = get<4>(res).data_ptr<float>();
-	for(int i=0; i<boardSize; ++i){
-		capturemap.push_back(pt[i]);
-	}
-
-	return { policy, get<1>(res).index({0, 0}).item<float>(), get<2>(res).index({0, 0}).item<float>(), scoremap, capturemap };
+PolicyValueOutput PolicyValueNet::evaluate(NNInput& input){
+	return std::move(batchEvaluate(input, 1).front());
 }
 
 // std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 

@@ -8,6 +8,8 @@ void Evaluator::HandlerWork() {
     std::vector<const Game*> batchGames;
     std::vector<std::shared_ptr<NNResultBuf>> batchBufs;
     std::vector<HashValue> hashBufs;
+    std::vector<std::unique_ptr<NNInput>> batchInputs;
+    NNInput batchInput; // the requests' inputs back to back. Keeps its capacity between batches.
 
     while (!stop) {
         // wait until at least 1 request exists
@@ -16,15 +18,19 @@ void Evaluator::HandlerWork() {
 
         // drain queue into batch
         while (!q.empty()) {
-            auto r = q.front(); q.pop();
-            batchBufs.push_back(r.buf);
+            evalRequest r = std::move(q.front()); q.pop();
+            batchBufs.push_back(std::move(r.buf));
             hashBufs.push_back(r.hash);
             batchGames.push_back(r.game);
+            batchInputs.push_back(std::move(r.input));
         }
         lk.unlock();
 
-        // run batch
-        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchGames);
+        // run batch : the inputs were built by the requesting threads, only merged here.
+        batchInput.clear();
+        for(const auto& in : batchInputs)
+            batchInput.insert(batchInput.end(), in->begin(), in->end());
+        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchInput, static_cast<int>(batchInputs.size()));
         std::vector<NodeInfo> outputs;
         outputs.reserve(rawOutputs.size());
         
@@ -60,6 +66,7 @@ void Evaluator::HandlerWork() {
         hashBufs.clear();
         batchGames.clear();
         batchBufs.clear();
+        batchInputs.clear();
     }
 }
 
@@ -186,20 +193,23 @@ Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
 }
 Evaluator::~Evaluator() { stop = true; qcv.notify_all(); handler.join(); }
 
-bool Evaluator::evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash) { // called by multiple threads. Cache must be thread-safe.
-    // cache lookup
-    bool cacheHit = cache.get(hash, buf->result);
-    if(cacheHit) {
-        //std::cerr << "cache hit\n";
+bool Evaluator::request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash){ // called by multiple threads. Cache must be thread-safe.
+    if(cache.get(hash, buf->result))
         return true;
-    }
 
-    // enqueue request
+    // the input is built here, in the requesting thread, so the handler thread only merges inputs.
+    auto input = std::make_unique<NNInput>(PolicyValueNet::getData(*game));
     {
         std::lock_guard<std::mutex> lk(qmutex);
-        q.push({buf, game, hash});
+        q.push({buf, game, hash, std::move(input)});
     }
     qcv.notify_one();
+    return false;
+}
+
+bool Evaluator::evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash) {
+    if(request(buf, game, hash))
+        return true;
 
     // wait for result
     std::unique_lock<std::mutex> lk2(buf->resultmutex);
@@ -208,20 +218,7 @@ bool Evaluator::evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, Has
 }
 
 bool Evaluator::asyncEvaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash){
-    // cache lookup
-    bool cacheHit = cache.get(hash, buf->result);
-    if(cacheHit) {
-        //std::cerr << "cache hit\n";
-        return true;
-    }
-
-    // enqueue request
-    {
-        std::lock_guard<std::mutex> lk(qmutex);
-        q.push({buf, game, hash});
-    }
-    qcv.notify_one();
-    return false;
+    return request(buf, game, hash);
 }
 
 void Evaluator::updateModel(PolicyValueNet* updatedNet) {

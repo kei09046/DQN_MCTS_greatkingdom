@@ -221,11 +221,13 @@ public:
 
 	static NNInput getData(const std::vector<const Game*>& gameBatch);
 
-	std::vector<PolicyValueOutput> batchEvaluate(const std::vector<const Game*>& gameBatch);
+	// input : batchSize positions from getData, back to back (batchSize * inputChannel * inputSize floats).
+	std::vector<PolicyValueOutput> batchEvaluate(NNInput& input, int batchSize);
 
 	//std::vector<PolicyValueOutput> backupEvaluate(const std::vector<const Game*>& gameBatch); // run when batchEvaluate fails twice in a row. Checks gameBatch info as well.
 
-	PolicyValueOutput evaluate(const Game& game);
+	// input : one position from getData.
+	PolicyValueOutput evaluate(NNInput& input);
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& nextmove_batch,
 	// 	std::array<float, batchSize>& result_batch, float lr);

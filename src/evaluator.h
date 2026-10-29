@@ -32,8 +32,9 @@ struct NNResultBuf{
 
 struct evalRequest {
     std::shared_ptr<NNResultBuf> buf;
-    const Game* game;
+    const Game* game; // read by the handler only to convert the output (legal moves, turn)
     HashValue hash;
+    std::unique_ptr<NNInput> input; // network input, built by the requesting thread (PolicyValueNet::getData)
 };
 
 class Evaluator{
@@ -46,8 +47,11 @@ private:
     std::queue<evalRequest> q;
     bool stop;
 
+    // cache lookup; on a miss, builds the input in the calling thread and queues the request.
+    bool request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash);
+
     void createHandlerThreads();
-    void HandlerWork(); // should collect evaluate requests and create vector of game, then call net->batchEvaluate
+    void HandlerWork(); // collects evaluate requests, merges their inputs into one batch and calls net->batchEvaluate
     // convert raw NN output into values for MCTS search.
     NodeInfo convertForm(const PolicyValueOutput& nnOutput, const Game& game);
 

@@ -9,7 +9,8 @@ struct BoardMaps {
 };
 
 static BoardMaps boardMaps(PolicyValueNet* net, const Game& game){
-    PolicyValueOutput out = net->evaluate(game);
+    NNInput input = PolicyValueNet::getData(game);
+    PolicyValueOutput out = net->evaluate(input);
     BoardMaps maps{std::move(out.scoreMap), {}};
 
     const auto model = std::dynamic_pointer_cast<Net>(net->policy_value_net);
