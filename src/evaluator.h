@@ -2,6 +2,7 @@
 #ifndef EVALUATOR_H
 #define EVALUATOR_H
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <memory>
@@ -45,7 +46,8 @@ private:
     std::mutex qmutex;
     std::condition_variable qcv;
     std::queue<evalRequest> q;
-    bool stop;
+    std::atomic<bool> stop;
+    PinnedBuffers pinned; // used only by the handler thread
 
     // cache lookup; on a miss, builds the input in the calling thread and queues the request.
     bool request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash);
@@ -54,6 +56,7 @@ private:
     void HandlerWork(); // collects evaluate requests, merges their inputs into one batch and calls net->batchEvaluate
     // convert raw NN output into values for MCTS search.
     NodeInfo convertForm(const PolicyValueOutput& nnOutput, const Game& game);
+    void freePinnedMemory(); // called by the handler thread on its way out
 
 public:
     Evaluator(PolicyValueNet* net);

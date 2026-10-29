@@ -10,6 +10,13 @@
 using NNOutput = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 using NNInput = std::vector<float>;
 
+// page-locked host buffers for PolicyValueNet::batchEvaluate. Owned by whoever runs the evaluations (one per Evaluator) :
+// as a thread_local they were freed in the thread-exit destructors, after libtorch's own per-thread CUDA state, and crashed.
+struct PinnedBuffers{
+	torch::Tensor in, out;
+	void free(){ in.reset(); out.reset(); }
+};
+
 // board, moveprob, value target, score diff, (score map/capture map), heads to train, game result z.
 // The value target may mix z with the search's value; z is kept separately to measure how well the value head predicts games.
 using TrainData = std::tuple<NNInput, std::vector<float>, float, float, std::vector<float>, Trainhead, float>;
@@ -248,7 +255,8 @@ public:
 	static NNInput getData(const std::vector<const Game*>& gameBatch);
 
 	// input : batchSize positions from getData, back to back (batchSize * inputChannel * inputSize floats).
-	std::vector<PolicyValueOutput> batchEvaluate(NNInput& input, int batchSize);
+	// pinned : reused for the host <-> GPU transfer; without it the transfer goes through pageable memory.
+	std::vector<PolicyValueOutput> batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinned = nullptr);
 
 	//std::vector<PolicyValueOutput> backupEvaluate(const std::vector<const Game*>& gameBatch); // run when batchEvaluate fails twice in a row. Checks gameBatch info as well.
 

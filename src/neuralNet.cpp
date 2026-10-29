@@ -315,7 +315,7 @@ std::string PolicyValueNet::modelFileName(const std::string& tag) const{
 }
 
 std::vector<PolicyValueOutput>
-PolicyValueNet::batchEvaluate(NNInput& input, int batchSize){
+PolicyValueNet::batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinned){
 	const int B = batchSize;
 	assert(input.size() == static_cast<size_t>(B) * globalConfig.inputChannel * inputSize);
 	std::vector<PolicyValueOutput> outputs;
@@ -334,19 +334,19 @@ PolicyValueNet::batchEvaluate(NNInput& input, int batchSize){
 
 	torch::NoGradGuard no_grad;
 	torch::Tensor out; // [B, outWidth] on the CPU
-	if(use_gpu){
-		// use pinned memory
-		static thread_local torch::Tensor pinnedIn, pinnedOut;
-		if(!pinnedIn.defined() || pinnedIn.size(0) < B){
-			pinnedIn = torch::empty({B, globalConfig.inputChannel, rowSize, colSize}, options.pinned_memory(true));
-			pinnedOut = torch::empty({B, outWidth}, options.pinned_memory(true));
+	if(use_gpu && pinned){
+		if(!pinned->in.defined() || pinned->in.size(0) < B){
+			pinned->in = torch::empty({B, globalConfig.inputChannel, rowSize, colSize}, options.pinned_memory(true));
+			pinned->out = torch::empty({B, outWidth}, options.pinned_memory(true));
 		}
-		torch::Tensor in = pinnedIn.narrow(0, 0, B);
+		torch::Tensor in = pinned->in.narrow(0, 0, B);
 		in.copy_(cpuIn);
 		const NNOutput r = policy_value_net->forward(in.to(device, /*non_blocking=*/true));
-		out = pinnedOut.narrow(0, 0, B);
-		out.copy_(merge(r)); // blocking : waits for the forward pass, so pinnedIn is free again for the next batch
+		out = pinned->out.narrow(0, 0, B);
+		out.copy_(merge(r)); // blocking : waits for the forward pass, so pinned->in is free again for the next batch
 	}
+	else if(use_gpu)
+		out = merge(policy_value_net->forward(cpuIn.to(device))).to(torch::kCPU);
 	else
 		out = merge(policy_value_net->forward(cpuIn)).contiguous();
 

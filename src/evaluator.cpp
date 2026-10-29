@@ -30,7 +30,7 @@ void Evaluator::HandlerWork() {
         batchInput.clear();
         for(const auto& in : batchInputs)
             batchInput.insert(batchInput.end(), in->begin(), in->end());
-        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchInput, static_cast<int>(batchInputs.size()));
+        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchInput, static_cast<int>(batchInputs.size()), &pinned);
         std::vector<NodeInfo> outputs;
         outputs.reserve(rawOutputs.size());
         
@@ -68,6 +68,11 @@ void Evaluator::HandlerWork() {
         batchBufs.clear();
         batchInputs.clear();
     }
+    freePinnedMemory();
+}
+
+void Evaluator::freePinnedMemory(){
+    pinned.free();
 }
 
 NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& game){
@@ -191,7 +196,14 @@ Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
     : net(new PolicyValueNet(model_file, use_gpu)), stop(false){
     createHandlerThreads();
 }
-Evaluator::~Evaluator() { stop = true; qcv.notify_all(); handler.join(); }
+Evaluator::~Evaluator() {
+    {
+        std::lock_guard<std::mutex> lk(qmutex); 
+        stop = true;
+    } 
+    qcv.notify_all(); 
+    handler.join(); 
+}
 
 bool Evaluator::request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash){ // called by multiple threads. Cache must be thread-safe.
     if(cache.get(hash, buf->result))
