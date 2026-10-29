@@ -10,12 +10,6 @@
 #include <unordered_map>
 
 class Node;
-// Analysis (analysis.hpp/analysis.cpp) reads MCTS's and Node's internal search state directly
-// (root, evaluator, child/edgeN/edgeP/forcedState/...) to print it -- exactly what MCTS's own
-// analysis methods used to do before that code moved into its own class, so it gets the same
-// friend access those methods relied on. Only forward-declared here: neither this header nor
-// Node/MCTS's own definitions need Analysis to be a complete type, and analysis.hpp includes
-// this header (not the other way around), so keeping this a forward declaration avoids a cycle.
 class Analysis;
 using TransTable = std::unordered_map<HashValue, std::pair<Node*, unsigned int>>;
 
@@ -57,7 +51,6 @@ private:
 
     int forcedState; // if 0 : not forced win/loss +k : win in k move -k : lose in k move
     bool expanded; // check if node has been expanded.
-    std::shared_ptr<PolicyValueOutput> evaluation; // stores evaluation for this node. Used to temporarily hold evaluation.
     
     TransTable* const transposTable;
 

@@ -13,8 +13,6 @@
 
 // for hash
 using HashValue = uint64_t;
-using PolicyValueOutput = std::tuple<std::vector<float>, float, float, std::vector<float>>; // policy, winP, score diff, score map
-
 //mcts constants
 using Move = std::pair<uint8_t, uint8_t>;
 // move + move probability + forcedState + onlyMove? + root value after search (see Node::selectMoveWithStat)

@@ -11,12 +11,23 @@
 #include "evalcache.h"
 #include "neuralNet.h"
 
-using EvalCache = Cache<PolicyValueOutput>;
+struct NodeInfo{
+    // policy
+    std::vector<float> P;
+    // raw value head output
+    float V;
+    // utility computed
+    float U;
+    // score difference prediction(without komi)
+    float S;
+};
+
+using EvalCache = Cache<NodeInfo>;
 
 struct NNResultBuf{
     std::condition_variable resultcv;
     std::mutex resultmutex;
-    std::shared_ptr<PolicyValueOutput> result = nullptr;
+    std::shared_ptr<NodeInfo> result = nullptr;
 };
 
 struct evalRequest {
@@ -37,6 +48,8 @@ private:
 
     void createHandlerThreads();
     void HandlerWork(); // should collect evaluate requests and create vector of game, then call net->batchEvaluate
+    // convert raw NN output into values for MCTS search.
+    NodeInfo convertForm(const PolicyValueOutput& nnOutput, const Game& game);
 
 public:
     Evaluator(PolicyValueNet* net);

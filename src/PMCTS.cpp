@@ -17,163 +17,12 @@
 
 namespace{
     const Hash hash;
-
-    std::vector<float> softmax(const std::vector<float>& logit, const Node* node){
-        // edgeP/edgeN/child are indexed by position within getAvailableMoves(), not by raw
-        // board position, so the returned vector must be compacted/reindexed the same way.
-        const auto& availableMoves = node->game_().getAvailableMoves();
-        const auto& transferList = node->game_().getTransferTable();
-        const int moveSize = availableMoves.size();
-        // available moves : [1, 2, 3, 7, 8, 9 ...]
-        // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...]
-
-        std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
-        for(int i=0; i<transferList.size(); ++i){
-            if(transferList[i] != -1){
-                transferred.at(transferList.at(i)) = std::max(transferred[transferList[i]], logit.at(i));
-            }
-        }
-
-        // std::vector<float> n_logit(moveSize);
-        // for(int i=0; i<moveSize; ++i){
-        //     n_logit[i] = transferred.at(availableMoves[i]);
-        // }
-
-        std::vector<float> exp_logit(moveSize);
-        float max_logit = *std::max_element(transferred.begin(), transferred.end()); // For numerical stability
-
-        // Compute exponentials after subtracting max_logit
-        float sum_exp = 0.0f;
-        for (int i = 0; i < moveSize; ++i) {
-            exp_logit[i] = std::exp(transferred[i] - max_logit);
-            sum_exp += exp_logit[i];
-        }
-
-        // Normalize
-        for (float& val : exp_logit) {
-            val /= sum_exp;
-        }
-
-        // if(globalConfig.detailedStat){
-        //     static int cntr = 0;
-        //     if(cntr++ % 100 == 0){
-        //         std::cout << "turn : " << static_cast<int>(node->game_().getTurn()) << std::endl;  
-        //         node->game_().displayBoardGUI(true);
-
-        //         int t = 0;
-        //         for(uint8_t i=0U; i<rowSize; ++i){
-        //             for(uint8_t j=0U; j<colSize; ++j){
-        //                 if(game.getAvailableMoves()[t] == Move{i, j}){
-        //                     std::printf("%8.4f ", exp_logit[t++]);
-        //                 }
-        //                 else{
-        //                     std::printf("%8.4f ", 0.0);
-        //                 }
-        //             }
-        //             std::cout << std::endl;
-        //         }
-        //         t = 0;
-        //         for(int i=0; i<rowSize; ++i){
-        //             for(int j=0; j<colSize; ++j){
-        //                 if(game.getAvailableMoves()[t] == Move{i, j}){
-        //                     std::cout << maxIdx[t] / colSize << "," << maxIdx[t] % colSize << " "; 
-        //                     t++;
-        //                 }
-        //                 else{
-        //                     std::cout << rowSize << "," << colSize << " ";
-        //                 }
-        //             }
-        //             std::cout << std::endl;
-        //         }
-        //     }
-        // }
-
-        return exp_logit;
-    }
-
-    // returns (U, Q) estimate
-    std::pair<float, float> calculateQ(const std::shared_ptr<PolicyValueOutput> nnOutput, const Game& game){
-        const auto& [logAct, winP, scoreEXP, scoreMap] = *nnOutput;
-
-        // float captureV[2] = {0.0f, 0.0f};
-        const Color turn = game.getTurn();
-        // const Color oppturn = Game::reverseColor(turn);
-        const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
-        const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
-
-        // float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
-
-        // scoreV += scoreEXP;
-        // for(int i=0; i<boardSize; ++i){
-        //     if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
-        //         Color owned = game.getScoreBoard({i / colSize, i % colSize});
-        //         scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
-        //     }
-        // }
-
-        float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
-
-        // std::bitset<boardSize> mark;
-        // for(int i=0; i<inputSize; ++i){
-        //     int cidx = game.getChainIdx(i);
-		//     const Chain c = game.getChain(i);
-
-		//     if(c.size != 0 && !mark[cidx]){
-		// 	    mark[cidx] = true;
-        //         auto head = game.getStone({i / colSize, i % colSize}).head;
-        //         auto cur = head;
-        //         float avgCapChance = 0.0f;
-
-        //         do {
-        //             avgCapChance += captureMap[cur];
-        //             cur = game.getStone({cur/colSize, cur%colSize}).next;
-        //         } while (cur != head);
-
-        //         avgCapChance /= c.size;
-
-        //         int type = game.getBoard({i / colSize, i % colSize}) == turn ? 0 : 1;
-        //         captureV[type] = (captureV[type] > avgCapChance) ? captureV[type] : avgCapChance;
-        //     }
-        // }
-
-        // float utility = winP * 0.9f;
-        // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
-        float utility = winP * 0.9f + scoreV * 0.01f;
-        // float utility = winP;
-        // if(globalConfig.detailedStat){
-        //     static int cntr = 0;
-        //     if(cntr++ % 100 == 0){
-        //         game.displayBoardGUI(true);
-        //         std::cout << "Q : " << winP << "\n";
-        //         std::cout << "C : " << captureV[0] - captureV[1] << "\n";
-        //         std::cout << "S : " << scoreV << "\n";
-        //         std::cout << "U : " << utility << "\n";
-
-        //         for(int i=0; i<rowSize; ++i){
-        //             for(int j=0; j<colSize; ++j){
-        //                 std::printf("%8.4f ", scoreMap[i * colSize + j]);
-        //             }
-        //             std::cout << std::endl;
-        //         }
-        //         std::cout << std::endl;
-        //         for(int i=0; i<rowSize; ++i){
-        //             for(int j=0; j<colSize; ++j){
-        //                 std::printf("%8.4f ", captureMap[i * colSize + j]);
-        //             }
-        //             std::cout << std::endl;
-        //         }
-        //         std::cout << std::endl;
-        //     }
-        // }
-
-        return {utility, winP};
-    }
 }
 
 // N : # of visits, W : total action-value Q : mean action-value P : prior policy evaluation; stored by parent
 Node::Node(const Game& g, const HashValue hashValue, TransTable* const transposTable):
 game(g), turn(g.getTurn()), 
-N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), minN(0.0f), forcedState(0), hashValue(hashValue), expanded(false), evaluation(nullptr), transposTable(transposTable){
+N(0.0f), W(0.0f), initQ(0.0f), S(0.0f), Wp(0.0f), minN(0.0f), forcedState(0), hashValue(hashValue), expanded(false), transposTable(transposTable){
 }
 
 void Node::addChild(const Move& move, int idx){
@@ -573,7 +422,7 @@ void Node::addDirichletNoise(Evaluator* evaluator){
             auto buf = std::make_shared<NNResultBuf>();
             evaluator->evaluate(buf, &game, hashValue);
 
-            edgeP = softmax(std::get<0>(*(buf->result)), this);
+            edgeP = buf->result->P;
             edgeN.assign(edgeP.size(), 0.0f);
         }
     }
@@ -800,12 +649,8 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 assert(cur->N == 1);
                 cur->expand();
                 forced = cur->forcedState;
-                if(forced == 0 && cur->evaluation != nullptr){
-                    cur->edgeP = softmax(std::get<0>(*(cur->evaluation)), cur);
+                if(forced == 0 && cur->edgeN.empty()){
                     cur->edgeN.assign(cur->edgeP.size(), 0.0f);
-                    // no longer needs to store evaluation. Evaluation may be freed.
-                    // std::cout << "reset evaluation : " << cur << " " << cur->evaluation << std::endl;
-                    cur->evaluation.reset();
                 }
             }
 
@@ -912,14 +757,15 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
 void MCTS::updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur){
     float evalS, evalW, evalQ;
 
-    // instead updating edgeP and edgeN right away, store the evaluation and only update edgeP and edgeN after expansion.
-    cur->evaluation = buf->result;
     // std::cout << "get evaluation : " << cur << " " << buf->result << " " << cur->evaluation << std::endl;
 
     // S and Wp are always backed up: Wp (mean win probability) is the root value used for value targets in self-play.
-    std::tie(cur->initQ, evalW) = calculateQ(buf->result, cur->game);
-    evalS = std::get<2>(*(buf->result));
-    evalQ = cur->initQ;
+    auto r = buf->result;
+    cur->initQ = r->U;
+    cur->edgeP = r->P;
+    evalW = r->V;
+    evalS = r->S;
+    evalQ = r->U;
 
     if(analysis && analysis->getDebugMode())
         analysis->printPlayoutDebugLine(debugPath(path), evalW, evalS, 0);

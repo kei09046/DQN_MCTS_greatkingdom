@@ -24,10 +24,13 @@ void Evaluator::HandlerWork() {
         lk.unlock();
 
         // run batch
-        std::vector<PolicyValueOutput> outputs;
-        // std::cerr << "attempting batch evaluation" << std::endl;
+        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchGames);
+        std::vector<NodeInfo> outputs;
+        outputs.reserve(rawOutputs.size());
+        
+        for(int i=0; i<rawOutputs.size(); ++i)
+            outputs.push_back(convertForm(rawOutputs[i], *batchGames[i]));
 
-        outputs = net->batchEvaluate(batchGames);
         // try{
         //     outputs = net->batchEvaluate(batchGames);
         //     //std::cerr << "Batch evaluated successfully" << std::endl;
@@ -47,9 +50,9 @@ void Evaluator::HandlerWork() {
             auto buf = batchBufs[i];
             {
                 std::lock_guard<std::mutex> lk2(buf->resultmutex);
-                buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
+                buf->result = std::make_shared<NodeInfo>(outputs[i]);
                 cache.insert(hashBufs[i], buf->result);
-                //buf->result = std::make_shared<PolicyValueOutput>(outputs[i]);
+                //buf->result = std::make_shared<NodeInfo>(outputs[i]);
             }
             buf->resultcv.notify_one();
         }
@@ -58,6 +61,116 @@ void Evaluator::HandlerWork() {
         batchGames.clear();
         batchBufs.clear();
     }
+}
+
+NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& game){
+    const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = nnOutput;
+
+    // compute policy.(apply softmax + remove unplayable moves)
+    const auto& availableMoves = game.getAvailableMoves();
+    const auto& transferList = game.getTransferTable();
+    const int moveSize = availableMoves.size();
+    // available moves : [1, 2, 3, 7, 8, 9 ...]
+    // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...]
+
+    std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
+    for(int i=0; i<transferList.size(); ++i){
+        if(transferList[i] != -1){
+            transferred.at(transferList.at(i)) = std::max(transferred[transferList[i]], logAct.at(i));
+        }
+    }
+
+    // std::vector<float> n_logit(moveSize);
+    // for(int i=0; i<moveSize; ++i){
+    //     n_logit[i] = transferred.at(availableMoves[i]);
+    // }
+
+    std::vector<float> expLogit(moveSize);
+    float max_logit = *std::max_element(transferred.begin(), transferred.end()); // For numerical stability
+
+    // Compute exponentials after subtracting max_logit
+    float sum_exp = 0.0f;
+    for (int i = 0; i < moveSize; ++i) {
+        expLogit[i] = std::exp(transferred[i] - max_logit);
+        sum_exp += expLogit[i];
+    }
+
+    // Normalize
+    for (float& val : expLogit) {
+        val /= sum_exp;
+    }
+
+    // compute other values
+    const Color turn = game.getTurn();
+    const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
+    const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
+
+    // float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
+
+    // scoreV += scoreEXP;
+    // for(int i=0; i<boardSize; ++i){
+    //     if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
+    //         Color owned = game.getScoreBoard({i / colSize, i % colSize});
+    //         scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
+    //     }
+    // }
+
+    float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
+
+    // std::bitset<boardSize> mark;
+    // for(int i=0; i<inputSize; ++i){
+    //     int cidx = game.getChainIdx(i);
+    //     const Chain c = game.getChain(i);
+
+    //     if(c.size != 0 && !mark[cidx]){
+    // 	    mark[cidx] = true;
+    //         auto head = game.getStone({i / colSize, i % colSize}).head;
+    //         auto cur = head;
+    //         float avgCapChance = 0.0f;
+
+    //         do {
+    //             avgCapChance += captureMap[cur];
+    //             cur = game.getStone({cur/colSize, cur%colSize}).next;
+    //         } while (cur != head);
+
+    //         avgCapChance /= c.size;
+
+    //         int type = game.getBoard({i / colSize, i % colSize}) == turn ? 0 : 1;
+    //         captureV[type] = (captureV[type] > avgCapChance) ? captureV[type] : avgCapChance;
+    //     }
+    // }
+
+    // float utility = winP * 0.9f;
+    // float utility = winP * 0.9f + (captureV[0] - captureV[1]) * 0.03f + scoreV * 0.01f;
+    float utility = winP * 0.9f + scoreV * 0.01f;
+    // float utility = winP;
+    // if(globalConfig.detailedStat){
+    //     static int cntr = 0;
+    //     if(cntr++ % 100 == 0){
+    //         game.displayBoardGUI(true);
+    //         std::cout << "Q : " << winP << "\n";
+    //         std::cout << "C : " << captureV[0] - captureV[1] << "\n";
+    //         std::cout << "S : " << scoreV << "\n";
+    //         std::cout << "U : " << utility << "\n";
+
+    //         for(int i=0; i<rowSize; ++i){
+    //             for(int j=0; j<colSize; ++j){
+    //                 std::printf("%8.4f ", scoreMap[i * colSize + j]);
+    //             }
+    //             std::cout << std::endl;
+    //         }
+    //         std::cout << std::endl;
+    //         for(int i=0; i<rowSize; ++i){
+    //             for(int j=0; j<colSize; ++j){
+    //                 std::printf("%8.4f ", captureMap[i * colSize + j]);
+    //             }
+    //             std::cout << std::endl;
+    //         }
+    //         std::cout << std::endl;
+    //     }
+    // }
+
+    return {expLogit, winP, utility, scoreEXP};
 }
 
 Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){

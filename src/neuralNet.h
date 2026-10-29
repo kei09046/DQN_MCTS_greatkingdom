@@ -174,6 +174,14 @@ struct ModelName {
 	std::optional<int> games; // games played, if the tag starts with a number
 };
 
+struct PolicyValueOutput{
+    std::vector<float> policy;
+    float winP;
+    float scoreDiff;
+    std::vector<float> scoreMap;
+    std::vector<float> captureMap;
+};
+
 class PolicyValueNet {
 private:
 	bool use_gpu;

@@ -1,27 +1,30 @@
 #include "analysis.hpp"
 #include <iostream>
 
-// capture map of game's position : probability that the stone on each point is captured, empty if the model has no
-// capture head. Not part of the search's evaluation (nor its cache), so it is computed here with a forward pass of its own.
-// The head is trained with BCE weight w on captured points, which makes it learn s = w p / (1 - p + w p) instead of p,
-// so p = s / (w - (w - 1) s).
-static std::vector<float> captureProbabilities(PolicyValueNet* net, const Game& game){
+// score map and capture map of game's position. Neither is part of the search's evaluation (nor its cache), so both come
+// from one forward pass of their own.
+struct BoardMaps {
+    std::vector<float> score; // tanh output in [-1, 1] per point
+    std::vector<float> capture; // probability that the stone on each point is captured; empty without a capture head
+};
+
+static BoardMaps boardMaps(PolicyValueNet* net, const Game& game){
+    PolicyValueOutput out = net->evaluate(game);
+    BoardMaps maps{std::move(out.scoreMap), {}};
+
     const auto model = std::dynamic_pointer_cast<Net>(net->policy_value_net);
     if(!model || !model->captureHead)
-        return {};
+        return maps;
 
-    auto data = PolicyValueNet::getData(game);
-    const torch::Tensor input = torch::from_blob(data.data(), {1, globalConfig.inputChannel, rowSize, colSize},
-        torch::TensorOptions().dtype(torch::kFloat32)).to(model->parameters().front().device());
-
-    torch::NoGradGuard no_grad;
-    const torch::Tensor s = torch::sigmoid(std::get<4>(model->forward(input))).to(torch::kCPU).reshape({boardSize}).contiguous();
-    const float* ps = s.data_ptr<float>();
+    // captureMap holds logits. The head is trained with BCE weight w on captured points, which makes it learn
+    // s = w p / (1 - p + w p) instead of p, so p = s / (w - (w - 1) s).
     const float w = PolicyValueNet::capture_pos_weight;
-    std::vector<float> p(boardSize);
-    for(int i = 0; i < boardSize; ++i)
-        p[i] = ps[i] / (w - (w - 1.0f) * ps[i]);
-    return p;
+    maps.capture.resize(boardSize);
+    for(int i = 0; i < boardSize; ++i){
+        const float s = 1.0f / (1.0f + std::exp(-out.captureMap[i]));
+        maps.capture[i] = s / (w - (w - 1.0f) * s);
+    }
+    return maps;
 }
 
 // See analysis.hpp for what lives here and why it's split into its own class.
@@ -214,30 +217,29 @@ void Analysis::printAnalysis(MCTS& mcts){
     else
         std::cout << "scoreSearch : 0" << std::endl;
 
-    // scoreExp / scoreMap are per-point (or, for scoreExp, whole-board) NN outputs for the
-    // *current* root position, not per-child search stats -- fetch them directly
-    // (evaluator->evaluate hits the cache, since root was already evaluated by the very first
-    // playout, so this is cheap).
+    // scoreExp / scoreMap / captureMap are NN outputs for the *current* root position, not per-child
+    // search stats. scoreExp comes from the evaluator (a cache hit, since root was already evaluated
+    // by the very first playout); the cache doesn't keep the maps, so boardMaps runs its own pass.
     // scoreExp: the score head's raw scalar output -- net (Black - White) territory/capture
     // margin, from whoever is to move at root's perspective (turn-relative, same convention as
-    // winrate/scoreMap below), without komi applied (see PolicyValueOutput in consts.h and the
+    // winrate/scoreMap below), without komi applied (see NodeInfo in evaluator.h and the
     // training label in train.cpp, `-scoreDiff(startingTurn)`).
     // scoreMap: tanh output in [-1, 1], matching the training label convention in
     // Game::makeMove's end-of-game scoreMap (-1 = Black-owned point, +1 = White-owned point).
     {
         auto buf = std::make_shared<NNResultBuf>();
         mcts.evaluator->evaluate(buf, &root->game, root->hashValue);
-        const auto& [policy, wp, sd, scoreMap] = *buf->result;
-        std::cout << "scoreExp : " << sd << std::endl;
+        std::cout << "scoreExp : " << buf->result->S << std::endl;
+
+        const BoardMaps maps = boardMaps(mcts.evaluator->model(), root->game);
         std::cout << "scoreMap :";
-        for(float v : scoreMap) std::cout << " " << v;
+        for(float v : maps.score) std::cout << " " << v;
         std::cout << std::endl;
         // captureMap: probability that the stone on each point is captured (game ends at the first capture).
         // Only meaningful on stones. Not printed for a model without a capture head.
-        const std::vector<float> captureMap = captureProbabilities(mcts.evaluator->model(), root->game);
-        if(!captureMap.empty()){
+        if(!maps.capture.empty()){
             std::cout << "captureMap :";
-            for(float v : captureMap) std::cout << " " << v;
+            for(float v : maps.capture) std::cout << " " << v;
             std::cout << std::endl;
         }
     }

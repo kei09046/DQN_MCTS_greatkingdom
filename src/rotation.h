@@ -11,25 +11,6 @@ using OutputMatrix = std::vector<float>;
 template <typename T>
 using Matrix = std::vector<T>;
 
-// InputMatrix inputRotate90(const InputMatrix mat);
-
-// InputMatrix inputReflectHorizontal(const InputMatrix mat);
-
-// std::vector<InputMatrix> generateTransformedInput(const InputMatrix mat);
-
-
-// OutputMatrix outputRotate90(const OutputMatrix mat);
-
-// OutputMatrix outputReflectHorizontal(const OutputMatrix mat);
-
-// std::vector<OutputMatrix> generateTransformedOutput(const OutputMatrix mat);
-
 std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const TrainData& data);
 
-// PolicyValueOutput rotateNNOutput(const PolicyValueOutput& original, const std::vector<std::pair<int, int>>& legal, int s, int N);
-
-// std::vector<PolicyValueOutput> rotateAllNNOutputs(const PolicyValueOutput& original, const std::vector<Move>& legal, int N);
-
-// std::pair<PolicyValueOutput, std::vector<Move>> rotateNNOutputandLegal(const PolicyValueOutput& original,
-//                const std::vector<Move>& legal, int N, int s); 
 #endif
