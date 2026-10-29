@@ -25,19 +25,19 @@
   },
 
   "dirichlet_noise": {
-    "epsilon": 0.25,
+    "epsilon": 0.2,
     "alpha": 0.15
   },
 
   "mcts": {
     "mode": "playout",
     "time": 10,
-    "nPlayout": 400,
+    "nPlayout": 600,
     "cPuct": 1.5,
     "temp": 1.0,
     "minVisitRatio": 0.005,
     "fullSearchProb": 0.25,
-    "fastPlayout": 80
+    "fastPlayout": 300
   },
 
   "nn": {
@@ -57,15 +57,15 @@
     "compare_game_cnt": 96,
     "compare_thread_num": 12,
     "search_thread_num": 4,
-    "train_wait_time": 300000,
+    "train_wait_time": 50000,
     "save_freq": 96,
     "capacity": 300000,
     "trainStartPoint": 20000,
     "windowFraction": 0.25,
-    "valueQMix": 0.0,
+    "valueQMix": 0.5,
     "fallbackWinrate": 0.25,
-    "lrPatience": 15,
+    "lrPatience": 10,
     "lrImprovementWinrate": 0.55,
-    "initialLearningRate": 0.001
+    "initialLearningRate": 0.0001
   }
 }
