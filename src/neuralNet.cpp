@@ -254,66 +254,44 @@ std::string PolicyValueNet::modelFileName(const std::string& tag) const{
 
 std::vector<PolicyValueOutput>
 PolicyValueNet::batchEvaluate(NNInput& input, int batchSize){
-	using namespace torch::indexing;
-
 	const int B = batchSize;
 	assert(input.size() == static_cast<size_t>(B) * globalConfig.inputChannel * inputSize);
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
-	auto options = torch::TensorOptions().dtype(torch::kFloat32);
+	// every output of a position side by side in one row : policy, value, score, score map, capture map.
+	constexpr int pOff = 0, vOff = outputSize, sOff = vOff + 1, smOff = sOff + 1, cmOff = smOff + boardSize;
+	constexpr int outWidth = cmOff + boardSize;
 
-	torch::Tensor inputBatch, policyBatch, valueBatch, scoreBatch, scoreMapBatch, captureMapBatch;
+	const auto options = torch::TensorOptions().dtype(torch::kFloat32);
+	const torch::Tensor cpuIn = torch::from_blob(input.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options);
+	const auto merge = [B](const NNOutput& r){
+		return torch::cat({std::get<0>(r).view({B, outputSize}), std::get<1>(r).view({B, 1}), std::get<2>(r).view({B, 1}),
+			std::get<3>(r).view({B, boardSize}), std::get<4>(r).view({B, boardSize})}, 1);
+	};
 
-	inputBatch = torch::from_blob(input.data(), // [B, inputChannel, 9, 9]
-		{B, globalConfig.inputChannel, rowSize, colSize},
-		options).to(device);
-
-	// ---- Forward pass ----
 	torch::NoGradGuard no_grad;
+	torch::Tensor out; // [B, outWidth] on the CPU
 	if(use_gpu){
-		auto r = policy_value_net->forward(inputBatch);
-		policyBatch = std::get<0>(r).to(torch::kCPU);  // [B, outputSize]
-		valueBatch  = std::get<1>(r).to(torch::kCPU);  // [B, 1]
-		scoreBatch = std::get<2>(r).to(torch::kCPU); // [B, 1]
-		scoreMapBatch = std::get<3>(r).to(torch::kCPU); // [B, 1, 9, 9]
-		captureMapBatch = (std::get<4>(r)).to(torch::kCPU); // [B, 1, 9, 9]
+		// use pinned memory
+		static thread_local torch::Tensor pinnedIn, pinnedOut;
+		if(!pinnedIn.defined() || pinnedIn.size(0) < B){
+			pinnedIn = torch::empty({B, globalConfig.inputChannel, rowSize, colSize}, options.pinned_memory(true));
+			pinnedOut = torch::empty({B, outWidth}, options.pinned_memory(true));
+		}
+		torch::Tensor in = pinnedIn.narrow(0, 0, B);
+		in.copy_(cpuIn);
+		const NNOutput r = policy_value_net->forward(in.to(device, /*non_blocking=*/true));
+		out = pinnedOut.narrow(0, 0, B);
+		out.copy_(merge(r)); // blocking : waits for the forward pass, so pinnedIn is free again for the next batch
 	}
-	else{
-		auto r = policy_value_net->forward(inputBatch);
-		policyBatch = std::get<0>(r);   // already CPU
-		valueBatch  = std::get<1>(r);
-		scoreBatch = std::get<2>(r);
-		scoreMapBatch = std::get<3>(r);
-		captureMapBatch = std::get<4>(r);
-	}
+	else
+		out = merge(policy_value_net->forward(cpuIn)).contiguous();
 
-	//std::cerr << policyBatch.dtype() << " " << policyBatch.device() << " " << policyBatch.sizes() << std::endl;
-	// ---- Extract each result ----
-	float* pP = policyBatch.data_ptr<float>();
-	float* pV = valueBatch.data_ptr<float>();
-	float* pS = scoreBatch.data_ptr<float>();
-	float* pSm = scoreMapBatch.data_ptr<float>();
-	float* pCm = captureMapBatch.data_ptr<float>();
-	// float* pCc = capChanceBatch.data_ptr<float>();
-
-	for(int b = 0; b < B; ++b) {
-		// policy head: copy whole row
-		float* src = pP + b * outputSize;
-		std::vector<float> policy(src, src + outputSize);
-
-		float value = pV[b];
-		float s = pS[b];
-
-		src = pSm + b * boardSize;
-		std::vector<float> scMap(src, src + boardSize);
-
-		src = pCm + b * boardSize;
-		std::vector<float> capMap(src, src + boardSize);
-
-		// float capProb = pCc[b];
-
-		outputs.emplace_back(std::move(policy), value, s, std::move(scMap), std::move(capMap));
+	const float* row = out.data_ptr<float>();
+	for(int b = 0; b < B; ++b, row += outWidth) {
+		outputs.emplace_back(std::vector<float>(row + pOff, row + pOff + outputSize), row[vOff], row[sOff],
+			std::vector<float>(row + smOff, row + smOff + boardSize), std::vector<float>(row + cmOff, row + cmOff + boardSize));
 	}
 	return outputs;
 }
