@@ -333,6 +333,7 @@ from datetime import datetime
 
 from tkinter import *
 from tkinter import ttk
+from tkinter import font as tkfont
 from PIL import Image, ImageTk
 
 # 실제 게임이 실행되는 파일 GUI 담당이기도 함
@@ -358,6 +359,15 @@ def default_search_params(config_path=PLAY_CONFIG):
     }
 
 BOARD_BG = "#DCB35C"
+# Main-window sizing (see Game.__init__): the board canvas is BOARD_DESIGN_PX square when the
+# screen has room, otherwise shrunk (never below BOARD_MIN_PX) so board + side panel fit.
+# SCREEN_RESERVE_W/H leave room for window decorations and taskbars; SIDE_PANEL_PAD is the
+# side panel's padx/pady.
+BOARD_DESIGN_PX = 900
+BOARD_MIN_PX = 360
+SCREEN_RESERVE_W = 20
+SCREEN_RESERVE_H = 80
+SIDE_PANEL_PAD = 20
 OVERLAY_COLOR = "#1565C0"  # blended toward this color for stronger policy/visit intensity
 # A proven win/loss (root->forcedState != 0, see Analysis::printAnalysis in src/analysis.cpp) leaves
 # exactly one candidate in "moves" -- the winning move (forced > 0) or the best delaying move
@@ -617,6 +627,16 @@ class AnalysisEngine:
         self.playouts = queue.Queue()
         # selections: (r, c) replies to request_select, in request order.
         self.selections = queue.Queue()
+        # Position generations, so a caller can tell which position a streamed result/playout
+        # line describes. The engine answers commands strictly in order, but results already
+        # printed (or still in the pipe) when a "play" is sent describe the position *before*
+        # that move -- without this, the GUI took such a stale result for the new position and
+        # could auto-play the previous position's best move (even the very move just played).
+        # sent_gen counts position-changing commands sent (main thread only); the reader thread
+        # counts the engine's acknowledgements of them and stamps each result/playout with it.
+        # A result is current iff its "gen" equals sent_gen -- see is_current.
+        self.sent_gen = 0
+        self._ack_gen = 0
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
 
@@ -627,6 +647,10 @@ class AnalysisEngine:
         for line in self.proc.stdout:
             line = line.rstrip("\n")
 
+            if line in ("play ok", "play illegal", "reset ok"):
+                self._ack_gen += 1
+                continue
+
             # Checked unconditionally, before the in_block gate below -- unlike every other
             # line here, a "playout ..." line isn't part of any analysis snapshot and can show
             # up interleaved with, or outside of, an "analysis begin"/"analysis end" block.
@@ -635,6 +659,7 @@ class AnalysisEngine:
                 forced, winp, score, path_tail = m.groups()
                 path_ints = [int(x) for x in path_tail.split()]
                 self.playouts.put({
+                    "gen": self._ack_gen,
                     "forced": int(forced),
                     "winp": float(winp),
                     "score": float(score),
@@ -649,7 +674,7 @@ class AnalysisEngine:
 
             if line == "analysis begin":
                 in_block = True
-                current = {"winrate": None, "visits": None, "initQ": None, "moves": [],
+                current = {"gen": self._ack_gen, "winrate": None, "visits": None, "initQ": None, "moves": [],
                            "scoreExp": None, "scoreSearch": None, "scoreMap": None, "captureMap": None,
                            "forced": 0}
                 continue
@@ -728,10 +753,16 @@ class AnalysisEngine:
             pass
 
     def send_reset(self):
+        self.sent_gen += 1
         self._send("reset")
 
     def send_play(self, x, y):
+        self.sent_gen += 1
         self._send(f"play {x} {y}")
+
+    def is_current(self, item):
+        """Whether a result/playout dict describes the position as of the last reset/play sent."""
+        return item.get("gen") == self.sent_gen
 
     def request_analysis(self, playouts=None):
         self._send("analyze" if playouts is None else f"analyze {playouts}")
@@ -961,31 +992,21 @@ class Game:
         self.rule = RuleManager()
         self.boardSize = RuleManager.boardSize
         self.neutral = RuleManager.neutral
-        self.m = margin
         self.cord = [[(0, 0) for i in range(self.boardSize)] for j in range(self.boardSize)]
-        self.delta = int((900 - self.m * 2) / (self.boardSize - 1))
-        self.stone_size = int(self.delta * 0.8)
-        self.cl = int(self.delta * 0.2)
         self.root = Tk()
         self.root.title("Great Kingdom")
-        # Design size is 2100x1000, but that's wider/taller than plenty of real monitors --
-        # requesting more than the screen has causes the window manager to just clip the
-        # window at the screen edge instead of shrinking it, which is what was cutting the
-        # UI off horizontally. Clamp to whatever this screen actually has (minus a small
-        # margin for WM decorations/taskbars) instead of assuming the design size fits.
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        win_w = min(2100, screen_w - 20)
-        win_h = min(1000, screen_h - 80)
-        self.root.geometry(f"{win_w}x{win_h}")
+        # Everything lives in self.content, a frame inside a scrollable canvas (see
+        # _build_scroll_container): the layout is sized to fit the screen below, but if a
+        # monitor is too small (or its DPI/font scaling too large) for even the shrunken
+        # layout, scrollbars appear instead of the window manager silently clipping the
+        # right/bottom edge off.
+        self.content = self._build_scroll_container()
 
-        self.boardFrame = Frame(self.root)
-        self.canvas = Canvas(self.boardFrame, width=900, height=900, bg=BOARD_BG, highlightthickness=0)
+        self.boardFrame = Frame(self.content)
         self.passButton = Button(self.boardFrame, text="pass")
         self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
 
-        self.sideFrame = Frame(self.root, width=1100, height=900)
-        self.sideFrame.pack_propagate(False)
+        self.sideFrame = Frame(self.content)
         self.analysisResultPanel = None
         # The model the toolbar's "Start Engine" button (re)launches the analysis engine with --
         # see _start_analysis_from_panel. Picking a different one mid-session and pressing it
@@ -999,6 +1020,24 @@ class Game:
         self.candidate_sort_key = "visits"
         self.candidate_sort_reverse = True
         self._build_analysis_result_panel()
+
+        # The board is the one element that can be scaled freely, so it takes whatever the
+        # side panel's actual (font/DPI-dependent) size leaves over on this screen, up to the
+        # 900px design size. Everything board-related below derives from board_px.
+        self.root.update_idletasks()
+        screen_w = self.root.winfo_screenwidth() - SCREEN_RESERVE_W
+        screen_h = self.root.winfo_screenheight() - SCREEN_RESERVE_H
+        board_extra_h = self.passButton.winfo_reqheight() + self.statusLabel.winfo_reqheight()
+        board_px = min(BOARD_DESIGN_PX,
+                       screen_w - self.sideFrame.winfo_reqwidth() - 2 * SIDE_PANEL_PAD,
+                       screen_h - board_extra_h)
+        board_px = max(BOARD_MIN_PX, board_px)
+        self.m = round(margin * board_px / BOARD_DESIGN_PX)
+        self.delta = int((board_px - self.m * 2) / (self.boardSize - 1))
+        self.stone_size = int(self.delta * 0.8)
+        self.cl = int(self.delta * 0.2)
+        self.canvas = Canvas(self.boardFrame, width=board_px, height=board_px, bg=BOARD_BG,
+                             highlightthickness=0)
 
         self.stones = []
         self.stones.append(
@@ -1089,6 +1128,57 @@ class Game:
         self.game_over_ply = None
         self.game_over_text = None
 
+    def _build_scroll_container(self):
+        """A Canvas filling the root window, holding one Frame (returned) that all the real UI
+        goes into. The frame is stretched to fill the viewport when the window is bigger than
+        the UI needs, and keeps its requested size otherwise -- with a scrollbar shown for
+        whichever direction overflows, so on a screen too small for the UI everything is still
+        reachable instead of being clipped off at the window edge.
+
+        The frame's requested size can change at any time (labels whose text grows, etc.) and
+        Tk sends no event for that while the frame's size is pinned by the canvas, so _relayout
+        polls it cheaply and only touches the canvas when something actually changed.
+        """
+        canvas = Canvas(self.root, highlightthickness=0)
+        vbar = Scrollbar(self.root, orient=VERTICAL, command=canvas.yview)
+        hbar = Scrollbar(self.root, orient=HORIZONTAL, command=canvas.xview)
+        canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        content = Frame(canvas)
+        window_id = canvas.create_window(0, 0, window=content, anchor=NW)
+        last_state: list = [None]
+
+        def relayout():
+            req_w, req_h = content.winfo_reqwidth(), content.winfo_reqheight()
+            view_w, view_h = canvas.winfo_width(), canvas.winfo_height()
+            state = (req_w, req_h, view_w, view_h)
+            if state == last_state[0] or view_w <= 1:
+                return
+            last_state[0] = state
+            w, h = max(req_w, view_w), max(req_h, view_h)
+            canvas.itemconfigure(window_id, width=w, height=h)
+            canvas.configure(scrollregion=(0, 0, w, h))
+            if req_w > view_w:
+                hbar.grid(row=1, column=0, sticky="ew")
+            else:
+                hbar.grid_remove()
+                canvas.xview_moveto(0)
+            if req_h > view_h:
+                vbar.grid(row=0, column=1, sticky="ns")
+            else:
+                vbar.grid_remove()
+                canvas.yview_moveto(0)
+
+        def poll():
+            relayout()
+            self.root.after(200, poll)
+
+        canvas.bind("<Configure>", lambda e: relayout())
+        self.root.after_idle(poll)
+        return content
+
     def _build_model_row(self, parent, model_var, models, pady=(0, 10)):
         """The Label(current model)+"Choose..." row shared by every model picker in the UI
         (the session toolbar and the Engine vs Engine dialog's two engine columns) -- one
@@ -1166,6 +1256,7 @@ class Game:
         the engine on the position currently on the board.
         """
         panel = Frame(self.sideFrame)
+        panel.pack(fill=BOTH, expand=True)
         self.analysisResultPanel = panel
         models = list_models()
 
@@ -1198,17 +1289,25 @@ class Game:
 
         Frame(panel, height=1, bg="#999999").pack(fill=X, pady=(0, 10))
 
+        # Grid rather than side-by-side pack: pack hands out space first-come-first-served, so
+        # whenever the row was narrower than all three columns' natural widths, the Moves
+        # column (packed last) was the one that got clipped. Grid never gives a column less
+        # than its requested width (the scroll container guarantees the row gets at least its
+        # requested width), and spreads any extra width evenly via the weights.
         columns_row = Frame(panel)
         columns_row.pack(fill=BOTH, expand=True)
+        columns_row.rowconfigure(0, weight=1)
 
         position_col = Frame(columns_row)
-        position_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 8))
-        Frame(columns_row, width=1, bg="#999999").pack(side=LEFT, fill=Y)
+        position_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        Frame(columns_row, width=1, bg="#999999").grid(row=0, column=1, sticky="ns")
         search_col = Frame(columns_row)
-        search_col.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
-        Frame(columns_row, width=1, bg="#999999").pack(side=LEFT, fill=Y)
+        search_col.grid(row=0, column=2, sticky="nsew", padx=8)
+        Frame(columns_row, width=1, bg="#999999").grid(row=0, column=3, sticky="ns")
         moves_col = Frame(columns_row)
-        moves_col.pack(side=LEFT, fill=BOTH, expand=True, padx=(8, 0))
+        moves_col.grid(row=0, column=4, sticky="nsew", padx=(8, 0))
+        for col in (0, 2, 4):
+            columns_row.columnconfigure(col, weight=1)
         self.movesColumn = moves_col
 
         Label(position_col, text="Position", font=("Helvetica", 12, "bold"), anchor="w").pack(fill=X)
@@ -1321,7 +1420,7 @@ class Game:
         candidate_list_frame.pack(fill=BOTH, expand=True)
         candidate_scrollbar = Scrollbar(candidate_list_frame, orient=VERTICAL)
         self.analysisListbox = Listbox(candidate_list_frame, yscrollcommand=candidate_scrollbar.set,
-                                        font=("Courier", 10), height=20, exportselection=False)
+                                        font=("Courier", 10), height=10, exportselection=False)
         candidate_scrollbar.configure(command=self.analysisListbox.yview)
         candidate_scrollbar.pack(side=RIGHT, fill=Y)
         self.analysisListbox.pack(side=LEFT, fill=BOTH, expand=True)
@@ -1355,7 +1454,7 @@ class Game:
 
         stat_frame = Frame(debug_list_frame)
         stat_frame.pack(side=RIGHT, fill=Y)
-        self.debugListbox = Listbox(stat_frame, font=("Courier", 9), height=20, width=18,
+        self.debugListbox = Listbox(stat_frame, font=("Courier", 9), height=8, width=18,
                                      exportselection=False)
         self.debugListbox.pack(fill=Y, expand=True)
 
@@ -1364,7 +1463,7 @@ class Game:
         debug_hscrollbar = Scrollbar(path_frame, orient=HORIZONTAL)
         debug_hscrollbar.pack(side=BOTTOM, fill=X)
         self.debugPathListbox = Listbox(path_frame, xscrollcommand=debug_hscrollbar.set,
-                                         font=("Courier", 9), height=20, exportselection=False)
+                                         font=("Courier", 9), height=8, width=12, exportselection=False)
         debug_hscrollbar.configure(command=self.debugPathListbox.xview)
         self.debugPathListbox.pack(side=LEFT, fill=BOTH, expand=True)
 
@@ -1425,10 +1524,19 @@ class Game:
         columns = ("ply", "move", "b_eval", "w_eval", "cur_eval")
         self.movesTree = ttk.Treeview(tree_frame, columns=columns, show="headings",
                                        yscrollcommand=tree_scrollbar.set, selectmode="browse")
-        for col, heading, width in (("ply", "#", 40), ("move", "Move", 75), ("b_eval", "B eval", 70),
-                                     ("w_eval", "W eval", 70), ("cur_eval", "Current", 75)):
+        # Column widths are measured from the actual fonts (heading text, and the widest value
+        # a cell can hold) rather than hard-coded pixels, which were too narrow on displays
+        # with larger fonts/DPI scaling -- that, plus the column being squeezed, is what cut
+        # "Current eval" off. Rows likewise get a height that fits the body font.
+        heading_font = tkfont.nametofont("TkHeadingFont")
+        body_font = tkfont.nametofont("TkDefaultFont")
+        ttk.Style(self.root).configure("Treeview", rowheight=body_font.metrics("linespace") + 4)
+        for col, heading, widest_value in (("ply", "#", "000"), ("move", "Move", "(00,00)"),
+                                           ("b_eval", "B eval", "100.0%"), ("w_eval", "W eval", "100.0%"),
+                                           ("cur_eval", "Current eval", "100.0%")):
+            width = max(heading_font.measure(heading), body_font.measure(widest_value)) + 16
             self.movesTree.heading(col, text=heading)
-            self.movesTree.column(col, width=width, anchor=CENTER, stretch=(col == "move"))
+            self.movesTree.column(col, width=width, minwidth=width, anchor=CENTER, stretch=True)
         tree_scrollbar.configure(command=self.movesTree.yview)
         tree_scrollbar.pack(side=RIGHT, fill=Y)
         self.movesTree.pack(side=LEFT, fill=BOTH, expand=True)
@@ -1437,7 +1545,9 @@ class Game:
     def start(self):
         """Open the main window with a freely playable board and the session panel."""
         self.boardFrame.grid(row=0, column=0, sticky="n")
-        self.sideFrame.grid(row=0, column=1, sticky="n", padx=20, pady=20)
+        self.sideFrame.grid(row=0, column=1, sticky="nsew", padx=SIDE_PANEL_PAD, pady=SIDE_PANEL_PAD)
+        self.content.columnconfigure(1, weight=1)
+        self.content.rowconfigure(0, weight=1)
         self.canvas.pack()
         self.passButton.pack()
         self.passButton.configure(command=self.on_pass)
@@ -1464,9 +1574,16 @@ class Game:
         self.canvas.bind("<Button-1>", self.on_click)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.analysisResultPanel.pack(fill=BOTH, expand=True)
         self._update_engine_status()
         self._update_status()
+
+        # Open just big enough for the whole UI, capped at what this screen has -- the board
+        # was already shrunk in __init__ so this normally fits; if it still doesn't, the
+        # scroll container's scrollbars take over rather than anything getting clipped.
+        self.root.update_idletasks()
+        win_w = min(self.content.winfo_reqwidth(), self.root.winfo_screenwidth() - SCREEN_RESERVE_W)
+        win_h = min(self.content.winfo_reqheight(), self.root.winfo_screenheight() - SCREEN_RESERVE_H)
+        self.root.geometry(f"{win_w}x{win_h}+0+0")
 
     def _draw_star_points(self):
         if self.boardSize < 7:
@@ -1612,6 +1729,10 @@ class Game:
 
         if self.analysis_mode:
             self.analysisEngine.send_play(x, y)
+            # last_analysis_result described the position just left; keeping it around would
+            # let _on_engine_plays_change/_auto_play_move act on it before the new position's
+            # first result arrives.
+            self.last_analysis_result = None
             # New position -> new turn: reset the Visits-label baseline to this position's
             # carried-over visit count (see analysis_turn_base_visits' comment in __init__).
             base_visits = int(matched["visits"]) if matched else 0
@@ -1661,13 +1782,20 @@ class Game:
 
         if not (abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl):
             return
-        if self.on_stone[x_cord][y_cord]:
-            return
-        # playing into the opponent's already-settled territory is illegal
-        if self.rule.terr_board[x_cord + 1][y_cord + 1] * self.rule.turn == -1:
+        if not self._is_legal_point(x_cord, y_cord):
             return
 
         self._commit_move(x_cord, y_cord)
+
+    def _is_legal_point(self, x, y):
+        """Whether a stone may be placed at (x, y): on the board, unoccupied, and not settled
+        territory of *either* side -- exactly RuleManager.available (and the engine's
+        Game::isLegal). Checking only the opponent's territory let a click into one's own
+        territory through, and RuleManager.make_move then raised half-way through
+        _commit_move, leaving the board, move list and engine out of sync."""
+        if not (0 <= x < self.boardSize and 0 <= y < self.boardSize):
+            return False
+        return RuleManager.convert((x, y), is_pair=True) in self.rule.available
 
     def on_pass(self):
         if self.game_over or self.review_mode:
@@ -1881,7 +2009,11 @@ class Game:
             r = self.analysisEngine.get_result_nowait()
             if r is None:
                 break
-            latest = r
+            # Results for a position that has since been moved on from (still in flight when
+            # the move was sent) must not be taken for the new position -- see
+            # AnalysisEngine.sent_gen.
+            if self.analysisEngine.is_current(r):
+                latest = r
 
         # Debug-mode playout records stream independently of the above (see AnalysisEngine.
         # playouts) -- the engine stores none of this itself, so accumulating the growing list
@@ -1891,6 +2023,8 @@ class Game:
             p = self.analysisEngine.get_playout_nowait()
             if p is None:
                 break
+            if not self.analysisEngine.is_current(p):
+                continue
             self.playout_log.append(p)
             got_playout = True
 
@@ -2433,10 +2567,19 @@ class Game:
             return
         if len(self.rule.seq) != self._auto_move_seq_len:
             return
-        best = max(result["moves"], key=lambda mv: mv["visits"])
-        if best["visits"] <= 0:
+        if not self.analysisEngine.is_current(result):
             return
-        self._commit_move(*best["move"])
+        best = max(result["moves"], key=lambda mv: mv["visits"])
+        # A proven position's lone move line can carry 0 visits (an immediate win found
+        # before search ever expanded root -- see Analysis::printAnalysis), and is still the move.
+        if best["visits"] <= 0 and not result.get("forced"):
+            return
+        x, y = best["move"]
+        # Last line of defense: never commit an engine move the local rules reject (the same
+        # check on_click applies to human moves); a pass is always legal.
+        if (x, y) != (self.boardSize, 0) and not self._is_legal_point(x, y):
+            return
+        self._commit_move(x, y)
 
     def _open_match_dialog(self):
         """Engine-vs-engine match dialog: two independently configured engines (model, playout

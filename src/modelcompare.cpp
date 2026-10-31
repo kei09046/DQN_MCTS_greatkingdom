@@ -86,6 +86,8 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 			}
 			player.jump(cord);
 		}
+
+		game_manager.displayBoardGUI(false);
 	}
 
 	delete evaluator;
