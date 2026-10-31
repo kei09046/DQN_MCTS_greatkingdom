@@ -117,17 +117,17 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
     const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
     const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
-    // float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
+    float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
 
-    // scoreV += scoreEXP;
-    // for(int i=0; i<boardSize; ++i){
-    //     if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
-    //         Color owned = game.getScoreBoard({i / colSize, i % colSize});
-    //         scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
-    //     }
-    // }
+    scoreV += scoreEXP;
+    for(int i=0; i<boardSize; ++i){
+        if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
+            Color owned = game.getScoreBoard({i / colSize, i % colSize});
+            scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
+        }
+    }
 
-    float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
+    //float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
 
     // std::bitset<boardSize> mark;
     // for(int i=0; i<inputSize; ++i){
