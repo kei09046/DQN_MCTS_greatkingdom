@@ -1,4 +1,5 @@
 /.vscode
+/.venv
 /CMakeCache.txt
 /CMakeLists.txt
 /CMakeFiles

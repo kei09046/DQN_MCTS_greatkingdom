@@ -33,9 +33,9 @@ struct NNResultBuf{
 
 struct evalRequest {
     std::shared_ptr<NNResultBuf> buf;
-    const Game* game; // read by the handler only to convert the output (legal moves, turn)
+    const Game* game;
     HashValue hash;
-    std::unique_ptr<NNInput> input; // network input, built by the requesting thread (PolicyValueNet::getData)
+    std::unique_ptr<NNInput> input;
 };
 
 class Evaluator{
@@ -60,8 +60,8 @@ private:
 
 public:
     Evaluator(PolicyValueNet* net);
-    Evaluator(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu);
-    Evaluator(const std::string& model_file, bool use_gpu);
+    Evaluator(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu);
+    Evaluator(const std::string& modelFile, bool use_gpu);
     ~Evaluator();
     bool evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash); // return true if cache hit
     bool asyncEvaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash);

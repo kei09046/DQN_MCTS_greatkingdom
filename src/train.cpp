@@ -18,8 +18,8 @@ TrainPipeline::TrainPipeline(std::string init_model,
 			<< " blocks; config model_prefix / numHiddenBlock only apply to \"none\"" << std::endl;
 	learning_rate = globalConfig.initialLearningRate;
 
-	// optimizer state saved with the data snapshot of init_model (see run), e.g. ../data/J53760.opt for J53760.pt
-	const std::string opt_file = globalConfig.dataPath + std::filesystem::path(init_model).stem().string() + ".opt";
+	// Load optimizer state if possible.
+	const std::string opt_file = globalConfig.modelPath + std::filesystem::path(init_model).stem().string() + ".opt";
 	if(std::filesystem::exists(opt_file)){
 		try{
 			train_model.load_optimizer(opt_file);
@@ -40,123 +40,6 @@ TrainPipeline::TrainPipeline(std::string init_model,
 	for(int i=0; i<9; ++i)
 		train_losses[i].reserve(globalConfig.compare_game_cnt);
 }
-
-// void TrainPipeline::start_self_play(MCTS* player, bool is_shown, float temp, int n_games) {
-// 	Game game_manager = Game();
-// 	Color startingTurn = BLACK;
-	
-// 	NNInput state;
-
-// 	std::vector<Move> sequence;
-// 	std::vector<TrainData> buffer;
-// 	std::vector<int> forced;
-// 	std::vector<bool> only; 
-
-// 	#ifdef measureTime
-// 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-// 	#endif
-
-// 	while (true) {
-// 		game_manager.setPolicyMask();
-// 		state = PolicyValueNet::getData(game_manager);
-
-// 		const auto [m, prob, forcedState, isOnlyMove] = player->getMoveWithStat(temp);
-// 		//printMove(m);
-
-// 		auto [winner, wintype, map] = game_manager.makeMoveWithStat(m);
-
-// 		assert(m != RESIGNMOVE);
-// 		if(m != RESIGNMOVE){
-// 			sequence.push_back(m);
-// 			// add placeHolder value to buffer
-// 			buffer.emplace_back(state, prob, 0.0f, 0.0f, std::vector<float>(boardSize, 0.0f), ALL);
-// 			forced.push_back(forcedState);
-// 			only.push_back(isOnlyMove);
-// 		}
-
-// 		if (winner == EMPTY) {
-// 			if(!player->jump(m)){ // very rare case
-// 				std::cerr << "game manager's state : " << std::endl; 
-// 				game_manager.displayBoardGUI(true);
-// 				std::cout << std::endl;
-// 				for(const auto& i : sequence){
-// 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
-// 				}
-// 				std::cerr << "\n";
-// 				player->reset(Game());
-// 				#ifdef measureTime
-// 				player->resetTimeStats();
-// 				#endif
-// 				return;
-// 			}
-// 		}
-
-// 		else {
-// 			// update stats
-// 			wintype_counter[((winner == BLACK) ? 2 : 0) + ((wintype == CAPTURE) ? 1 : 0)].fetch_add(1);
-
-// 			if (is_shown) {
-// 				std::cout << "\n";
-// 				for(const auto& i : sequence){
-// 					std::cout << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
-// 				}
-// 				std::cout << "\n";
-// 				// game_manager.displayBoardGUI(true);
-// 				std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
-// 			}
-
-// 			// Generate NN training input.
-// 			// if position is black's turn to move, judge from white's perspective.
-// 			float result = (winner == startingTurn) ? -0.9f : 0.9f;
-
-// 			std::vector<float> maps[2];
-// 			int mapIdx = (startingTurn == BLACK) ? 0 : 1;
-// 			maps[mapIdx] = std::move(map);
-// 			maps[1 - mapIdx].reserve(boardSize);
-// 			for(auto v : maps[mapIdx])
-// 				maps[1 - mapIdx].push_back(-v);
-
-// 			int idx = 0;
-// 			if(wintype == SCORE || game_manager.getLegalMoveCount() == 0){
-// 				// score with komi not applied.
-// 				float score_diff = -game_manager.scoreDiff(startingTurn);
-// 				// calculate train stats
-// 				total_score_diff.fetch_add((int)score_diff);
-// 				total_game_length.fetch_add(sequence.size());
-
-// 				for(TrainData& data : buffer){
-// 					std::get<2>(data) = result;
-// 					std::get<3>(data) = score_diff;
-// 					std::get<4>(data) = maps[idx % 2];
-// 					std::get<5>(data) = POLICYHEAD | VALUEHEAD | SCOREHEAD | OCCUPYHEAD;
-// 					insertData(data, forced.at(idx), only.at(idx));
-// 					result = -result; // switch color
-// 					score_diff = -score_diff;
-// 					idx++;
-// 				}
-// 				player->reset(Game());
-// 				return;
-// 			}
-// 			// play until score termination.
-// 			else if(wintype == CAPTURE){
-// 				for(TrainData& data : buffer){
-// 					std::get<2>(data) = result;
-// 					std::get<3>(data) = 0.0f;
-// 					std::get<4>(data) = maps[idx % 2];
-// 					std::get<5>(data) = POLICYHEAD | VALUEHEAD;
-// 					insertData(data, forced.at(idx), only.at(idx));
-// 					result = -result; // switch color
-// 					idx++;
-// 				}
-// 				player->reset(game_manager);
-// 				startingTurn = game_manager.getTurn();
-// 				buffer.clear();
-// 				forced.clear();
-// 				only.clear();
-// 			}
-// 		}
-// 	}
-// }
 
 void labelFinishedGame(std::vector<TrainData>& buffer, const std::vector<Move>& sequence,
 	const std::vector<std::optional<float>>& rootValue, Color winner, Wintype wintype,
@@ -349,11 +232,8 @@ void TrainPipeline::train(){
 
 void TrainPipeline::run(const int game_batch_num, const int inference_thread_num, const bool is_shown, float temp)
 {
-	// file names of this run's checkpoints, e.g. K_10b_13440.pt, ../data/K_10b_13440.bin
-	const auto checkpoint = [&](int games){ return train_model.modelFileName(std::to_string(games)); };
-	const auto dataFile = [&](int games, const char* ext){
-		return globalConfig.dataPath + std::filesystem::path(checkpoint(games)).stem().string() + ext; };
-	std::string model_file;
+	// name of the model.
+	std::string modelName;
 	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
 	const size_t trainStartPoint = globalConfig.trainStartPoint;
 	const float fallbackWinrate = globalConfig.fallbackWinrate;
@@ -371,22 +251,22 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 	std::condition_variable pause_cv, train_cv;
 
 	std::vector<std::thread> self_play_threads;
-	std::vector<MCTS> mcts_players; // MCTS players of size train_thread_num
-	mcts_players.reserve(inference_thread_num);
+	std::vector<MCTS> mctsAgent; // MCTS players of size train_thread_num
+	mctsAgent.reserve(inference_thread_num);
 
 	auto evaluator = new Evaluator(&inference_model);
 	for(int i=0; i<inference_thread_num; ++i){
-		mcts_players.emplace_back(evaluator);
+		mctsAgent.emplace_back(evaluator);
 		self_play_paused[i] = false;
 	}
 
-	int train_iter = 0;
+	int train_iter = 0;	
 	// Self-play threads
 	for(int j=0; j<inference_thread_num; ++j){
 		self_play_threads.emplace_back([&, j] {
 			for (int i = 0; i < game_batch_num / inference_thread_num && !stop_flag; ++i) {
 				self_play_paused[j].store(false);
-				start_self_play(&(mcts_players[j]), is_shown && (j == 0), temp, 1); // modifies state_buffer
+				start_self_play(&(mctsAgent[j]), is_shown && (j == 0), temp, 1); // modifies state_buffer
 				self_play_paused[j].store(true);
 				pause_cv.notify_one();
 
@@ -397,78 +277,67 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 
 				save_mutex.lock(); // critical part
 
-				if (((++games_played + save_cnt) % globalConfig.save_freq) == 0) {
-					std::cout << "save model" << std::endl;
+				if (((++games_played + save_cnt) % globalConfig.synchronize_freq) == 0) {
+					std::cout << "synchronize model" << std::endl;
 					pause_flag = true; // asks other threads to pause
 					train_cv.notify_one(); // notify train thread
 
+					// wait until all train and self_play threads are paused
 					std::unique_lock<std::mutex> lock(pause_mutex);
 					pause_cv.wait(lock, [&] { bool s = train_paused.load(); 
 						for(int k=0; k<inference_thread_num; ++k) s = s & self_play_paused[k].load();
-							return s; }); // wait until all train and self_play threads are paused
+							return s; });
 
-					model_file = checkpoint(games_played + save_cnt);
-					const std::string save_path = globalConfig.modelPath + model_file;
-					train_model.save_model(save_path); // save model to file
-
-					if(globalConfig.googleDrive)
-						train_model.save_model(globalConfig.drivePath + model_file); // save model to file
-
-					std::cout << "model properly saved " << games_played << std::endl;
-					std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
-					std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
-					int game_played = wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3];
-					captureRatio = static_cast<float>((wintype_counter[1] + wintype_counter[3])) / game_played;
-					std::cout << "games played : " << game_played << std::endl;
-					std::cout << "capture ratio : " << captureRatio << std::endl;
-					std::cout << "replay buffer : " << replayBuffer.size() << " stored, sampling window " << replayBuffer.window()
-						<< ", " << replayBuffer.totalAdded() << " positions added in total" << std::endl;
-					if(skipped_steps > 0 || replayBuffer.dropped() > 0)
-						std::cout << "non-finite data : " << skipped_steps << " training steps skipped, "
-							<< replayBuffer.dropped() << " positions dropped in total" << std::endl;
-					skipped_steps = 0;
+					// print / setup train statistics.
 					{
-						const auto [n, corr, mae] = valueTargetStats.takeSummary();
-						std::cout << "value targets : search value vs game result correlation " << corr
-							<< ", mean |q - z| " << mae << " over " << n << " positions (valueQMix " << globalConfig.valueQMix << ")" << std::endl;
-					}
-					std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
-					std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
-					if(!train_losses[0].empty()){
-						const auto mean = [](const std::vector<float>& v){ return std::accumulate(v.begin(), v.end(), 0.0f) / v.size(); };
-						std::cout << "mean policy loss : " << mean(train_losses[0]) << " policy target entropy : " << mean(train_losses[5])
-							<< " policy KL : " << mean(train_losses[0]) - mean(train_losses[5]) << " value loss : " << mean(train_losses[1])
-							<< " value MSE vs z : " << mean(train_losses[6]) << std::endl;
-					}
-					std::cout << "train losses : " << std::endl;
-					for(int i=0; i<9; ++i){
-						for(float l : train_losses[i])
-							std::cout << l << " ";
-						std::cout << std::endl;
-					}
+						std::cout << "model properly saved " << games_played << std::endl;
+						std::cout << "train_iter : " << train_iter << std::endl; // check train/inference balance. 
+						std::cout << "wintype count : " << wintype_counter[0] << " " << wintype_counter[1] << " " << wintype_counter[2] << " " << wintype_counter[3] << std::endl;
+						int game_played = wintype_counter[0] + wintype_counter[1] + wintype_counter[2] + wintype_counter[3];
+						captureRatio = static_cast<float>((wintype_counter[1] + wintype_counter[3])) / game_played;
+						std::cout << "games played : " << game_played << std::endl;
+						std::cout << "capture ratio : " << captureRatio << std::endl;
+						std::cout << "replay buffer : " << replayBuffer.size() << " stored, sampling window " << replayBuffer.window()
+							<< ", " << replayBuffer.totalAdded() << " positions added in total" << std::endl;
+						if(skipped_steps > 0 || replayBuffer.dropped() > 0)
+							std::cout << "non-finite data : " << skipped_steps << " training steps skipped, "
+								<< replayBuffer.dropped() << " positions dropped in total" << std::endl;
+						skipped_steps = 0;
+						{
+							const auto [n, corr, mae] = valueTargetStats.takeSummary();
+							std::cout << "value targets : search value vs game result correlation " << corr
+								<< ", mean |q - z| " << mae << " over " << n << " positions (valueQMix " << globalConfig.valueQMix << ")" << std::endl;
+						}
+						std::cout << "average score difference : " << (float)total_score_diff / game_played << std::endl;
+						std::cout << "average game length : " << (float)total_game_length / game_played << std::endl;
+						if(!train_losses[0].empty()){
+							const auto mean = [](const std::vector<float>& v){ return std::accumulate(v.begin(), v.end(), 0.0f) / v.size(); };
+							std::cout << "mean policy loss : " << mean(train_losses[0]) << " policy target entropy : " << mean(train_losses[5])
+								<< " policy KL : " << mean(train_losses[0]) - mean(train_losses[5]) << " value loss : " << mean(train_losses[1])
+								<< " value MSE vs z : " << mean(train_losses[6]) << std::endl;
+						}
+						std::cout << "train losses : " << std::endl;
+						for(int i=0; i<9; ++i){
+							for(float l : train_losses[i])
+								std::cout << l << " ";
+							std::cout << std::endl;
+						}
 
-					total_game_length = 0;
-					total_score_diff = 0;
-					for(int i=0; i<4; ++i)
-						wintype_counter[i] = 0;
-					for(int i=0; i<9; ++i)
-						train_losses[i].clear();
+						total_game_length = 0;
+						total_score_diff = 0;
+						for(int i=0; i<4; ++i)
+							wintype_counter[i] = 0;
+						for(int i=0; i<9; ++i)
+							train_losses[i].clear();
+					}
 					
 					if((games_played + save_cnt) % globalConfig.check_freq == 0){
-						// training data at the time of this checkpoint, for offline training (./play test <file>)
-						const std::string data_file = dataFile(games_played + save_cnt, ".bin");
-						replayBuffer.save(data_file);
-						std::cout << "training data saved : " << data_file << " (" << replayBuffer.size() << " positions)" << std::endl;
-						// saved after the comparison, so it carries a learning rate halved by it. Comparing doesn't train, so the
-						// optimizer state still matches the model file.
-						const std::string opt_file = dataFile(games_played + save_cnt, ".opt");
-
 						globalConfig = loadConfig("../configs/compare_config.json");
 
-						float winrate = ModelCompare::policy_evaluate(model_file, current_best_model_file, 
+						float winrate = ModelCompare::policy_evaluate(modelName, current_best_model_file, 
 							std::cout, std::cout, true, true, 0.5f, globalConfig.compare_game_cnt / 2, globalConfig.compare_thread_num);
 
-						std::cout << "model " << model_file << " vs " << current_best_model_file << 
+						std::cout << "model " << modelName << " vs " << current_best_model_file << 
 						" winrate " << winrate << std::endl;
 
 						if(winrate <= 0)
@@ -479,8 +348,8 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							std::cout << "rating differential : " << 400.0 * std::log10(winrate / (1.0 - winrate)) << "\n";
 
 						if(winrate > 0.5f){
-							std::cout << "Best model updated! " << current_best_model_file << " to " << model_file << std::endl;
-							current_best_model_file = model_file;
+							std::cout << "Best model updated! " << current_best_model_file << " to " << modelName << std::endl;
+							current_best_model_file = modelName;
 							train_model.save_model(globalConfig.modelPath + train_model.modelFileName(std::to_string(games_played + save_cnt) + "B")); // best models are saved
 						}
 						else if(winrate < fallbackWinrate){
@@ -500,8 +369,27 @@ void TrainPipeline::run(const int game_batch_num, const int inference_thread_num
 							<< ", learning rate " << learning_rate << std::endl;
 
 						train_model.set_learning_rate(learning_rate);
-						train_model.save_optimizer(opt_file);
-						std::cout << "optimizer state saved : " << opt_file << std::endl;
+
+						// save model
+						{
+							modelName = train_model.modelFileName(std::to_string(games_played + save_cnt));
+							const std::string modelPath = globalConfig.modelPath + modelName;
+							train_model.save_model(modelPath);
+
+							// save to google drive.
+							if(globalConfig.googleDrive)
+								train_model.save_model(globalConfig.drivePath + modelName);
+
+							// save training data & optimizer state.
+							const std::string dataFile = globalConfig.dataPath + modelName;
+							replayBuffer.save(dataFile);
+							std::cout << "training data saved : " << dataFile << " (" << replayBuffer.size() << " positions)" << std::endl;
+
+							// optimizer state filename.
+							const std::string optFile = modelName;
+							train_model.save_optimizer(optFile);
+							std::cout << "optimizer state saved : " << optFile << std::endl;
+						}
 						
 						globalConfig = loadConfig("../configs/train_config.json");
 					}
@@ -693,7 +581,7 @@ void trainOnStaticData(const std::string& data_file, int steps, float lr, float 
 		}
 	}
 
-	const std::string model_file = globalConfig.modelPath + net.modelFileName("static");
-	net.save_model(model_file);
-	std::cout << "model saved : " << model_file << std::endl;
+	const std::string modelName = globalConfig.modelPath + net.modelFileName("static");
+	net.save_model(modelName);
+	std::cout << "model saved : " << modelName << std::endl;
 }

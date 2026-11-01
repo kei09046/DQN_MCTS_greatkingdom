@@ -71,7 +71,9 @@ public:
     // After a capture the board is left as it was (captured stones are not turned into territory) : the game must not continue.
     std::tuple<Color, Wintype, std::vector<float>> makeMoveWithStat(Move move);
 
-    // list of possible moves, logit transfer list.
+    // set up list of possible moves, logit transfer list.
+    // must be called before NN eval. 
+    // During MCTS, called on first visit on that node.
     void setPolicyMask();
 
     // should be called after copy is created.

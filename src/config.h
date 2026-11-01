@@ -87,7 +87,7 @@ struct Config {
     int compare_thread_num; // should divide compare_game_cnt / 2
     int search_thread_num; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
     int train_wait_time; // decide train/inference thread balance.
-    int save_freq; // 96
+    int synchronize_freq; // 96
     int capacity;
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
     float valueQMix; // value target = (1 - l) * game result + l * root value after search, l = valueQMix * (n - i) / n at move i of n. 0 = game result only.

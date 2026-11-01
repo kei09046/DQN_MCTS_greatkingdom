@@ -263,6 +263,22 @@ NNInput PolicyValueNet::getData(const Game& game){
 			ret.at(22 * inputSize + m) = 1.0f;
 	}
 
+	// TODO : add algorithm which incrementally computes score gaining move.
+	// Currently, search is done on every turn.
+	// Plan :
+	// B_score : potential score gain for black, W_score : opposite.
+	// turn B : B_score, W_score played at x
+	// turn W : 
+	// W_score - if x is played outside, no change. if x is played inside, do following : 
+	// ex) a - seg1 - seg2(s) - seg3, a : score gainer, x is played at seg1 -> seg2 is next score gaining move with seg3 a territory.
+	// B_score - 
+	// Compute new segment table for both color than rest should not be too time consuming. 
+
+
+	// channel 23 : my territory building move
+
+	// channel 24 : opponent's territory building move
+
     return {ret};
 }
 
@@ -279,22 +295,22 @@ NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 }
 
 
-PolicyValueNet::PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu):
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu):
  use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type), num_blocks(num_blocks)
 {
 	// cuDNN times its convolution algorithms the first time it sees an input shape and keeps the fastest one.
 	// (Each new batch size pays that once.)
 	if(use_gpu)
 		at::globalContext().setBenchmarkCuDNN(true);
-	load_model(model_file);
+	load_model(modelFile);
 }
 
-PolicyValueNet::PolicyValueNet(const std::string& model_file, bool use_gpu): 
-PolicyValueNet(model_file, parseModelName(model_file).type, parseModelName(model_file).blocks, use_gpu)
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, bool use_gpu): 
+PolicyValueNet(modelFile, parseModelName(modelFile).type, parseModelName(modelFile).blocks, use_gpu)
 {}
 
-ModelName PolicyValueNet::parseModelName(const std::string& model_file){
-	const std::string name = std::filesystem::path(model_file).filename().string();
+ModelName PolicyValueNet::parseModelName(const std::string& modelFile){
+	const std::string name = std::filesystem::path(modelFile).filename().string();
 	static const std::regex current("([A-Z])_(\\d+)b_(.*)\\.pt"), old("([A-Z])(\\d+)B?\\.pt");
 	std::smatch m;
 	if(std::regex_match(name, m, current)){
@@ -311,7 +327,7 @@ ModelName PolicyValueNet::parseModelName(const std::string& model_file){
 }
 
 std::string PolicyValueNet::modelFileName(const std::string& tag) const{
-	return model_type + "_" + std::to_string(num_blocks) + "b_" + tag + ".pt";
+	return model_type + "_" + std::to_string(num_blocks) + "b_" + tag;
 }
 
 std::vector<PolicyValueOutput>
@@ -716,13 +732,13 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy, vzLoss / passes};
 }
 
-void PolicyValueNet::save_model(const std::string& model_file) const
+void PolicyValueNet::save_model(const std::string& modelFile) const
 {
 	auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
 	if(!net){
-		throw std::runtime_error("Model type mismatch when saving: " + model_file);
+		throw std::runtime_error("Model type mismatch when saving: " + modelFile);
 	}
-	torch::save(net, model_file);
+	torch::save(net, modelFile + ".pt");
 }
 
 std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
@@ -733,10 +749,10 @@ std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
 	throw std::runtime_error("Unsupported model type: " + model_type);
 }
 
-void PolicyValueNet::load_model(const std::string& model_file){
+void PolicyValueNet::load_model(const std::string& modelFile){
 	std::shared_ptr<NetBase> net = makeNet();
-	if (model_file.ends_with(".pt")) {
-		torch::load(net, model_file);
+	if (modelFile.ends_with(".pt")) {
+		torch::load(net, modelFile);
 	}
 	policy_value_net = std::move(net);
 
@@ -751,11 +767,11 @@ void PolicyValueNet::load_model(const std::string& model_file){
 	.betas({0.9, 0.999})
 	.weight_decay(l2_const));
 
-	std::cout << "Model loaded: " << model_file << " (type " << model_type << ", " << num_blocks << " blocks)" << std::endl;
+	std::cout << "Model loaded: " << modelFile << " (type " << model_type << ", " << num_blocks << " blocks)" << std::endl;
 }
 
 void PolicyValueNet::save_optimizer(const std::string& file) const{
-	torch::save(*optimizer, file);
+	torch::save(*optimizer, file + ".opt");
 }
 
 void PolicyValueNet::load_optimizer(const std::string& file){
@@ -771,9 +787,9 @@ void PolicyValueNet::set_learning_rate(float lr){
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 }
 
-void PolicyValueNet::load_weights(const std::string& model_file){
+void PolicyValueNet::load_weights(const std::string& modelFile){
 	std::shared_ptr<NetBase> loaded = makeNet();
-	torch::load(loaded, model_file);
+	torch::load(loaded, modelFile);
 
 	// copy into the existing tensors: the optimizer refers to them, so its state carries over.
 	torch::NoGradGuard no_grad;
@@ -786,7 +802,7 @@ void PolicyValueNet::load_weights(const std::string& model_file){
 
 	policy_value_net->eval();
 	policy_value_net->fuse();
-	std::cout << "Model weights loaded: " << model_file << std::endl;
+	std::cout << "Model weights loaded: " << modelFile << std::endl;
 }
 
 

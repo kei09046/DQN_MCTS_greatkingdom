@@ -82,13 +82,16 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
     const auto& availableMoves = game.getAvailableMoves();
     const auto& transferList = game.getTransferTable();
     const int moveSize = availableMoves.size();
-    // available moves : [1, 2, 3, 7, 8, 9 ...]
-    // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...]
+    // available moves : [1, 6, 8, ...]
+    // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...] (boardSize + 1)
+    // all cords with same transferList value >= 0 shares one available move that makes it all territory.
+    // transferList = -1 => illegal move(occupied etc.)
+    // nth available move corresponds to transferList value n.
 
     std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
     for(int i=0; i<transferList.size(); ++i){
         if(transferList[i] != -1){
-            transferred.at(transferList.at(i)) = std::max(transferred[transferList[i]], logAct.at(i));
+            transferred.at(transferList[i]) = std::max(transferred[transferList[i]], logAct.at(i));
         }
     }
 
@@ -188,12 +191,12 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
 Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
     createHandlerThreads();
 }
-Evaluator::Evaluator(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu)
-    : net(new PolicyValueNet(model_file, model_type, num_blocks, use_gpu)), stop(false){
+Evaluator::Evaluator(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu)
+    : net(new PolicyValueNet(modelFile, model_type, num_blocks, use_gpu)), stop(false){
     createHandlerThreads();
 }
-Evaluator::Evaluator(const std::string& model_file, bool use_gpu)
-    : net(new PolicyValueNet(model_file, use_gpu)), stop(false){
+Evaluator::Evaluator(const std::string& modelFile, bool use_gpu)
+    : net(new PolicyValueNet(modelFile, use_gpu)), stop(false){
     createHandlerThreads();
 }
 Evaluator::~Evaluator() {
@@ -209,7 +212,7 @@ bool Evaluator::request(const std::shared_ptr<NNResultBuf>& buf, const Game* gam
     if(cache.get(hash, buf->result))
         return true;
 
-    // the input is built here, in the requesting thread, so the handler thread only merges inputs.
+    // self play thread is responsible of building data.
     auto input = std::make_unique<NNInput>(PolicyValueNet::getData(*game));
     {
         std::lock_guard<std::mutex> lk(qmutex);

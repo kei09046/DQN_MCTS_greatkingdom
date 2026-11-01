@@ -280,7 +280,7 @@ void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vect
 void ReplayBuffer::save(const std::string& path){
 	std::lock_guard<std::mutex> lock(mtx);
 
-	const std::filesystem::path target(path);
+	const std::filesystem::path target(path + ".bin");
 	if(target.has_parent_path())
 		std::filesystem::create_directories(target.parent_path());
 	const std::string tmp = path + ".tmp";

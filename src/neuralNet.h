@@ -236,12 +236,12 @@ public:
 
 	std::shared_ptr<NetBase> policy_value_net;
 
-	PolicyValueNet(const std::string& model_file, const std::string& model_type, int num_blocks, bool use_gpu);
+	PolicyValueNet(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu);
 
 	// model type and block count from the file name (see ModelName).
-	PolicyValueNet(const std::string& model_file, bool use_gpu);
+	PolicyValueNet(const std::string& modelFile, bool use_gpu);
 
-	static ModelName parseModelName(const std::string& model_file);
+	static ModelName parseModelName(const std::string& modelFile);
 
 	// file name of a model of this type and size, e.g. modelFileName("13440") -> K_10b_13440.pt
 	std::string modelFileName(const std::string& tag) const;
@@ -283,12 +283,12 @@ public:
 		std::vector<float>& result_batch, std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr,
 		bool update = true);
 
-	void save_model(const std::string& model_file) const;
+	void save_model(const std::string& modelFile) const;
 
-	void load_model(const std::string& model_file);
+	void load_model(const std::string& modelFile);
 
-	// replaces the weights (and BatchNorm statistics) with the ones in model_file, keeping the optimizer state.
-	void load_weights(const std::string& model_file);
+	// replaces the weights (and BatchNorm statistics) with the ones in modelFile, keeping the optimizer state.
+	void load_weights(const std::string& modelFile);
 
 	// Adam state (moment estimates), so a resumed run continues where the optimizer stopped.
 	void save_optimizer(const std::string& file) const;

@@ -84,7 +84,7 @@ Config loadConfig(const std::string& path) {
     c.compare_thread_num = T.at("compare_thread_num");
     c.search_thread_num  = T.at("search_thread_num");
     c.train_wait_time    = T.at("train_wait_time");
-    c.save_freq          = T.at("save_freq");
+    c.synchronize_freq          = T.at("synchronize_freq");
     c.capacity           = T.at("capacity");
     c.trainStartPoint    = T.at("trainStartPoint");
     if(c.trainStartPoint < c.batchSize)

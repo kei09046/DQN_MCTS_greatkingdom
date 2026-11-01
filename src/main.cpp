@@ -25,15 +25,15 @@ int main(int argc, char** argv) {
     if(mod == "train"){
         globalConfig = loadConfig("../configs/train_config.json");
         // ./play train <model> <data file> <games> <threads> <is_shown>
-        // model "none" starts from an untrained network. The optimizer state data_path/<model>.opt is loaded if it exists.
+        // model "none" starts from an untrained network. The optimizer state model_path/<model>.opt is loaded if it exists.
         // data file : replay buffer snapshot (e.g. J53760.bin) to start from; "none" starts with an empty buffer.
-        std::string model_file = argv[2];
+        std::string modelFile = argv[2];
         std::string data_file = argv[3];
         int game_num = std::stoi(argv[4]);
         int num_thread = std::stoi(argv[5]);
         bool is_shown = static_cast<bool>(std::stoi(argv[6]));
 
-        TrainPipeline line(model_file, model_file, true); // use gpu
+        TrainPipeline line(modelFile, modelFile, true); // use gpu
         if(data_file != "none")
             line.loadReplayBuffer(resolveDataFile(data_file));
         line.run(game_num, num_thread, is_shown, globalConfig.temp); // game_batch_num, train_thread_num, is_shown, 1/temp
@@ -44,36 +44,36 @@ int main(int argc, char** argv) {
     }
     else if(mod == "play"){
         globalConfig = loadConfig("../configs/play_config.json");
-        std::string model_file = argv[2];
+        std::string modelFile = argv[2];
         int co = std::stoi(argv[3]); // human Color
-        ModelCompare::play(model_file, (Color)co, 10.0f, true, true);
+        ModelCompare::play(modelFile, (Color)co, 10.0f, true, true);
     }
     else if(mod == "analyze"){
         globalConfig = loadConfig("../configs/play_config.json");
-        std::string model_file = argv[2];
+        std::string modelFile = argv[2];
         // optional overrides : ./play analyze <model> [FPU] [minVisitRatio]
         SearchParams params = globalConfig.searchParams();
         if(argc > 3)
             params.fpu = std::stof(argv[3]);
         if(argc > 4)
             params.minVisitRatio = std::stof(argv[4]);
-        ModelCompare::analyze(model_file, true, params);
+        ModelCompare::analyze(modelFile, true, params);
     }
     else if(mod == "web"){
         globalConfig = loadConfig("../configs/play_config.json");
-        std::string model_file = argv[2];
+        std::string modelFile = argv[2];
         std::string human_color = argv[3];
         int co = (human_color == "black") ? BLACK : ((human_color == "white") ? WHITE : NEUTRAL); // human Color
         int playout = std::stoi(argv[4]);
         float temp = std::stof(argv[5]);
         std::cout << argv[3] << " human Color : " << co << std::endl;
-        ModelCompare::playWeb(model_file, (Color)co, playout, temp, true);
+        ModelCompare::playWeb(modelFile, (Color)co, playout, temp, true);
     }
     else if(mod == "gtp"){
         std::cout << argv[2] << " " << argv[3] << std::endl;
         globalConfig = loadConfig(argv[2]);
-        std::string model_file = argv[3];
-        ModelCompare::playGTP(model_file, 10.0f, true);
+        std::string modelFile = argv[3];
+        ModelCompare::playGTP(modelFile, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
         globalConfig = loadConfig("../configs/compare_config.json");
