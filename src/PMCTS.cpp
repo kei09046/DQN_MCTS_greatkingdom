@@ -549,8 +549,8 @@ void MCTS::runSimulation(const int playMode, const int nPlayout, const int timeL
     // flush pending evaluations.
     flushPendingEval();
 
-    if(globalConfig.detailedStat)
-        std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
+    // if(globalConfig.detailedStat)
+    //     std::cout << "playout : " << search_counter << " " << evaluate_counter << std::endl;
 }
 
 Move MCTS::getMove(float temp){

@@ -347,6 +347,15 @@ void Analysis::printAnalysis(MCTS& mcts){
             }
             std::cout << std::endl;
         }
+        // An immediate win found by setPolicyMask on root's first visit (game.getWin()) marks
+        // root forced-won without ever creating the winning child, so the search above finds
+        // nothing -- same case Node::selectMove handles via getWin(). Without this line the GUI
+        // gets an empty move list for a won position and its auto-play has nothing to play.
+        else if(root->forcedState > 0 && root->game.getWin() != RESIGNMOVE){
+            Move win = root->game.getWin();
+            std::cout << "move " << (int)win.first << " " << (int)win.second
+                       << " visits 0 prior 0 winrate 1 q 1 forced -1 variation" << std::endl;
+        }
     }
 
     // Debug mode's per-playout lines (see printPlayoutDebugLine) are NOT printed here -- they
