@@ -9,32 +9,32 @@
 
 class ModelCompare{
 public:
-    static float start_play(std::array<MCTS*, 2> player_list, // two models play against each other
-		std::ostream& part_res, bool is_shown = false, float temp = 0.1f);
+    static float start_play(std::array<MCTS*, 2> playerList, // two models play against each other
+		std::ostream& partRes, bool isShown = false, float temp = 0.1f);
 
 	static void play(const std::string& model, Color side, float temp, bool gpu, bool shown); // play against human
 
-	static void playHuman();
+	static void play_human();
 
-	static void playGTP(const std::string& model, float temp, bool gpu); // play against human via GTP
+	static void play_gtp(const std::string& model, float temp, bool gpu); // play against human via GTP
 
 	// Interactive analysis mode: reads "reset" / "play <r> <c>" / "analyze [playouts]" / "quit"
 	// commands from stdin, letting a caller build up an arbitrary position and request a
 	// winrate / policy / visit-count breakdown for it without playing a full game.
-	static void analyze(const std::string& model, bool gpu, SearchParams params = globalConfig.searchParams());
+	static void analyze(const std::string& model, bool gpu, SearchParams params = globalConfig.search_params());
 
-	static void playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
+	static void play_web(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 
-	static std::vector<bool> play_match(MCTS* player_one, MCTS* player_two, // return result of the match 1 : win for player_one, 0 : win for player two
-		std::ostream& total_res, bool is_shown = false, float temp = 1.0f, int n_games = 100);
+	static std::vector<bool> play_match(MCTS* playerOne, MCTS* playerTwo, // return result of the match 1 : win for player_one, 0 : win for player two
+		std::ostream& totalRes, bool isShown = false, float temp = 1.0f, int nGames = 100);
 
 	// params[i] : search params (fpu, minVisitRatio) of i-th engine. Engines without an entry use the global config values.
-	static float policy_evaluate(const std::string& mod_one, const std::string& mod_two, 
-		std::ostream& total_res, std::ostream& part_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 96, int n_thread=16,
+	static float policy_evaluate(const std::string& modOne, const std::string& modTwo, 
+		std::ostream& totalRes, std::ostream& partRes, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 96, int nThread=16,
 		const std::vector<SearchParams>& params = {});
 
-	static std::vector<float> policy_evaluate(std::vector<std::string> model_list, // return list of elo
-		std::ostream& total_res, bool is_shown = false, bool gpu = true, float temp = 1.0f, int n_games = 100,
+	static std::vector<float> policy_evaluate(std::vector<std::string> modelList, // return list of elo
+		std::ostream& totalRes, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 100,
 		const std::vector<SearchParams>& params = {});
 
 	
@@ -51,9 +51,9 @@ private:
 
 	static Move parse_vertex(const std::string& v);
 
-	static Color cmd_play(std::istringstream& iss, Game game_manager, MCTS& player);
+	static Color cmd_play(std::istringstream& iss, Game gameManager, MCTS& player);
 
-	static void cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp);
+	static void cmd_genmove(std::istringstream& iss, Game gameManager, MCTS& player, float temp);
 };
 
 #endif

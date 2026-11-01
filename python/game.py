@@ -338,7 +338,7 @@ from PIL import Image, ImageTk
 
 # 실제 게임이 실행되는 파일 GUI 담당이기도 함
 
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR = os.path.join(REPO_ROOT, "build")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 MATCHES_DIR = os.path.join(REPO_ROOT, "matches")
@@ -1041,11 +1041,11 @@ class Game:
 
         self.stones = []
         self.stones.append(
-            ImageTk.PhotoImage(Image.open("images/b_stone.png").resize((self.stone_size, self.stone_size))))
+            ImageTk.PhotoImage(Image.open(REPO_ROOT + "/images/b_stone.png").resize((self.stone_size, self.stone_size))))
         self.stones.append(
-            ImageTk.PhotoImage(Image.open("images/w_stone.png").resize((self.stone_size, self.stone_size))))
+            ImageTk.PhotoImage(Image.open(REPO_ROOT + "/images/w_stone.png").resize((self.stone_size, self.stone_size))))
         self.stones.append(
-            ImageTk.PhotoImage(Image.open("images/neu_stone.png").resize((self.stone_size, self.stone_size))))
+            ImageTk.PhotoImage(Image.open(REPO_ROOT + "/images/neu_stone.png").resize((self.stone_size, self.stone_size))))
         self.turn = 0
         self.on_stone = [[False for i in range(self.boardSize)] for j in range(self.boardSize)]
         self.game_over = False

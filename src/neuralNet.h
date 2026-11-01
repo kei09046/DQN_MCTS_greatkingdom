@@ -160,41 +160,41 @@ public:
 	torch::nn::ModuleList blocks;
 
 	// action(policy)
-	torch::nn::Conv2d at_cv;
-	torch::nn::BatchNorm2d at_bn;
-	torch::nn::Linear at_fc;
+	torch::nn::Conv2d atCv;
+	torch::nn::BatchNorm2d atBn;
+	torch::nn::Linear atFc;
 
 	// value
-	torch::nn::Conv2d v_cv;
-	torch::nn::BatchNorm2d v_bn;
-	torch::nn::Linear v_fc1;
-	torch::nn::Linear v_fc2;
+	torch::nn::Conv2d vCv;
+	torch::nn::BatchNorm2d vBn;
+	torch::nn::Linear vFc1;
+	torch::nn::Linear vFc2;
 
 	// score scalar
-	torch::nn::Conv2d sc_cv;
-	torch::nn::BatchNorm2d sc_bn;
-	torch::nn::Linear sc_fc1;
-	torch::nn::Linear sc_fc2;
+	torch::nn::Conv2d scCv;
+	torch::nn::BatchNorm2d scBn;
+	torch::nn::Linear scFc1;
+	torch::nn::Linear scFc2;
 
 	// score map
-	torch::nn::Conv2d sc_map_cv1;
-	torch::nn::BatchNorm2d sc_map_bn1;
-	torch::nn::Conv2d sc_map_cv2;
+	torch::nn::Conv2d scMapCv1;
+	torch::nn::BatchNorm2d scMapBn1;
+	torch::nn::Conv2d scMapCv2;
 
 	// capture map (only with captureHead)
-	torch::nn::Conv2d cap_map_cv1{nullptr};
-	torch::nn::BatchNorm2d cap_map_bn1{nullptr};
-	torch::nn::Conv2d cap_map_cv2{nullptr};
+	torch::nn::Conv2d capMapCv1{nullptr};
+	torch::nn::BatchNorm2d capMapBn1{nullptr};
+	torch::nn::Conv2d capMapCv2{nullptr};
 
 private:
 	// folded convolutions (see NetBase::fuse), not saved with the model. Empty when not fused.
 	struct Fused {
 		std::vector<FusedConv> stem, blocks; // blocks : conv1, conv2 of each residual block
-		std::vector<FusedConv> at, v, sc, sc_map, cap_map;
+		std::vector<FusedConv> at, v, sc, scMap, capMap;
 	};
 	std::optional<Fused> fused;
 
-	NNOutput forwardFused(const torch::Tensor& state);
+	NNOutput forward_fused(const torch::Tensor& state);
 };
 
 
@@ -217,46 +217,46 @@ struct PolicyValueOutput{
 
 class PolicyValueNet {
 private:
-	bool use_gpu;
+	bool useGpu;
 	torch::Device device;
-	float l2_const = 0.0001f;
+	float l2Const = 0.0001f;
 	std::unique_ptr<torch::optim::Adam> optimizer;
-	const std::string model_type;
-	const int num_blocks;
+	const std::string modelType;
+	const int numBlocks;
 
 	// std::vector<float> makeScoreDistributionBatch(const std::vector<float>& scores, float scoreRange, float sigma, int window) const;
 
-	void displayNNOutput(const NNOutput& modelOut);
+	void display_nn_output(const NNOutput& modelOut);
 
 	// untrained network of this->model_type.
-	std::shared_ptr<NetBase> makeNet() const;
+	std::shared_ptr<NetBase> make_net() const;
 
 public:
-	static constexpr float capture_pos_weight = 5.0f; // BCE weight of captured points in the capture map loss
+	static constexpr float capturePosWeight = 5.0f; // BCE weight of captured points in the capture map loss
 
-	std::shared_ptr<NetBase> policy_value_net;
+	std::shared_ptr<NetBase> policyValueNet;
 
-	PolicyValueNet(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu);
+	PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu);
 
 	// model type and block count from the file name (see ModelName).
-	PolicyValueNet(const std::string& modelFile, bool use_gpu);
+	PolicyValueNet(const std::string& modelFile, bool useGpu);
 
-	static ModelName parseModelName(const std::string& modelFile);
+	static ModelName parse_model_name(const std::string& modelFile);
 
 	// file name of a model of this type and size, e.g. modelFileName("13440") -> K_10b_13440.pt
-	std::string modelFileName(const std::string& tag) const;
+	std::string model_file_name(const std::string& tag) const;
 
-	const std::string& modelType() const { return model_type; }
+	const std::string& model_type() const { return modelType; }
 
-	int numBlocks() const { return num_blocks; }
+	int num_blocks() const { return numBlocks; }
 
-	static NNInput getData(const Game& game);
+	static NNInput get_data(const Game& game);
 
-	static NNInput getData(const std::vector<const Game*>& gameBatch);
+	static NNInput get_data(const std::vector<const Game*>& gameBatch);
 
 	// input : batchSize positions from getData, back to back (batchSize * inputChannel * inputSize floats).
 	// pinned : reused for the host <-> GPU transfer; without it the transfer goes through pageable memory.
-	std::vector<PolicyValueOutput> batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinned = nullptr);
+	std::vector<PolicyValueOutput> batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pinned = nullptr);
 
 	//std::vector<PolicyValueOutput> backupEvaluate(const std::vector<const Game*>& gameBatch); // run when batchEvaluate fails twice in a row. Checks gameBatch info as well.
 
@@ -264,7 +264,7 @@ public:
 	PolicyValueOutput evaluate(NNInput& input);
 
 	// folds BatchNorm into the convolutions for inference (NetBase::fuse). Call after the weights change; train() undoes it.
-	void fuseBatchNorm() { policy_value_net->fuse(); }
+	void fuse_batch_norm() { policyValueNet->fuse(); }
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& nextmove_batch,
 	// 	std::array<float, batchSize>& result_batch, float lr);
@@ -278,9 +278,9 @@ public:
 	// returns policy, value, score, capture map, score map loss, the entropy of the policy targets and the value head's
 	// squared error against the game result z alone (outcome_batch; not trained on, for comparing value targets).
 	// update = false only measures the losses (inference mode, no optimizer step), e.g. on validation data.
-	std::tuple<float, float, float, float, float, float, float> train(std::vector<float>& state_batch,
-         std::vector<float>& nextmove_batch,
-		std::vector<float>& result_batch, std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr,
+	std::tuple<float, float, float, float, float, float, float> train(std::vector<float>& stateBatch,
+         std::vector<float>& nextmoveBatch,
+		std::vector<float>& resultBatch, std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch, std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch, float lr,
 		bool update = true);
 
 	void save_model(const std::string& modelFile) const;

@@ -12,21 +12,21 @@
 
 class EloCalculator {
 public:
-    EloCalculator(const std::string& model_path, const std::vector<std::string>& model_names, bool load_from_file=true, bool adjust_K=false);
+    EloCalculator(const std::string& modelPath, const std::vector<std::string>& modelNames, bool loadFromFile=true, bool adjustK=false);
 
-    void UpdateRatings(int player_a, int player_b, const std::vector<bool>& result);
+    void update_ratings(int playerA, int playerB, const std::vector<bool>& result);
 
-    std::vector<float> GetRatings(bool adjust=false); // adjust = true 면 최소 레이팅 0으로 고정
+    std::vector<float> get_ratings(bool adjust=false); // adjust = true 면 최소 레이팅 0으로 고정
 
-    void saveRating(const std::string& model_path, const std::vector<std::string>& model_names);
+    void save_rating(const std::string& modelPath, const std::vector<std::string>& modelNames);
 
-    std::vector<float> calculateRating(const std::vector<std::vector<float>> winrate);
+    std::vector<float> calculate_rating(const std::vector<std::vector<float>> winrate);
 
 private:
     std::vector<float> ratings;
-    std::vector<int> game_counts;
-    std::vector<std::string> model_names; 
-    bool adjust_K;
+    std::vector<int> gameCounts;
+    std::vector<std::string> modelNames; 
+    bool adjustK;
 };
 
 #endif

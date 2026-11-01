@@ -10,7 +10,7 @@ struct SearchParams {
     float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
 
     // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.
-    int minVisits(int nPlayout) const {
+    int min_visits(int nPlayout) const {
         if (minVisitRatio <= 0.0f) return 0;
         return static_cast<int>(nPlayout * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
     }
@@ -58,17 +58,17 @@ struct Config {
     // per-engine overrides of fpu / minVisitRatio, read from "engines" in the config. Index = engine order.
     std::vector<SearchParams> engines;
 
-    SearchParams searchParams() const {
+    SearchParams search_params() const {
         return {fpu, minVisitRatio};
     }
 
     // search params for engine idx; falls back to the global values if no override is given.
-    SearchParams engineParams(int idx) const {
-        return (idx < static_cast<int>(engines.size())) ? engines[idx] : searchParams();
+    SearchParams engine_params(int idx) const {
+        return (idx < static_cast<int>(engines.size())) ? engines[idx] : search_params();
     }
 
-    int minVisits(int nPlayout) const {
-        return searchParams().minVisits(nPlayout);
+    int min_visits(int nPlayout) const {
+        return search_params().min_visits(nPlayout);
     }
 
     //cache
@@ -80,14 +80,14 @@ struct Config {
     float initRating;
 
     //train
-    int play_batch_size;
+    int playBatchSize;
     int epochs;
-    int check_freq;
-    int compare_game_cnt; // number of games played to compare models
-    int compare_thread_num; // should divide compare_game_cnt / 2
-    int search_thread_num; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
-    int train_wait_time; // decide train/inference thread balance.
-    int synchronize_freq; // 96
+    int checkFreq;
+    int compareGameCnt; // number of games played to compare models
+    int compareThreadNum; // should divide compare_game_cnt / 2
+    int searchThreadNum; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
+    int trainWaitTime; // decide train/inference thread balance.
+    int synchronizeFreq; // 96
     int capacity;
     int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
     float valueQMix; // value target = (1 - l) * game result + l * root value after search, l = valueQMix * (n - i) / n at move i of n. 0 = game result only.
@@ -99,6 +99,6 @@ struct Config {
 };
 extern Config globalConfig;
 
-Config loadConfig(const std::string& path);
+Config load_config(const std::string& path);
 
 #endif

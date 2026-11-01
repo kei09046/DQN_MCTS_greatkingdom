@@ -14,26 +14,26 @@ cv1(torch::nn::Conv2dOptions(channelSize, 128, 3).padding(1).bias(false)),
 bn1(torch::nn::BatchNorm2d(128)),
 
 // Policy head
-at_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
-at_bn(torch::nn::BatchNorm2d(headChannels)),
-at_fc(headChannels * inputSize, outputSize),
+atCv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+atBn(torch::nn::BatchNorm2d(headChannels)),
+atFc(headChannels * inputSize, outputSize),
 
 // Value head
-v_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
-v_bn(torch::nn::BatchNorm2d(headChannels)),
-v_fc1(headChannels * inputSize, valueHidden),
-v_fc2(valueHidden, 1),
+vCv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+vBn(torch::nn::BatchNorm2d(headChannels)),
+vFc1(headChannels * inputSize, valueHidden),
+vFc2(valueHidden, 1),
 
 // Score diff head
-sc_cv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
-sc_bn(torch::nn::BatchNorm2d(headChannels)),
-sc_fc1(headChannels * inputSize, valueHidden),
-sc_fc2(valueHidden, 1),
+scCv(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+scBn(torch::nn::BatchNorm2d(headChannels)),
+scFc1(headChannels * inputSize, valueHidden),
+scFc2(valueHidden, 1),
 
 // Score map head
-sc_map_cv1(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
-sc_map_bn1(torch::nn::BatchNorm2d(headChannels)),
-sc_map_cv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
+scMapCv1(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)),
+scMapBn1(torch::nn::BatchNorm2d(headChannels)),
+scMapCv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
 {
 	blocks = register_module("blocks", torch::nn::ModuleList());
 	for (int i = 0; i < blockSize; i++) {
@@ -43,33 +43,33 @@ sc_map_cv2(torch::nn::Conv2dOptions(headChannels, 1, 1).bias(false))
 	register_module("cv1", cv1);
 	register_module("bn1", bn1);
 
-	register_module("at_cv", at_cv);
-	register_module("at_bn", at_bn);
-	register_module("at_fc", at_fc);
+	register_module("at_cv", atCv);
+	register_module("at_bn", atBn);
+	register_module("at_fc", atFc);
 
-	register_module("v_cv", v_cv);
-	register_module("v_bn", v_bn);
-	register_module("v_fc1", v_fc1);
-	register_module("v_fc2", v_fc2);
+	register_module("v_cv", vCv);
+	register_module("v_bn", vBn);
+	register_module("v_fc1", vFc1);
+	register_module("v_fc2", vFc2);
 
-	register_module("sc_cv", sc_cv);
-	register_module("sc_bn", sc_bn);
-	register_module("sc_fc1", sc_fc1);
-	register_module("sc_fc2", sc_fc2);
+	register_module("sc_cv", scCv);
+	register_module("sc_bn", scBn);
+	register_module("sc_fc1", scFc1);
+	register_module("sc_fc2", scFc2);
 
-	register_module("sc_map_cv1", sc_map_cv1);
-	register_module("sc_map_bn1", sc_map_bn1);
-	register_module("sc_map_cv2", sc_map_cv2);
+	register_module("sc_map_cv1", scMapCv1);
+	register_module("sc_map_bn1", scMapBn1);
+	register_module("sc_map_cv2", scMapCv2);
 
 	if(captureHead){
-		cap_map_cv1 = register_module("cap_map_cv1", torch::nn::Conv2d(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)));
-		cap_map_bn1 = register_module("cap_map_bn1", torch::nn::BatchNorm2d(headChannels));
-		cap_map_cv2 = register_module("cap_map_cv2", torch::nn::Conv2d(torch::nn::Conv2dOptions(headChannels, 1, 1)));
+		capMapCv1 = register_module("cap_map_cv1", torch::nn::Conv2d(torch::nn::Conv2dOptions(128, headChannels, 1).bias(false)));
+		capMapBn1 = register_module("cap_map_bn1", torch::nn::BatchNorm2d(headChannels));
+		capMapCv2 = register_module("cap_map_cv2", torch::nn::Conv2d(torch::nn::Conv2dOptions(headChannels, 1, 1)));
 	}
 }
 
 FusedConv::FusedConv(const torch::nn::Conv2d& conv, const torch::nn::BatchNorm2d& bn){
-	torch::NoGradGuard no_grad;
+	torch::NoGradGuard noGrad;
 	const torch::Tensor a = bn->weight / torch::sqrt(bn->running_var + bn->options.eps());
 	weight = (conv->weight * a.view({-1, 1, 1, 1})).contiguous();
 	bias = bn->bias - a * bn->running_mean;
@@ -86,12 +86,12 @@ void Net::fuse(){
 		f.blocks.emplace_back(b->conv1, b->bn1);
 		f.blocks.emplace_back(b->conv2, b->bn2);
 	}
-	f.at.emplace_back(at_cv, at_bn);
-	f.v.emplace_back(v_cv, v_bn);
-	f.sc.emplace_back(sc_cv, sc_bn);
-	f.sc_map.emplace_back(sc_map_cv1, sc_map_bn1);
+	f.at.emplace_back(atCv, atBn);
+	f.v.emplace_back(vCv, vBn);
+	f.sc.emplace_back(scCv, scBn);
+	f.scMap.emplace_back(scMapCv1, scMapBn1);
 	if(captureHead)
-		f.cap_map.emplace_back(cap_map_cv1, cap_map_bn1);
+		f.capMap.emplace_back(capMapCv1, capMapBn1);
 	fused = std::move(f);
 }
 
@@ -99,7 +99,7 @@ void Net::unfuse(){
 	fused.reset();
 }
 
-NNOutput Net::forwardFused(const torch::Tensor& state)
+NNOutput Net::forward_fused(const torch::Tensor& state)
 {
 	const Fused& f = *fused;
 
@@ -107,26 +107,26 @@ NNOutput Net::forwardFused(const torch::Tensor& state)
 	for(size_t i = 0; i < f.blocks.size(); i += 2)
 		x = torch::relu(f.blocks[i + 1](torch::relu(f.blocks[i](x))) + x);
 
-	torch::Tensor log_act = at_fc(torch::relu(f.at[0](x)).view({-1, headChannels * inputSize}));
+	torch::Tensor logAct = atFc(torch::relu(f.at[0](x)).view({-1, headChannels * inputSize}));
 
 	torch::Tensor val = torch::relu(f.v[0](x)).view({-1, headChannels * inputSize});
-	val = v_fc2(torch::relu(v_fc1(val))).tanh();
+	val = vFc2(torch::relu(vFc1(val))).tanh();
 
 	torch::Tensor score = torch::relu(f.sc[0](x)).view({-1, headChannels * inputSize});
-	torch::Tensor exp_score_diff = sc_fc2(torch::relu(sc_fc1(score)));
+	torch::Tensor expScoreDiff = scFc2(torch::relu(scFc1(score)));
 
-	torch::Tensor exp_score_map = sc_map_cv2(torch::relu(f.sc_map[0](x))).tanh();
+	torch::Tensor expScoreMap = scMapCv2(torch::relu(f.scMap[0](x))).tanh();
 
-	torch::Tensor capture_logit = captureHead ? cap_map_cv2(torch::relu(f.cap_map[0](x))) : torch::zeros_like(exp_score_map);
+	torch::Tensor captureLogit = captureHead ? capMapCv2(torch::relu(f.capMap[0](x))) : torch::zeros_like(expScoreMap);
 
-	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, capture_logit);
+	return std::make_tuple(logAct, val, expScoreDiff, expScoreMap, captureLogit);
 }
 
 NNOutput Net::forward(const torch::Tensor& state)
 {
 	// during self-play, use fused net instead.
 	if(fused && !is_training())
-		return forwardFused(state);
+		return forward_fused(state);
 
 	torch::Tensor x = torch::nn::functional::relu(bn1(cv1(state)));
 	for (auto& block : *blocks) {
@@ -134,33 +134,33 @@ NNOutput Net::forward(const torch::Tensor& state)
 	}
 
 	// policy head
-	torch::Tensor log_act = torch::nn::functional::relu(at_bn(at_cv(x))).view({-1, headChannels * inputSize});
-	log_act = at_fc(log_act);
+	torch::Tensor logAct = torch::nn::functional::relu(atBn(atCv(x))).view({-1, headChannels * inputSize});
+	logAct = atFc(logAct);
 
 	// value head
-	torch::Tensor val = torch::nn::functional::relu(v_bn(v_cv(x))).view({-1, headChannels * inputSize});
-	val = v_fc2(torch::nn::functional::relu(v_fc1(val))).tanh();
+	torch::Tensor val = torch::nn::functional::relu(vBn(vCv(x))).view({-1, headChannels * inputSize});
+	val = vFc2(torch::nn::functional::relu(vFc1(val))).tanh();
 
 	// score head
-	torch::Tensor score = torch::nn::functional::relu(sc_bn(sc_cv(x))).view({-1, headChannels * inputSize});
-	torch::Tensor exp_score_diff = sc_fc2(torch::nn::functional::relu(sc_fc1(score)));
+	torch::Tensor score = torch::nn::functional::relu(scBn(scCv(x))).view({-1, headChannels * inputSize});
+	torch::Tensor expScoreDiff = scFc2(torch::nn::functional::relu(scFc1(score)));
 
 	// score map head
-	torch::Tensor exp_score_map = torch::nn::functional::relu(sc_map_bn1(sc_map_cv1(x)));
-	exp_score_map = sc_map_cv2(exp_score_map).tanh();
+	torch::Tensor expScoreMap = torch::nn::functional::relu(scMapBn1(scMapCv1(x)));
+	expScoreMap = scMapCv2(expScoreMap).tanh();
 
 	// capture map head : logits, sigmoid is applied in the loss.
-	torch::Tensor capture_logit = captureHead
-		? cap_map_cv2(torch::nn::functional::relu(cap_map_bn1(cap_map_cv1(x))))
-		: torch::zeros_like(exp_score_map);
+	torch::Tensor captureLogit = captureHead
+		? capMapCv2(torch::nn::functional::relu(capMapBn1(capMapCv1(x))))
+		: torch::zeros_like(expScoreMap);
 
-	return std::make_tuple(log_act, val, exp_score_diff, exp_score_map, capture_logit);
+	return std::make_tuple(logAct, val, expScoreDiff, expScoreMap, captureLogit);
 }
 
-NNInput PolicyValueNet::getData(const Game& game){
+NNInput PolicyValueNet::get_data(const Game& game){
     std::vector<float> ret(inputSize * globalConfig.inputChannel, 0.0f);
-	Color turn = game.getTurn();
-	Color oppturn = Game::reverseColor(turn);
+	Color turn = game.get_turn();
+	Color oppturn = Game::reverse_color(turn);
 	Color state;
 
 	// channel 0, 1, 2 : my/opponent's/neutral stones in current position
@@ -169,14 +169,14 @@ NNInput PolicyValueNet::getData(const Game& game){
 	// stones are never removed during the game (capture ends it), so earlier positions are
 	// the current one without the last move's / last two moves' stones.
 	// lastTwoMoves[1] is the most recent move, lastTwoMoves[0] the one before.
-	const Move lastMove = game.getLastMove(1);
-	const Move secondLastMove = game.getLastMove(0);
+	const Move lastMove = game.get_last_move(1);
+	const Move secondLastMove = game.get_last_move(0);
 	const auto isStone = [](Move m){ return m != PASSMOVE && m != RESIGNMOVE; };
 	const int lastIdx = isStone(lastMove) ? lastMove.first * colSize + lastMove.second : -1;
 	const int secondLastIdx = isStone(secondLastMove) ? secondLastMove.first * colSize + secondLastMove.second : -1;
 
 	for(int i=0; i<inputSize; ++i){
-		state = game.getBoard({i / colSize, i % colSize});
+		state = game.get_board({i / colSize, i % colSize});
 		int ch;
 		if(state == turn)
 			ch = 0;
@@ -200,7 +200,7 @@ NNInput PolicyValueNet::getData(const Game& game){
 	Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
 	for(int i=0; i<inputSize; ++i){ // channel 9, 10 : indicates territory
-		terr = game.getScoreBoard({i/colSize, i%colSize});
+		terr = game.get_score_board({i/colSize, i%colSize});
 		if(terr == turnScore){
 			ret.at(9*inputSize + i) = 1.0f;
 		}
@@ -209,7 +209,7 @@ NNInput PolicyValueNet::getData(const Game& game){
 		}
 	}
 
-	float diff = game.scoreDiff(turn);
+	float diff = game.score_diff(turn);
 	for(int i=0; i<inputSize; ++i){ // channel 11 : difference of current score
 		ret.at(11*inputSize + i) = diff / boardSize;
 	}
@@ -218,47 +218,47 @@ NNInput PolicyValueNet::getData(const Game& game){
 	std::bitset<inputSize> mark;
 
 	for(int i=0; i<inputSize; ++i){
-		int cidx = game.getChainIdx(i);
-		const Chain c = game.getChain(i);
+		int cidx = game.get_chain_idx(i);
+		const Chain c = game.get_chain(i);
 
 		if(c.size != 0 && !mark[cidx]){
 			mark[cidx] = true;
 
-			auto head = game.getStone({i / colSize, i % colSize}).head;
+			auto head = game.get_stone({i / colSize, i % colSize}).head;
 			auto cur = head;
-			auto state = game.getBoard({i / colSize, i % colSize});
-			int liberty_count = 0;
+			auto state = game.get_board({i / colSize, i % colSize});
+			int libertyCount = 0;
 
 			for(int j=0; j<boardSize; ++j){
 				// if one of the liberty is unplayable by rule(=completely alive)
-				if(c.liberties.test(j) && !game.isLegal(j/colSize, j%colSize)){
-					liberty_count = 5;
+				if(c.liberties.test(j) && !game.is_legal(j/colSize, j%colSize)){
+					libertyCount = 5;
 					break;
 				}
 			}
 
 			// if not completely alive.
-			if(liberty_count == 0){
-				liberty_count = std::min((int)c.liberties.count(), 4);
+			if(libertyCount == 0){
+				libertyCount = std::min((int)c.liberties.count(), 4);
 			}
 
 			if(state == turn){ // my stone's liberties
 				do {
-					ret.at((11 + liberty_count)*inputSize + cur) = 1.0f;
-					cur = game.getStone({cur/colSize, cur%colSize}).next;
+					ret.at((11 + libertyCount)*inputSize + cur) = 1.0f;
+					cur = game.get_stone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 			else if(state == oppturn){ // opponent stone's liberties
 				do {
-					ret.at((16 + liberty_count)*inputSize + cur) = 1.0f;
-					cur = game.getStone({cur/colSize, cur%colSize}).next;
+					ret.at((16 + libertyCount)*inputSize + cur) = 1.0f;
+					cur = game.get_stone({cur/colSize, cur%colSize}).next;
 				} while (cur != head);
 			}
 		}
 	}
 
 	// channel 22 : available moves
-	for(const auto& m : game.getAvailableMoves()){
+	for(const auto& m : game.get_available_moves()){
 		if(m < inputSize)
 			ret.at(22 * inputSize + m) = 1.0f;
 	}
@@ -282,12 +282,12 @@ NNInput PolicyValueNet::getData(const Game& game){
     return {ret};
 }
 
-NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
+NNInput PolicyValueNet::get_data(const std::vector<const Game*>& gameBatch){
 	NNInput ret;
 	ret.reserve(gameBatch.size() * inputSize * globalConfig.inputChannel);
 
 	for(int b=0; b<gameBatch.size(); ++b){
-		auto data = getData(*gameBatch[b]);
+		auto data = get_data(*gameBatch[b]);
 		// data : std::tuple<std::vector, std::vector, std::vector> with size inputSize * globalConfig.inputChannel, boardSize + 1, boardSize + 1
 		ret.insert(ret.end(), data.begin(), data.end());
 	}
@@ -295,21 +295,21 @@ NNInput PolicyValueNet::getData(const std::vector<const Game*>& gameBatch){
 }
 
 
-PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu):
- use_gpu(use_gpu), device(use_gpu ? torch::kCUDA : torch::kCPU), model_type(model_type), num_blocks(num_blocks)
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu):
+ useGpu(useGpu), device(useGpu ? torch::kCUDA : torch::kCPU), modelType(modelType), numBlocks(numBlocks)
 {
 	// cuDNN times its convolution algorithms the first time it sees an input shape and keeps the fastest one.
 	// (Each new batch size pays that once.)
-	if(use_gpu)
+	if(useGpu)
 		at::globalContext().setBenchmarkCuDNN(true);
 	load_model(modelFile);
 }
 
-PolicyValueNet::PolicyValueNet(const std::string& modelFile, bool use_gpu): 
-PolicyValueNet(modelFile, parseModelName(modelFile).type, parseModelName(modelFile).blocks, use_gpu)
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, bool useGpu): 
+PolicyValueNet(modelFile, parse_model_name(modelFile).type, parse_model_name(modelFile).blocks, useGpu)
 {}
 
-ModelName PolicyValueNet::parseModelName(const std::string& modelFile){
+ModelName PolicyValueNet::parse_model_name(const std::string& modelFile){
 	const std::string name = std::filesystem::path(modelFile).filename().string();
 	static const std::regex current("([A-Z])_(\\d+)b_(.*)\\.pt"), old("([A-Z])(\\d+)B?\\.pt");
 	std::smatch m;
@@ -326,12 +326,12 @@ ModelName PolicyValueNet::parseModelName(const std::string& modelFile){
 	return {globalConfig.modelPrefix, globalConfig.numHiddenBlock, std::nullopt};
 }
 
-std::string PolicyValueNet::modelFileName(const std::string& tag) const{
-	return model_type + "_" + std::to_string(num_blocks) + "b_" + tag;
+std::string PolicyValueNet::model_file_name(const std::string& tag) const{
+	return modelType + "_" + std::to_string(numBlocks) + "b_" + tag;
 }
 
 std::vector<PolicyValueOutput>
-PolicyValueNet::batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinned){
+PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pinned){
 	const int B = batchSize;
 	assert(input.size() == static_cast<size_t>(B) * globalConfig.inputChannel * inputSize);
 	std::vector<PolicyValueOutput> outputs;
@@ -348,23 +348,23 @@ PolicyValueNet::batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinn
 			std::get<3>(r).view({B, boardSize}), std::get<4>(r).view({B, boardSize})}, 1);
 	};
 
-	torch::NoGradGuard no_grad;
+	torch::NoGradGuard noGrad;
 	torch::Tensor out; // [B, outWidth] on the CPU
-	if(use_gpu && pinned){
+	if(useGpu && pinned){
 		if(!pinned->in.defined() || pinned->in.size(0) < B){
 			pinned->in = torch::empty({B, globalConfig.inputChannel, rowSize, colSize}, options.pinned_memory(true));
 			pinned->out = torch::empty({B, outWidth}, options.pinned_memory(true));
 		}
 		torch::Tensor in = pinned->in.narrow(0, 0, B);
 		in.copy_(cpuIn);
-		const NNOutput r = policy_value_net->forward(in.to(device, /*non_blocking=*/true));
+		const NNOutput r = policyValueNet->forward(in.to(device, /*non_blocking=*/true));
 		out = pinned->out.narrow(0, 0, B);
 		out.copy_(merge(r)); // blocking : waits for the forward pass, so pinned->in is free again for the next batch
 	}
-	else if(use_gpu)
-		out = merge(policy_value_net->forward(cpuIn.to(device))).to(torch::kCPU);
+	else if(useGpu)
+		out = merge(policyValueNet->forward(cpuIn.to(device))).to(torch::kCPU);
 	else
-		out = merge(policy_value_net->forward(cpuIn)).contiguous();
+		out = merge(policyValueNet->forward(cpuIn)).contiguous();
 
 	const float* row = out.data_ptr<float>();
 	for(int b = 0; b < B; ++b, row += outWidth) {
@@ -410,7 +410,7 @@ PolicyValueNet::batchEvaluate(NNInput& input, int batchSize, PinnedBuffers* pinn
 // }
 
 PolicyValueOutput PolicyValueNet::evaluate(NNInput& input){
-	return std::move(batchEvaluate(input, 1).front());
+	return std::move(batch_evaluate(input, 1).front());
 }
 
 // std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 
@@ -594,81 +594,81 @@ PolicyValueOutput PolicyValueNet::evaluate(NNInput& input){
 // 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
 // }
 
-std::tuple<float, float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& state_batch,
-	 std::vector<float>& nextmove_batch, std::vector<float>& result_batch, std::vector<float>& outcome_batch, std::vector<float>& score_batch,
-	  std::vector<float>& map_batch, std::vector<Trainhead>& type_batch, float lr, bool update){
+std::tuple<float, float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& stateBatch,
+	 std::vector<float>& nextmoveBatch, std::vector<float>& resultBatch, std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch,
+	  std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch, float lr, bool update){
 
-	int B = result_batch.size();
+	int B = resultBatch.size();
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 
-	auto sb = torch::from_blob(state_batch.data(),
+	auto sb = torch::from_blob(stateBatch.data(),
 		{B, globalConfig.inputChannel, inputRow, inputCol},
 		options).to(device);
 
-	auto mp = torch::from_blob(nextmove_batch.data(),
+	auto mp = torch::from_blob(nextmoveBatch.data(),
 		{B, outputSize},
 		options).to(device);
 
-	auto wb = torch::from_blob(result_batch.data(),
+	auto wb = torch::from_blob(resultBatch.data(),
 		{B, 1},
 		options).to(device);
 
-	auto zb = torch::from_blob(outcome_batch.data(),
+	auto zb = torch::from_blob(outcomeBatch.data(),
 		{B, 1},
 		options).to(device);
 
-	auto sd = torch::from_blob(score_batch.data(),
+	auto sd = torch::from_blob(scoreBatch.data(),
 		{B, 1},
 		options).to(device);
 
-	auto map = torch::from_blob(map_batch.data(),
+	auto map = torch::from_blob(mapBatch.data(),
 		{B, 1, outputRow, outputCol},
 		options).to(device);
 
-	auto mask = torch::from_blob(type_batch.data(), {B, 1}, torch::kUInt8).to(device);
+	auto mask = torch::from_blob(typeBatch.data(), {B, 1}, torch::kUInt8).to(device);
 
 	auto pmask = (mask & POLICYHEAD).to(torch::kBool);
 	auto vmask = (mask & VALUEHEAD).to(torch::kBool);
 	auto smask = (mask & SCOREHEAD).to(torch::kBool);
-	auto sm_mask = (mask & OCCUPYHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
-	auto cap_mask = (mask & CMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
+	auto smMask = (mask & OCCUPYHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
+	auto capMask = (mask & CMAPHEAD).to(torch::kBool).unsqueeze(-1).unsqueeze(-1);
 
-	auto policy_active_elements = pmask.sum().item<float>() + 1e-8f;
-	auto value_active_elements = vmask.sum().item<float>() + 1e-8f;
-	auto score_active_elements = smask.sum().item<float>() + 1e-8f;
-	auto smap_active_elements = sm_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
-	auto cap_active_elements = cap_mask.sum().item<float>() * outputRow * outputCol + 1e-8f;
+	auto policyActiveElements = pmask.sum().item<float>() + 1e-8f;
+	auto valueActiveElements = vmask.sum().item<float>() + 1e-8f;
+	auto scoreActiveElements = smask.sum().item<float>() + 1e-8f;
+	auto smapActiveElements = smMask.sum().item<float>() * outputRow * outputCol + 1e-8f;
+	auto capActiveElements = capMask.sum().item<float>() * outputRow * outputCol + 1e-8f;
 
 	sd *= smask;
-	auto smap = map * sm_mask;
+	auto smap = map * smMask;
 	// capture map target : the map holds the capture map for games ending by capture. For games ending by score it holds
 	// the occupancy map (OCCUPYHEAD), and the capture target is all zero : nothing was captured.
-	auto cmap = map * (~sm_mask) * cap_mask;
+	auto cmap = map * (~smMask) * capMask;
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
-	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
+	torch::nn::HuberLoss huberLoss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
 	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f, vzLoss = 0.0f;
 
 	// entropy of the policy targets: the lowest policy loss reachable on this batch. policy loss - entropy = KL(target || net).
 	float pEntropy;
 	{
-		torch::NoGradGuard no_grad;
-		auto entropy_per_sample = -torch::sum(mp * torch::log(mp.clamp_min(1e-12f)), 1, /*keepdim=*/true); // [B, 1]
-		pEntropy = ((entropy_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements).item<float>();
+		torch::NoGradGuard noGrad;
+		auto entropyPerSample = -torch::sum(mp * torch::log(mp.clamp_min(1e-12f)), 1, /*keepdim=*/true); // [B, 1]
+		pEntropy = ((entropyPerSample * pmask.to(torch::kFloat32)).sum() / policyActiveElements).item<float>();
 	}
 
 	// BatchNorm uses batch statistics (and updates its running statistics) only while training. The weights change from
 	// here on, so the folded inference weights (if any) are dropped.
-	policy_value_net->unfuse();
-	policy_value_net->train(update);
-	torch::AutoGradMode grad_mode(update);
+	policyValueNet->unfuse();
+	policyValueNet->train(update);
+	torch::AutoGradMode gradMode(update);
 	const int passes = update ? globalConfig.epochs : 1;
 
 	//static int cntr = 0;
 	for(int i=0; i<passes; ++i){
 		optimizer->zero_grad();
 
-		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb);
+		auto [r1, r2, r3, r4, r5] = policyValueNet->forward(sb);
 		// if(cntr % 1 == 0){
 		// 	std::cout << "iter " << i << "\n";
 		// 	for(int j=0; j<B; ++j){
@@ -679,37 +679,37 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		// 	}
 		// } 
 
-		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
-		torch::Tensor policy_loss_per_sample = -torch::sum(mp * log_move_probs, 1, /*keepdim=*/true); // [B, 1]
-		torch::Tensor policy_loss = (policy_loss_per_sample * pmask.to(torch::kFloat32)).sum() / policy_active_elements;
+		torch::Tensor logMoveProbs = torch::log_softmax(r1, 1);
+		torch::Tensor policyLossPerSample = -torch::sum(mp * logMoveProbs, 1, /*keepdim=*/true); // [B, 1]
+		torch::Tensor policyLoss = (policyLossPerSample * pmask.to(torch::kFloat32)).sum() / policyActiveElements;
 
-		torch::Tensor value_loss = ((r2 - wb).pow(2) * vmask.to(torch::kFloat32)).sum() / value_active_elements;
+		torch::Tensor valueLoss = ((r2 - wb).pow(2) * vmask.to(torch::kFloat32)).sum() / valueActiveElements;
 
-		auto masked_r3 = r3 * smask;
-		torch::Tensor score_loss = huber_loss(masked_r3, sd);
-		score_loss = score_loss / score_active_elements;
+		auto maskedR3 = r3 * smask;
+		torch::Tensor scoreLoss = huberLoss(maskedR3, sd);
+		scoreLoss = scoreLoss / scoreActiveElements;
 
-		auto masked_r4 = r4 * sm_mask;
-		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(masked_r4, smap, torch::nn::MSELossOptions().reduction(torch::kSum));
-		score_map_loss = score_map_loss / smap_active_elements;
+		auto maskedR4 = r4 * smMask;
+		torch::Tensor scoreMapLoss = torch::nn::functional::mse_loss(maskedR4, smap, torch::nn::MSELossOptions().reduction(torch::kSum));
+		scoreMapLoss = scoreMapLoss / smapActiveElements;
 
 		// captured stones are few of 81 points : weight them up so that predicting "nothing captured" everywhere doesn't pay.
-		torch::Tensor capture_loss_per_point = torch::nn::functional::binary_cross_entropy_with_logits(r5, cmap,
-			torch::nn::functional::BinaryCrossEntropyWithLogitsFuncOptions().pos_weight(torch::full({1}, capture_pos_weight, options).to(device))
+		torch::Tensor captureLossPerPoint = torch::nn::functional::binary_cross_entropy_with_logits(r5, cmap,
+			torch::nn::functional::BinaryCrossEntropyWithLogitsFuncOptions().pos_weight(torch::full({1}, capturePosWeight, options).to(device))
 				.reduction(torch::kNone));
-		torch::Tensor capture_loss = (capture_loss_per_point * cap_mask.to(torch::kFloat32)).sum() / cap_active_elements;
+		torch::Tensor captureLoss = (captureLossPerPoint * capMask.to(torch::kFloat32)).sum() / capActiveElements;
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		torch::Tensor loss = policy_loss + value_loss + score_loss * 0.25f + score_map_loss * 0.25f + capture_loss * 0.25f;
+		torch::Tensor loss = policyLoss + valueLoss + scoreLoss * 0.25f + scoreMapLoss * 0.25f + captureLoss * 0.25f;
 
-		pLoss += policy_loss.item<float>();
-		vLoss += value_loss.item<float>();
+		pLoss += policyLoss.item<float>();
+		vLoss += valueLoss.item<float>();
 		// diagnostic only: same positions, measured against the game result z instead of the (possibly mixed) target.
-		vzLoss += ((r2.detach() - zb).pow(2) * vmask.to(torch::kFloat32)).sum().item<float>() / value_active_elements;
-		sLoss += score_loss.item<float>();
-		smLoss += score_map_loss.item<float>();
-		cmLoss += capture_loss.item<float>();
+		vzLoss += ((r2.detach() - zb).pow(2) * vmask.to(torch::kFloat32)).sum().item<float>() / valueActiveElements;
+		sLoss += scoreLoss.item<float>();
+		smLoss += scoreMapLoss.item<float>();
+		cmLoss += captureLoss.item<float>();
 
 		if(update){
 			// a single non-finite loss or gradient would write NaN into every weight: skip the step instead.
@@ -718,8 +718,8 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 				continue;
 			}
 			loss.backward();
-			const double grad_norm = torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
-			if(!std::isfinite(grad_norm)){
+			const double gradNorm = torch::nn::utils::clip_grad_norm_(policyValueNet->parameters(), 1.0);
+			if(!std::isfinite(gradNorm)){
 				std::cerr << "non-finite gradient norm: optimizer step skipped" << std::endl;
 				continue; // zero_grad() at the start of the next pass clears it
 			}
@@ -727,47 +727,47 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		}
 	}
 	//cntr++;
-	policy_value_net->eval();
+	policyValueNet->eval();
 
 	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy, vzLoss / passes};
 }
 
 void PolicyValueNet::save_model(const std::string& modelFile) const
 {
-	auto net = std::dynamic_pointer_cast<Net>(policy_value_net);
+	auto net = std::dynamic_pointer_cast<Net>(policyValueNet);
 	if(!net){
 		throw std::runtime_error("Model type mismatch when saving: " + modelFile);
 	}
 	torch::save(net, modelFile + ".pt");
 }
 
-std::shared_ptr<NetBase> PolicyValueNet::makeNet() const{
-	if(model_type == "J") //  23 channel model
-		return std::make_shared<Net>(23, num_blocks);
-	if(model_type == "K") // J + capture map head; games end at the first capture
-		return std::make_shared<Net>(23, num_blocks, 32, 256, true);
-	throw std::runtime_error("Unsupported model type: " + model_type);
+std::shared_ptr<NetBase> PolicyValueNet::make_net() const{
+	if(modelType == "J") //  23 channel model
+		return std::make_shared<Net>(23, numBlocks);
+	if(modelType == "K") // J + capture map head; games end at the first capture
+		return std::make_shared<Net>(23, numBlocks, 32, 256, true);
+	throw std::runtime_error("Unsupported model type: " + modelType);
 }
 
 void PolicyValueNet::load_model(const std::string& modelFile){
-	std::shared_ptr<NetBase> net = makeNet();
+	std::shared_ptr<NetBase> net = make_net();
 	if (modelFile.ends_with(".pt")) {
 		torch::load(net, modelFile);
 	}
-	policy_value_net = std::move(net);
+	policyValueNet = std::move(net);
 
-	policy_value_net->to(device);
+	policyValueNet->to(device);
 	// inference mode: BatchNorm normalizes with its running statistics, so an evaluation doesn't depend on the rest of the batch.
-	policy_value_net->eval();
-	policy_value_net->fuse();
+	policyValueNet->eval();
+	policyValueNet->fuse();
 
 	// learning rate would be modified by train.cpp later.
-	optimizer = std::make_unique<torch::optim::Adam>(policy_value_net->parameters(), 
+	optimizer = std::make_unique<torch::optim::Adam>(policyValueNet->parameters(), 
 	torch::optim::AdamOptions(0.0002f)
 	.betas({0.9, 0.999})
-	.weight_decay(l2_const));
+	.weight_decay(l2Const));
 
-	std::cout << "Model loaded: " << modelFile << " (type " << model_type << ", " << num_blocks << " blocks)" << std::endl;
+	std::cout << "Model loaded: " << modelFile << " (type " << modelType << ", " << numBlocks << " blocks)" << std::endl;
 }
 
 void PolicyValueNet::save_optimizer(const std::string& file) const{
@@ -788,20 +788,20 @@ void PolicyValueNet::set_learning_rate(float lr){
 }
 
 void PolicyValueNet::load_weights(const std::string& modelFile){
-	std::shared_ptr<NetBase> loaded = makeNet();
+	std::shared_ptr<NetBase> loaded = make_net();
 	torch::load(loaded, modelFile);
 
 	// copy into the existing tensors: the optimizer refers to them, so its state carries over.
-	torch::NoGradGuard no_grad;
-	auto dst_params = policy_value_net->named_parameters();
+	torch::NoGradGuard noGrad;
+	auto dstParams = policyValueNet->named_parameters();
 	for(const auto& item : loaded->named_parameters())
-		dst_params[item.key()].copy_(item.value());
-	auto dst_buffers = policy_value_net->named_buffers();
+		dstParams[item.key()].copy_(item.value());
+	auto dstBuffers = policyValueNet->named_buffers();
 	for(const auto& item : loaded->named_buffers())
-		dst_buffers[item.key()].copy_(item.value());
+		dstBuffers[item.key()].copy_(item.value());
 
-	policy_value_net->eval();
-	policy_value_net->fuse();
+	policyValueNet->eval();
+	policyValueNet->fuse();
 	std::cout << "Model weights loaded: " << modelFile << std::endl;
 }
 
@@ -843,33 +843,33 @@ void PolicyValueNet::load_weights(const std::string& modelFile){
 // }
 
 
-void PolicyValueNet::displayNNOutput(const NNOutput& modelOut){
+void PolicyValueNet::display_nn_output(const NNOutput& modelOut){
 	// policyLogit : [82] winP : [1] scoreDiff : [1] scoreMap : [81] captureMap : [81]
  	const auto [policyLogit, winP, scoreDiff, scoreMap, captureMap] = modelOut;
 
 	const torch::Tensor policy = torch::softmax(policyLogit, 0);
 	
-	auto to_printable = [](const torch::Tensor& t) {
+	auto toPrintable = [](const torch::Tensor& t) {
 		return t.detach().to(torch::kCPU);
 	};
 
-	std::cout << "WinP : " << to_printable(winP).item<float>() << "\n";
-	std::cout << "Predicted Score Diff: " << to_printable(scoreDiff).item<float>() << "\n\n";
+	std::cout << "WinP : " << toPrintable(winP).item<float>() << "\n";
+	std::cout << "Predicted Score Diff: " << toPrintable(scoreDiff).item<float>() << "\n\n";
 
 	// 2. Print Policy (Shape [82] -> 9x9 board positions + 1 pass move)
 	std::cout << "Policy:\n";
-	torch::Tensor board_policy = to_printable(policy).slice(0, 0, 81).view({9, 9});
+	torch::Tensor boardPolicy = toPrintable(policy).slice(0, 0, 81).view({9, 9});
 	for (int i = 0; i < 9; ++i) {
 		for (int j = 0; j < 9; ++j) {
 			// Format to 4 decimal places for clean grid alignment
-			std::printf("%.4f ", board_policy[i][j].item<float>());
+			std::printf("%.4f ", boardPolicy[i][j].item<float>());
 		}
 		std::cout << "\n";
 	}
-	std::cout << to_printable(policy)[81].item<float>() << "\n\n";
+	std::cout << toPrintable(policy)[81].item<float>() << "\n\n";
 
 	// 3. Print Spatial Feature Maps (scoreMap and captureMap reshaped to 9x9)
-	torch::Tensor scoreGrid = to_printable(scoreMap).view({9, 9});
+	torch::Tensor scoreGrid = toPrintable(scoreMap).view({9, 9});
 	std::cout << "Score Map:\n";
 	for (int i = 0; i < 9; ++i) {
 		for (int j = 0; j < 9; ++j) {

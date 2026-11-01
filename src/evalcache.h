@@ -21,10 +21,10 @@ private:
     int mutexPoolMask;
     std::vector<std::mutex> mutexPool;
 
-    inline int indexOf(HashValue h) const {
+    inline int index_of(HashValue h) const {
         return (int)h & tableMask;
     }
-    inline std::mutex& mutexOf(int idx) {
+    inline std::mutex& mutex_of(int idx) {
         return mutexPool[idx & mutexPoolMask];
     }
 
@@ -38,8 +38,8 @@ public:
     }
 
     bool get(HashValue h, std::shared_ptr<T>& out) {
-        int idx = indexOf(h);
-        std::mutex& m = mutexOf(idx);
+        int idx = index_of(h);
+        std::mutex& m = mutex_of(idx);
         std::lock_guard<std::mutex> lock(m);
 
         Entry& e = table[idx];
@@ -51,8 +51,8 @@ public:
     }
 
     void insert(HashValue h, std::shared_ptr<T>& val) {
-        int idx = indexOf(h);
-        std::mutex& m = mutexOf(idx);
+        int idx = index_of(h);
+        std::mutex& m = mutex_of(idx);
 
         // Local copy before locking
         auto buf = val;
@@ -70,7 +70,7 @@ public:
 
     void clear() {
         for(int i = 0; i < globalConfig.tableSize; i++) {
-            std::mutex& m = mutexOf(i);
+            std::mutex& m = mutex_of(i);
             std::lock_guard<std::mutex> lock(m);
             if(table[i].ptr != nullptr){
                 table[i].ptr = nullptr;

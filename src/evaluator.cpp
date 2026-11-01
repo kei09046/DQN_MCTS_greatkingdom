@@ -1,10 +1,10 @@
 #include "evaluator.h"
 
-void Evaluator::createHandlerThreads() {
-    handler = std::thread(&Evaluator::HandlerWork, this);
+void Evaluator::create_handler_threads() {
+    handler = std::thread(&Evaluator::handler_work, this);
 }
 
-void Evaluator::HandlerWork() {
+void Evaluator::handler_work() {
     std::vector<const Game*> batchGames;
     std::vector<std::shared_ptr<NNResultBuf>> batchBufs;
     std::vector<HashValue> hashBufs;
@@ -18,7 +18,7 @@ void Evaluator::HandlerWork() {
 
         // drain queue into batch
         while (!q.empty()) {
-            evalRequest r = std::move(q.front()); q.pop();
+            EvalRequest r = std::move(q.front()); q.pop();
             batchBufs.push_back(std::move(r.buf));
             hashBufs.push_back(r.hash);
             batchGames.push_back(r.game);
@@ -30,12 +30,12 @@ void Evaluator::HandlerWork() {
         batchInput.clear();
         for(const auto& in : batchInputs)
             batchInput.insert(batchInput.end(), in->begin(), in->end());
-        std::vector<PolicyValueOutput> rawOutputs = net->batchEvaluate(batchInput, static_cast<int>(batchInputs.size()), &pinned);
+        std::vector<PolicyValueOutput> rawOutputs = net->batch_evaluate(batchInput, static_cast<int>(batchInputs.size()), &pinned);
         std::vector<NodeInfo> outputs;
         outputs.reserve(rawOutputs.size());
         
         for(int i=0; i<rawOutputs.size(); ++i)
-            outputs.push_back(convertForm(rawOutputs[i], *batchGames[i]));
+            outputs.push_back(convert_form(rawOutputs[i], *batchGames[i]));
 
         // try{
         //     outputs = net->batchEvaluate(batchGames);
@@ -68,19 +68,19 @@ void Evaluator::HandlerWork() {
         batchBufs.clear();
         batchInputs.clear();
     }
-    freePinnedMemory();
+    free_pinned_memory();
 }
 
-void Evaluator::freePinnedMemory(){
+void Evaluator::free_pinned_memory(){
     pinned.free();
 }
 
-NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& game){
+NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& game){
     const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = nnOutput;
 
     // compute policy.(apply softmax + remove unplayable moves)
-    const auto& availableMoves = game.getAvailableMoves();
-    const auto& transferList = game.getTransferTable();
+    const auto& availableMoves = game.get_available_moves();
+    const auto& transferList = game.get_transfer_table();
     const int moveSize = availableMoves.size();
     // available moves : [1, 6, 8, ...]
     // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...] (boardSize + 1)
@@ -101,22 +101,22 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
     // }
 
     std::vector<float> expLogit(moveSize);
-    float max_logit = *std::max_element(transferred.begin(), transferred.end()); // For numerical stability
+    float maxLogit = *std::max_element(transferred.begin(), transferred.end()); // For numerical stability
 
     // Compute exponentials after subtracting max_logit
-    float sum_exp = 0.0f;
+    float sumExp = 0.0f;
     for (int i = 0; i < moveSize; ++i) {
-        expLogit[i] = std::exp(transferred[i] - max_logit);
-        sum_exp += expLogit[i];
+        expLogit[i] = std::exp(transferred[i] - maxLogit);
+        sumExp += expLogit[i];
     }
 
     // Normalize
     for (float& val : expLogit) {
-        val /= sum_exp;
+        val /= sumExp;
     }
 
     // compute other values
-    const Color turn = game.getTurn();
+    const Color turn = game.get_turn();
     const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
     const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
@@ -124,8 +124,8 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
 
     scoreV += scoreEXP;
     for(int i=0; i<boardSize; ++i){
-        if(game.getBoard({i / colSize, i % colSize}) == EMPTY){
-            Color owned = game.getScoreBoard({i / colSize, i % colSize});
+        if(game.get_board({i / colSize, i % colSize}) == EMPTY){
+            Color owned = game.get_score_board({i / colSize, i % colSize});
             scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
         }
     }
@@ -189,15 +189,15 @@ NodeInfo Evaluator::convertForm(const PolicyValueOutput& nnOutput, const Game& g
 }
 
 Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
-    createHandlerThreads();
+    create_handler_threads();
 }
-Evaluator::Evaluator(const std::string& modelFile, const std::string& model_type, int num_blocks, bool use_gpu)
-    : net(new PolicyValueNet(modelFile, model_type, num_blocks, use_gpu)), stop(false){
-    createHandlerThreads();
+Evaluator::Evaluator(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu)
+    : net(new PolicyValueNet(modelFile, modelType, numBlocks, useGpu)), stop(false){
+    create_handler_threads();
 }
-Evaluator::Evaluator(const std::string& modelFile, bool use_gpu)
-    : net(new PolicyValueNet(modelFile, use_gpu)), stop(false){
-    createHandlerThreads();
+Evaluator::Evaluator(const std::string& modelFile, bool useGpu)
+    : net(new PolicyValueNet(modelFile, useGpu)), stop(false){
+    create_handler_threads();
 }
 Evaluator::~Evaluator() {
     {
@@ -213,7 +213,7 @@ bool Evaluator::request(const std::shared_ptr<NNResultBuf>& buf, const Game* gam
         return true;
 
     // self play thread is responsible of building data.
-    auto input = std::make_unique<NNInput>(PolicyValueNet::getData(*game));
+    auto input = std::make_unique<NNInput>(PolicyValueNet::get_data(*game));
     {
         std::lock_guard<std::mutex> lk(qmutex);
         q.push({buf, game, hash, std::move(input)});
@@ -232,26 +232,26 @@ bool Evaluator::evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, Has
     return false;
 }
 
-bool Evaluator::asyncEvaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash){
+bool Evaluator::async_evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash){
     return request(buf, game, hash);
 }
 
-void Evaluator::updateModel(PolicyValueNet* updatedNet) {
-    torch::NoGradGuard no_grad;
-	auto src_state = updatedNet->policy_value_net->named_parameters();
-	auto dst_state = net->policy_value_net->named_parameters();
+void Evaluator::update_model(PolicyValueNet* updatedNet) {
+    torch::NoGradGuard noGrad;
+	auto srcState = updatedNet->policyValueNet->named_parameters();
+	auto dstState = net->policyValueNet->named_parameters();
 
-	for (auto& item : src_state) {
-		dst_state[item.key()].copy_(item.value());
+	for (auto& item : srcState) {
+		dstState[item.key()].copy_(item.value());
 	}
 
 	// BatchNorm params.
-	auto src_buf = updatedNet->policy_value_net->named_buffers();
-	auto dst_buf = net->policy_value_net->named_buffers();
+	auto srcBuf = updatedNet->policyValueNet->named_buffers();
+	auto dstBuf = net->policyValueNet->named_buffers();
 
-	for (auto& item : src_buf) {
-		dst_buf[item.key()].copy_(item.value());
+	for (auto& item : srcBuf) {
+		dstBuf[item.key()].copy_(item.value());
 	}
-    net->fuseBatchNorm(); // the folded weights were computed from the old weights
+    net->fuse_batch_norm(); // the folded weights were computed from the old weights
     cache.clear();
 }

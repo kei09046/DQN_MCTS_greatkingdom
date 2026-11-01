@@ -29,21 +29,21 @@ public:
     // Prints root winrate + per-candidate-move (visits, policy prior, winrate) breakdown for
     // the "analyze" REPL. Requires globalConfig.detailedStat = true (winrate is otherwise never
     // accumulated).
-    void printAnalysis(MCTS& mcts);
+    void print_analysis(MCTS& mcts);
 
     // One-line-per-ply dump of the current principal variation.
-    void printVariation(MCTS& mcts);
+    void print_variation(MCTS& mcts);
 
     // Debug mode: while on, every playout's search path and leaf NN evaluation is printed to
     // stdout the moment that playout finishes (see printPlayoutDebugLine below) -- nothing is
     // stored or accumulated here either; the GUI (Python) owns collecting and displaying the
     // resulting stream. Off by default. reset()/jump() moving an attached MCTS's root to a new
     // position don't need to clear anything here -- there's nothing accumulated to clear.
-    inline void setDebugMode(bool on){
+    inline void set_debug_mode(bool on){
         debugMode = on;
     }
 
-    inline bool getDebugMode() const{
+    inline bool get_debug_mode() const{
         return debugMode;
     }
 
@@ -56,7 +56,7 @@ public:
     // no MCTS& (unlike printAnalysis/printVariation above) since it needs nothing from one --
     // `path`'s own Node*s are all it reads. Only ever called (via MCTS::analysis, see
     // attachAnalysis in PMCTS.h) when debugMode is on.
-    void printPlayoutDebugLine(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState);
+    void print_playout_debug_line(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState);
 
 private:
     bool debugMode = false;
@@ -67,7 +67,7 @@ private:
     // plain Node* rather than an MCTS& like printAnalysis/printVariation -- it walks down from
     // wherever it's pointed (a specific child, not necessarily an MCTS's own root) and needs
     // nothing else from the owning MCTS to do that.
-    std::vector<Move> followUpFrom(Node* node, int maxDepth);
+    std::vector<Move> follow_up_from(Node* node, int maxDepth);
 };
 
 #endif

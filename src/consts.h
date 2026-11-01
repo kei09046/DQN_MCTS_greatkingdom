@@ -59,7 +59,7 @@ constexpr Trainhead ALL = 255U;
 constexpr Move PASSMOVE = {rowSize, 0};
 constexpr Move RESIGNMOVE = {255, 255};
 
-inline void printMove(const Move& m){
+inline void print_move(const Move& m){
     std::cerr << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 }
 #endif

@@ -1,6 +1,6 @@
 #include "hash.h"
 
-int Hash::colorToIndex(Color c){
+int Hash::color_to_index(Color c){
     switch(c){
         case BLACK:
             return 0;
@@ -28,7 +28,7 @@ Hash::Hash() {
     //std::cerr << zobristToPlay << std::endl;
 }
 
-HashValue Hash::baseHash() const{
+HashValue Hash::base_hash() const{
     static HashValue h = 0;
     if(h == 0){
         for(const auto& neutral : globalConfig.neutrals)
@@ -37,25 +37,25 @@ HashValue Hash::baseHash() const{
     return h;
 }
 
-HashValue Hash::computeHash(const Game& game) const{
+HashValue Hash::compute_hash(const Game& game) const{
     HashValue h = 0;
 
-    if(game.getTurn() == WHITE)
+    if(game.get_turn() == WHITE)
         h ^= zobristToPlay;
     for(int i=0; i<rowSize; ++i){
         for(int j=0; j<colSize; ++j){
-            h ^= zobristTable[i][j][colorToIndex(game.getBoard({i, j}))];
+            h ^= zobristTable[i][j][color_to_index(game.get_board({i, j}))];
         }
     }
 
     return h;
 }
 
-HashValue Hash::computeHashAfterMove(const Game& old_game, const std::pair<int, int>& move, const HashValue prevHash) const{
+HashValue Hash::compute_hash_after_move(const Game& oldGame, const std::pair<int, int>& move, const HashValue prevHash) const{
     HashValue h = prevHash;
     h ^= zobristToPlay;
     if(move.first != rowSize){
-        h ^= zobristTable[move.first][move.second][colorToIndex(old_game.getTurn())];
+        h ^= zobristTable[move.first][move.second][color_to_index(oldGame.get_turn())];
     }
 
     return h;
