@@ -58,7 +58,7 @@ namespace {
 		return v;
 	}
 
-	void writeSample(std::ostream& out, const PackedSample& s){
+	void write_sample(std::ostream& out, const PackedSample& s){
 		for(const auto& plane : s.planes){
 			uint64_t words[2] = {0, 0};
 			for(int i = 0; i < boardSize; ++i)
@@ -89,7 +89,7 @@ namespace {
 		put(out, s.type);
 	}
 
-	PackedSample readSample(std::istream& in, uint32_t channels, uint32_t version){
+	PackedSample read_sample(std::istream& in, uint32_t channels, uint32_t version){
 		PackedSample s;
 		s.planes.resize(channels);
 		for(auto& plane : s.planes){
@@ -196,7 +196,7 @@ void ReplayBuffer::unpack(const PackedSample& s, int sym, float* state, float* p
 
 namespace {
 	// name of the first part of data holding a non-finite number, or nullptr if everything is finite.
-	const char* nonFinitePart(const TrainData& data){
+	const char* non_finite_part(const TrainData& data){
 		const auto& [state, policy, result, score, map, type, outcome] = data;
 		const auto finite = [](const std::vector<float>& v){
 			return std::all_of(v.begin(), v.end(), [](float x){ return std::isfinite(x); });
@@ -212,15 +212,15 @@ namespace {
 }
 
 void ReplayBuffer::add(const TrainData& data){
-	if(const char* bad = nonFinitePart(data)){
+	if(const char* bad = non_finite_part(data)){
 		++droppedCount;
 		std::cerr << "replay buffer : dropped a position with a non-finite " << bad << std::endl;
 		return;
 	}
-	addPacked(pack(data)); // packed outside the lock
+	add_packed(pack(data)); // packed outside the lock
 }
 
-void ReplayBuffer::addPacked(PackedSample s){
+void ReplayBuffer::add_packed(PackedSample s){
 	std::lock_guard<std::mutex> lock(mtx);
 	++added;
 	if(samples.size() < capacity){
@@ -233,54 +233,54 @@ void ReplayBuffer::addPacked(PackedSample s){
 	}
 }
 
-size_t ReplayBuffer::windowLocked() const{
+size_t ReplayBuffer::window_locked() const{
 	const size_t grown = static_cast<size_t>(windowFraction * added);
 	return std::min(std::max(minWindow, grown), samples.size());
 }
 
-size_t ReplayBuffer::totalAdded(){
+size_t ReplayBuffer::total_added(){
 	std::lock_guard<std::mutex> lock(mtx);
 	return added;
 }
 
 size_t ReplayBuffer::window(){
 	std::lock_guard<std::mutex> lock(mtx);
-	return windowLocked();
+	return window_locked();
 }
 
-void ReplayBuffer::sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
-	std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch){
+void ReplayBuffer::sample_batch(int B, std::vector<float>& stateBatch, std::vector<float>& nextmoveBatch, std::vector<float>& resultBatch,
+	std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch, std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch){
 	std::lock_guard<std::mutex> lock(mtx);
 	if(samples.empty())
 		throw std::runtime_error("sampling from an empty replay buffer");
 
 	const int channels = samples.front().planes.size();
-	if(state_batch.size() < static_cast<size_t>(B) * channels * inputSize || nextmove_batch.size() < static_cast<size_t>(B) * outputSize
-		|| map_batch.size() < static_cast<size_t>(B) * boardSize || result_batch.size() < static_cast<size_t>(B)
-		|| outcome_batch.size() < static_cast<size_t>(B)
-		|| score_batch.size() < static_cast<size_t>(B) || type_batch.size() < static_cast<size_t>(B))
+	if(stateBatch.size() < static_cast<size_t>(B) * channels * inputSize || nextmoveBatch.size() < static_cast<size_t>(B) * outputSize
+		|| mapBatch.size() < static_cast<size_t>(B) * boardSize || resultBatch.size() < static_cast<size_t>(B)
+		|| outcomeBatch.size() < static_cast<size_t>(B)
+		|| scoreBatch.size() < static_cast<size_t>(B) || typeBatch.size() < static_cast<size_t>(B))
 		throw std::runtime_error("batch arrays are smaller than the requested batch");
 
 	// age 0 is the newest position. Before the buffer is full the newest is at the back, afterwards just before next.
 	const size_t newest = (samples.size() < capacity) ? samples.size() - 1 : (next + capacity - 1) % capacity;
-	std::uniform_int_distribution<size_t> pickAge(0, windowLocked() - 1);
+	std::uniform_int_distribution<size_t> pickAge(0, window_locked() - 1);
 	std::uniform_int_distribution<int> pickSym(0, 7);
 
 	for(int b = 0; b < B; ++b){
 		const PackedSample& s = samples[(newest + samples.size() - pickAge(rng)) % samples.size()];
-		unpack(s, pickSym(rng), state_batch.data() + b * channels * inputSize,
-			nextmove_batch.data() + b * outputSize, map_batch.data() + b * boardSize);
-		result_batch[b] = s.result;
-		outcome_batch[b] = s.outcome;
-		score_batch[b] = s.score;
-		type_batch[b] = s.type;
+		unpack(s, pickSym(rng), stateBatch.data() + b * channels * inputSize,
+			nextmoveBatch.data() + b * outputSize, mapBatch.data() + b * boardSize);
+		resultBatch[b] = s.result;
+		outcomeBatch[b] = s.outcome;
+		scoreBatch[b] = s.score;
+		typeBatch[b] = s.type;
 	}
 }
 
 void ReplayBuffer::save(const std::string& path){
 	std::lock_guard<std::mutex> lock(mtx);
 
-	const std::filesystem::path target(path);
+	const std::filesystem::path target(path + ".bin");
 	if(target.has_parent_path())
 		std::filesystem::create_directories(target.parent_path());
 	const std::string tmp = path + ".tmp";
@@ -301,7 +301,7 @@ void ReplayBuffer::save(const std::string& path){
 		// oldest first. Once the buffer is full, the oldest position is the one next overwrites.
 		const bool full = samples.size() == capacity;
 		for(size_t k = 0; k < samples.size(); ++k)
-			writeSample(out, samples[full ? (next + k) % capacity : k]);
+			write_sample(out, samples[full ? (next + k) % capacity : k]);
 
 		out.close();
 		if(!out)
@@ -310,7 +310,7 @@ void ReplayBuffer::save(const std::string& path){
 	std::filesystem::rename(tmp, target);
 }
 
-std::vector<PackedSample> ReplayBuffer::readFile(const std::string& path, size_t& added){
+std::vector<PackedSample> ReplayBuffer::read_file(const std::string& path, size_t& added){
 	std::ifstream in(path, std::ios::binary);
 	if(!in)
 		throw std::runtime_error("cannot open replay buffer file " + path);
@@ -334,13 +334,13 @@ std::vector<PackedSample> ReplayBuffer::readFile(const std::string& path, size_t
 	std::vector<PackedSample> result;
 	result.reserve(count);
 	for(uint64_t i = 0; i < count; ++i)
-		result.push_back(readSample(in, channels, version));
+		result.push_back(read_sample(in, channels, version));
 	return result;
 }
 
 void ReplayBuffer::load(const std::string& path){
 	size_t fileAdded = 0;
-	std::vector<PackedSample> loaded = readFile(path, fileAdded);
+	std::vector<PackedSample> loaded = read_file(path, fileAdded);
 	if(loaded.size() > capacity) // keep the newest
 		loaded.erase(loaded.begin(), loaded.end() - capacity);
 

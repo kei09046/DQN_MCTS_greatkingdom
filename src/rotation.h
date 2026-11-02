@@ -11,6 +11,6 @@ using OutputMatrix = std::vector<float>;
 template <typename T>
 using Matrix = std::vector<T>;
 
-std::vector<std::shared_ptr<TrainData>> generateDihedralTransformations(const TrainData& data);
+std::vector<std::shared_ptr<TrainData>> generate_dihedral_transformations(const TrainData& data);
 
 #endif

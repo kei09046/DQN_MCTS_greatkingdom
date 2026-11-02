@@ -12,14 +12,14 @@ private:
     HashValue zobristTable[rowSize][colSize][4]; // 4 for BLACK, WHITE, NEUTRAL, EMPTY
     HashValue zobristToPlay; // to encode whose turn it is
 
-    static inline int colorToIndex(Color c);
+    static inline int color_to_index(Color c);
 
 public:
     Hash();
 
-    HashValue baseHash() const;
-    HashValue computeHash(const Game& game) const;
-    HashValue computeHashAfterMove(const Game& game, const std::pair<int, int>& move, const HashValue prevHash) const;
+    HashValue base_hash() const;
+    HashValue compute_hash(const Game& game) const;
+    HashValue compute_hash_after_move(const Game& game, const std::pair<int, int>& move, const HashValue prevHash) const;
 };
 
 #endif

@@ -45,7 +45,7 @@ private:
 
 	static PackedSample pack(const TrainData& data);
 
-	size_t windowLocked() const; // window(), with mtx already held
+	size_t window_locked() const; // window(), with mtx already held
 
 	// writes s, transformed by symmetry sym, into the given rows of the batch arrays.
 	static void unpack(const PackedSample& s, int sym, float* state, float* policy, float* map);
@@ -58,7 +58,7 @@ public:
 
 	size_t dropped() const { return droppedCount.load(); }
 
-	void addPacked(PackedSample s);
+	void add_packed(PackedSample s);
 
 	// writes every stored position, oldest first, to path (directories are created). Atomic: written to path.tmp, then renamed.
 	void save(const std::string& path);
@@ -67,19 +67,19 @@ public:
 	void load(const std::string& path);
 
 	// positions in a file written by save(), oldest first. added : total positions added when it was saved.
-	static std::vector<PackedSample> readFile(const std::string& path, size_t& added);
+	static std::vector<PackedSample> read_file(const std::string& path, size_t& added);
 
 	size_t size() const { return count.load(); }
 
-	size_t totalAdded();
+	size_t total_added();
 
 	// number of newest positions sampleBatch draws from: max(minWindow, windowFraction * totalAdded()), at most size().
 	size_t window();
 
 	// Draws B positions uniformly at random (with replacement) from the window and applies a random symmetry to each.
 	// The batch vectors must already hold at least B rows.
-	void sampleBatch(int B, std::vector<float>& state_batch, std::vector<float>& nextmove_batch, std::vector<float>& result_batch,
-		std::vector<float>& outcome_batch, std::vector<float>& score_batch, std::vector<float>& map_batch, std::vector<Trainhead>& type_batch);
+	void sample_batch(int B, std::vector<float>& stateBatch, std::vector<float>& nextmoveBatch, std::vector<float>& resultBatch,
+		std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch, std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch);
 };
 
 #endif

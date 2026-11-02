@@ -17,18 +17,18 @@ class alignas(64) Node{
 public:
     Node(const Game& g, const HashValue hashValue, TransTable* const transposTable);
 
-    Move selectMove(float temperature, int minVisit);
+    Move select_move(float temperature, int minVisit);
 
     // return move + training target.
-    MoveData selectMoveWithStat(float temperature, int minVisit);
+    MoveData select_move_with_stat(float temperature, int minVisit);
 
     Node* jump(Move move);
 
-    void addDirichletNoise(Evaluator* evaluator);
+    void add_dirichlet_noise(Evaluator* evaluator);
 
-    void deleteTree();
+    void delete_tree();
 
-    void deleteTree(Node* exception);
+    void delete_tree(Node* exception);
 
     inline const Game& game_() const{
         return game;
@@ -39,10 +39,10 @@ private:
     friend class Analysis;
 
     Game game; // includes position, territory, valid moves etc. for heuristic
-    float N, W, initQ, S, Wp; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
+    float N, W, initQ, S, wp; // N : # of visits, W : total action-value Q : mean action-value P : prior evaluation from nn
     float minN; // # of minimum-visit playouts counted in N but not backed up into W/S/Wp (only ever nonzero on root)
     // # of visits W/S/Wp are summed over. Divide by this, not N, to get this node's own Q.
-    inline float valueN() const { return N - minN; }
+    inline float value_n() const { return N - minN; }
     // S : mean score difference Wp : mean win probability
     std::vector<float> edgeP, edgeN; // edge statistics. When transposition table is used, edgeN < childN is possible.
     const Color turn;
@@ -54,37 +54,37 @@ private:
     
     TransTable* const transposTable;
 
-    void addChild(const Move& move, int idx = -1); // add child to the node. Will be added at the end by default.
+    void add_child(const Move& move, int idx = -1); // add child to the node. Will be added at the end by default.
 
     void expand();
 
-    int selectChildInSearch(float fpu);
+    int select_child_in_search(float fpu);
 };
 
 
 class alignas(64) MCTS{
 public:
-    MCTS(Evaluator* evaluator, SearchParams params = globalConfig.searchParams());
+    MCTS(Evaluator* evaluator, SearchParams params = globalConfig.search_params());
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
     // noise : add Dirichlet noise to the root (if enabled in the config).
-    void runSimulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1, const bool fastSearch = false,
+    void run_simulation(const int playMode, const int nPlayout, const int timeLimit, const int minSearchPerChild = -1, const bool fastSearch = false,
     const bool earlyQuit = false);
 
-    Move getMove(float temperature);
+    Move get_move(float temperature);
 
-    MoveData getMoveWithStat(float temperature);
+    MoveData get_move_with_stat(float temperature);
 
     // fast search of playout cap randomization : fastPlayout more playouts, without Dirichlet noise or forced visits.
     // Only moves the game forward; its result isn't a training target.
-    Move getFastMove(float temperature);
+    Move get_fast_move(float temperature);
 
     // pick a move from the current root's search result (no additional search).
-    Move selectMove(float temperature);
+    Move select_move(float temperature);
 
     // getEval returns evaluation from player's perspective, which is opposite from internally stored value.
-    std::pair<float, float> getEval();
+    std::pair<float, float> get_eval();
 
     bool jump(Move move);
 
@@ -92,19 +92,19 @@ public:
     void reset(const Game& startPos);
 
     // exposes the root node's internal game state, for debugging desyncs against an external mirror (e.g. TrainPipeline::game_manager).
-    inline const Game& currentGame() const{
+    inline const Game& current_game() const{
         return root->game_();
     }
 
-    inline int rootForcedState() const{
+    inline int root_forced_state() const{
         return root->forcedState;
     }
 
-    inline int rootVisits() const{
+    inline int root_visits() const{
         return static_cast<int>(root->N);
     }
 
-    inline const SearchParams& searchParams() const{
+    inline const SearchParams& search_params() const{
         return params;
     }
 
@@ -114,7 +114,7 @@ public:
     // comment). Never called for any MCTS instance training touches, so `analysis` stays
     // nullptr there and the hot-path checks below cost nothing more than the old inline bool
     // did. Non-owning: whoever constructs the Analysis (ModelCompare::analyze) still owns it.
-    inline void attachAnalysis(Analysis* a){
+    inline void attach_analysis(Analysis* a){
         analysis = a;
     }
 
@@ -141,9 +141,9 @@ private:
         std::vector<std::vector<Node*>>& updateQueue, std::vector<std::shared_ptr<NNResultBuf>>& resultBuffer, bool& searchStuck,
     const int playMode, const int timeLimit, int forcedFirstSearch = -1);
 
-    void updateEval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
+    void update_eval(const std::shared_ptr<NNResultBuf> buf, const std::vector<Node*> path, Node* cur);
 
-    std::vector<Node*> debugPath(const std::vector<Node*>& path) const;
+    std::vector<Node*> debug_path(const std::vector<Node*>& path) const;
 
     void propagate(const std::vector<Node*>& path, float evalQ, float evalW, float evalS);
 };

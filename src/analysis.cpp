@@ -1,5 +1,6 @@
 #include "analysis.hpp"
 #include <iostream>
+#include <sstream>
 
 // score map and capture map of game's position. Neither is part of the search's evaluation (nor its cache), so both come
 // from one forward pass of their own.
@@ -8,18 +9,18 @@ struct BoardMaps {
     std::vector<float> capture; // probability that the stone on each point is captured; empty without a capture head
 };
 
-static BoardMaps boardMaps(PolicyValueNet* net, const Game& game){
-    NNInput input = PolicyValueNet::getData(game);
+static BoardMaps board_maps(PolicyValueNet* net, const Game& game){
+    NNInput input = PolicyValueNet::get_data(game);
     PolicyValueOutput out = net->evaluate(input);
     BoardMaps maps{std::move(out.scoreMap), {}};
 
-    const auto model = std::dynamic_pointer_cast<Net>(net->policy_value_net);
+    const auto model = std::dynamic_pointer_cast<Net>(net->policyValueNet);
     if(!model || !model->captureHead)
         return maps;
 
     // captureMap holds logits. The head is trained with BCE weight w on captured points, which makes it learn
     // s = w p / (1 - p + w p) instead of p, so p = s / (w - (w - 1) s).
-    const float w = PolicyValueNet::capture_pos_weight;
+    const float w = PolicyValueNet::capturePosWeight;
     maps.capture.resize(boardSize);
     for(int i = 0; i < boardSize; ++i){
         const float s = 1.0f / (1.0f + std::exp(-out.captureMap[i]));
@@ -30,7 +31,45 @@ static BoardMaps boardMaps(PolicyValueNet* net, const Game& game){
 
 // See analysis.hpp for what lives here and why it's split into its own class.
 
-void Analysis::printVariation(MCTS& mcts){
+void Analysis::nn_input_server(){
+    std::string line;
+    while(std::getline(std::cin, line)){
+        std::istringstream iss(line);
+        std::string cmd, id;
+        iss >> cmd;
+        if(cmd == "quit")
+            break;
+        if(cmd != "nninput" || !(iss >> id))
+            continue;
+
+        Game game;
+        bool legal = true;
+        int r, c;
+        while(legal && iss >> r >> c){
+            const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+            if(m == PASSMOVE || game.is_legal(m))
+                game.make_move(m);
+            else
+                legal = false;
+        }
+        if(!legal){
+            std::cout << "nninput " << id << " error" << std::endl;
+            continue;
+        }
+
+        // The available-move list (and everything derived from it) is only filled in by
+        // set_policy_mask(), which search runs on a node's first visit before the net
+        // evaluates it -- apply it here too, to dump exactly what the net sees.
+        game.set_policy_mask();
+        const NNInput input = PolicyValueNet::get_data(game);
+        std::cout << "nninput " << id << " " << input.size() / inputSize;
+        for(float v : input)
+            std::cout << " " << v;
+        std::cout << std::endl;
+    }
+}
+
+void Analysis::print_variation(MCTS& mcts){
     Node* node = mcts.root;
 
     while(node->N > 1){
@@ -39,7 +78,7 @@ void Analysis::printVariation(MCTS& mcts){
         int m;
 
         if(node->forcedState == 0){
-            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+            for(int i=0; i<node->game.get_available_moves().size(); ++i){
                 // if(!globalConfig.transTable)
                 //     assert(node->edgeN[i] == node->child[i]->N);
                 // else
@@ -53,12 +92,12 @@ void Analysis::printVariation(MCTS& mcts){
             if(maxi == -1)
                 break;
 
-            m = node->game.getAvailableMoves()[maxi];
+            m = node->game.get_available_moves()[maxi];
         }
         else if(node->forcedState > 0){
             for(int i=0; i<node->child.size(); ++i){
                 if(node->child[i]->forcedState < 0){
-                    m = node->game.getAvailableMoves()[i];
+                    m = node->game.get_available_moves()[i];
                 }
             }
             // std::cerr << "only move : " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
@@ -66,8 +105,8 @@ void Analysis::printVariation(MCTS& mcts){
             if(node->forcedState == 2)
                 break;
 
-            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
-                if(node->game.getAvailableMoves()[i] == m){
+            for(int i=0; i<node->game.get_available_moves().size(); ++i){
+                if(node->game.get_available_moves()[i] == m){
                     maxi = i;
                     break;
                 }
@@ -78,7 +117,7 @@ void Analysis::printVariation(MCTS& mcts){
             // }
         }
         else{ // losing. Delay losing as much as possible.
-            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+            for(int i=0; i<node->game.get_available_moves().size(); ++i){
                 if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
                     maxv = node->child[i]->forcedState;
                     maxi = i;
@@ -87,7 +126,7 @@ void Analysis::printVariation(MCTS& mcts){
 
             if(maxi == -1)
                 break;
-            m = node->game.getAvailableMoves()[maxi];
+            m = node->game.get_available_moves()[maxi];
         }
 
         int visit = node->edgeN[maxi];
@@ -95,12 +134,12 @@ void Analysis::printVariation(MCTS& mcts){
         if(node == nullptr)
             return;
         std::cout << (int)m / colSize << " " << (int)m % colSize << " " << visit << " forced " << node->forcedState << " Q: " <<
-            node->W/node->valueN() << " initQ : " << node->initQ << " Wp : " << node->Wp/node->valueN()
-            << " S : " << node->S / node->valueN() << std::endl;
+            node->W/node->value_n() << " initQ : " << node->initQ << " Wp : " << node->wp/node->value_n()
+            << " S : " << node->S / node->value_n() << std::endl;
     }
 }
 
-std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
+std::vector<Move> Analysis::follow_up_from(Node* node, int maxDepth){
     std::vector<Move> seq;
 
     while(node != nullptr && node->N > 1 && (int)seq.size() < maxDepth){
@@ -109,7 +148,7 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
         int m;
 
         if(node->forcedState == 0){
-            for(int i=0; i<node->game.getAvailableMoves().size(); ++i){
+            for(int i=0; i<node->game.get_available_moves().size(); ++i){
                 if(node->edgeN[i] > maxv){
                     maxv = node->edgeN[i];
                     maxi = i;
@@ -117,7 +156,7 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
             }
             if(maxi == -1)
                 break;
-            m = node->game.getAvailableMoves()[maxi];
+            m = node->game.get_available_moves()[maxi];
         }
         else if(node->forcedState > 0){
             // A node's forcedState can be set at birth (Node::addChild, when the move that
@@ -127,11 +166,11 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
             // the smaller of the two so we never index past either array; an empty/partial
             // child list just means no continuation to show, which the maxi==-1 check below
             // already handles gracefully.
-            int limit = (int)node->child.size() < (int)node->game.getAvailableMoves().size()
-                ? (int)node->child.size() : (int)node->game.getAvailableMoves().size();
+            int limit = (int)node->child.size() < (int)node->game.get_available_moves().size()
+                ? (int)node->child.size() : (int)node->game.get_available_moves().size();
             for(int i=0; i<limit; ++i){
                 if(node->child[i] != nullptr && node->child[i]->forcedState < 0){
-                    m = node->game.getAvailableMoves()[i];
+                    m = node->game.get_available_moves()[i];
                     maxi = i;
                     break;
                 }
@@ -140,8 +179,8 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
                 break;
         }
         else{ // losing. Delay losing as much as possible.
-            int limit = (int)node->child.size() < (int)node->game.getAvailableMoves().size()
-                ? (int)node->child.size() : (int)node->game.getAvailableMoves().size();
+            int limit = (int)node->child.size() < (int)node->game.get_available_moves().size()
+                ? (int)node->child.size() : (int)node->game.get_available_moves().size();
             for(int i=0; i<limit; ++i){
                 if((node->child[i] != nullptr) && node->child[i]->forcedState > maxv){
                     maxv = node->child[i]->forcedState;
@@ -150,7 +189,7 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
             }
             if(maxi == -1)
                 break;
-            m = node->game.getAvailableMoves()[maxi];
+            m = node->game.get_available_moves()[maxi];
         }
 
         seq.push_back({static_cast<uint8_t>(m / colSize), static_cast<uint8_t>(m % colSize)});
@@ -160,13 +199,13 @@ std::vector<Move> Analysis::followUpFrom(Node* node, int maxDepth){
     return seq;
 }
 
-void Analysis::printPlayoutDebugLine(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState){
+void Analysis::print_playout_debug_line(const std::vector<Node*>& path, float winP, float scoreEXP, int forcedState){
     std::cout << "playout forced " << forcedState << " winp " << winP << " score " << scoreEXP << " path";
     for(size_t i=0; i+1<path.size(); ++i){
         const std::vector<Node*>& child = path[i]->child;
         for(size_t a=0; a<child.size(); ++a){
             if(child[a] == path[i+1]){
-                int m = path[i]->game.getAvailableMoves()[a];
+                int m = path[i]->game.get_available_moves()[a];
                 std::cout << " " << (m / colSize) << " " << (m % colSize);
                 break;
             }
@@ -175,7 +214,7 @@ void Analysis::printPlayoutDebugLine(const std::vector<Node*>& path, float winP,
     std::cout << std::endl;
 }
 
-void Analysis::printAnalysis(MCTS& mcts){
+void Analysis::print_analysis(MCTS& mcts){
     Node* root = mcts.root;
 
     std::cout << "analysis begin" << std::endl;
@@ -193,7 +232,7 @@ void Analysis::printAnalysis(MCTS& mcts){
         // the *highest* unnegated value, not the lowest), root's own line needs the negation to
         // land on the same scale: "root winrate" ends up the weighted average of the move winrates
         // printed below, rather than their complement.
-        std::cout << "winrate : " << (-root->Wp / root->valueN()) << std::endl;
+        std::cout << "winrate : " << (-root->wp / root->value_n()) << std::endl;
     else
         std::cout << "winrate : 0" << std::endl;
     std::cout << "visits : " << root->N << std::endl;
@@ -214,7 +253,7 @@ void Analysis::printAnalysis(MCTS& mcts){
     // (always just the network's untouched one-shot guess at the current position), this one moves
     // as search deepens, so together the pair mirrors initQ/winrate for the score head.
     if(root->N > 0)
-        std::cout << "scoreSearch : " << (-root->S / root->valueN()) << std::endl;
+        std::cout << "scoreSearch : " << (-root->S / root->value_n()) << std::endl;
     else
         std::cout << "scoreSearch : 0" << std::endl;
 
@@ -232,7 +271,7 @@ void Analysis::printAnalysis(MCTS& mcts){
         mcts.evaluator->evaluate(buf, &root->game, root->hashValue);
         std::cout << "scoreExp : " << buf->result->S << std::endl;
 
-        const BoardMaps maps = boardMaps(mcts.evaluator->model(), root->game);
+        const BoardMaps maps = board_maps(mcts.evaluator->model(), root->game);
         std::cout << "scoreMap :";
         for(float v : maps.score) std::cout << " " << v;
         std::cout << std::endl;
@@ -247,7 +286,7 @@ void Analysis::printAnalysis(MCTS& mcts){
 
     // per-move breakdown is only meaningful once the root has been expanded with real moves.
     if(root->forcedState == 0){
-        const auto& moves = root->game.getAvailableMoves();
+        const auto& moves = root->game.get_available_moves();
         for(int i=0; i<moves.size(); ++i){
             int r = moves[i] / colSize;
             int c = moves[i] % colSize;
@@ -267,7 +306,7 @@ void Analysis::printAnalysis(MCTS& mcts){
             int childForced = (i < root->child.size() && root->child[i] != nullptr)
                                    ? root->child[i]->forcedState : 0;
             if(i < root->child.size() && root->child[i] != nullptr && root->child[i]->N > 0){
-                winrate = root->child[i]->Wp / root->child[i]->N;
+                winrate = root->child[i]->wp / root->child[i]->N;
                 q = root->child[i]->W / root->child[i]->N; // blended utility actually used for PUCT selection
             }
 
@@ -279,7 +318,7 @@ void Analysis::printAnalysis(MCTS& mcts){
                        << " forced " << childForced
                        << " variation";
             if(i < root->child.size() && root->child[i] != nullptr){
-                for(const Move& fm : followUpFrom(root->child[i], 6)){
+                for(const Move& fm : follow_up_from(root->child[i], 6)){
                     std::cout << " " << (int)fm.first << " " << (int)fm.second;
                 }
             }
@@ -293,7 +332,7 @@ void Analysis::printAnalysis(MCTS& mcts){
     // (a child already proven losing for the opponent when winning, or the least-bad delaying
     // child when losing), then print it as the lone "move" line with its own variation tail.
     else{
-        const auto& moves = root->game.getAvailableMoves();
+        const auto& moves = root->game.get_available_moves();
         int limit = (int)root->child.size() < (int)moves.size() ? (int)root->child.size() : (int)moves.size();
         int maxi = -1;
         int maxv = -1;
@@ -342,7 +381,7 @@ void Analysis::printAnalysis(MCTS& mcts){
                        << " q " << q
                        << " forced " << childForced
                        << " variation";
-            for(const Move& fm : followUpFrom(chosen, 6)){
+            for(const Move& fm : follow_up_from(chosen, 6)){
                 std::cout << " " << (int)fm.first << " " << (int)fm.second;
             }
             std::cout << std::endl;
@@ -351,8 +390,8 @@ void Analysis::printAnalysis(MCTS& mcts){
         // root forced-won without ever creating the winning child, so the search above finds
         // nothing -- same case Node::selectMove handles via getWin(). Without this line the GUI
         // gets an empty move list for a won position and its auto-play has nothing to play.
-        else if(root->forcedState > 0 && root->game.getWin() != RESIGNMOVE){
-            Move win = root->game.getWin();
+        else if(root->forcedState > 0 && root->game.get_win() != RESIGNMOVE){
+            Move win = root->game.get_win();
             std::cout << "move " << (int)win.first << " " << (int)win.second
                        << " visits 0 prior 0 winrate 1 q 1 forced -1 variation" << std::endl;
         }

@@ -8,8 +8,8 @@ namespace rnd {
 		std::iota(indices.begin(), indices.end(), 0);
 		std::shuffle(indices.begin(), indices.end(), gen);
 
-		std::vector<int> selected_cols(indices.begin(), indices.begin() + many);
-		return selected_cols;
+		std::vector<int> selectedCols(indices.begin(), indices.begin() + many);
+		return selectedCols;
 	}
 
 	int pick0or1(float zeroProb){

@@ -47,7 +47,7 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 23,
+    "inputChannel": 25,
     "numHiddenBlock": 10
   },
 
@@ -63,7 +63,7 @@
     "compare_thread_num": 12,
     "search_thread_num": 4,
     "train_wait_time": 50000,
-    "save_freq": 96,
+    "synchronize_freq": 96,
     "capacity": 10000,
     "trainStartPoint": 20000,
     "windowFraction": 0.25,

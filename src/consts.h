@@ -48,6 +48,8 @@ constexpr uint8_t WSCORE = 128U;
 constexpr uint8_t BOARDMASK = EMPTY | BLACK | NEUTRAL | WHITE;
 constexpr uint8_t SCOREMASK = BSCORE | WSCORE;
 
+constexpr uint8_t BASEGROUPID = 255U;
+
 constexpr Trainhead POLICYHEAD = 1U;
 constexpr Trainhead VALUEHEAD = 2U;
 constexpr Trainhead SCOREHEAD = 4U;
@@ -59,7 +61,7 @@ constexpr Trainhead ALL = 255U;
 constexpr Move PASSMOVE = {rowSize, 0};
 constexpr Move RESIGNMOVE = {255, 255};
 
-inline void printMove(const Move& m){
+inline void print_move(const Move& m){
     std::cerr << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 }
 #endif

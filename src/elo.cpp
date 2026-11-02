@@ -1,85 +1,85 @@
 #include "elo.h"
 
-EloCalculator::EloCalculator(const std::string& model_path, const std::vector<std::string>& model_names, bool load_from_file, bool adjust_K): 
-model_names(model_names), adjust_K(adjust_K)
+EloCalculator::EloCalculator(const std::string& modelPath, const std::vector<std::string>& modelNames, bool loadFromFile, bool adjustK): 
+modelNames(modelNames), adjustK(adjustK)
 {
-    if(!load_from_file){
-        for(auto& name : model_names){
+    if(!loadFromFile){
+        for(auto& name : modelNames){
             ratings.push_back(globalConfig.initRating);
-            game_counts.push_back(0);
+            gameCounts.push_back(0);
         }
         return;
     }
 
-    std::unordered_map<std::string, std::pair<float, int>> loaded_models;
-    for(auto& name : model_names){
-        loaded_models[name] = {globalConfig.initRating, 0};
+    std::unordered_map<std::string, std::pair<float, int>> loadedModels;
+    for(auto& name : modelNames){
+        loadedModels[name] = {globalConfig.initRating, 0};
     }
 
-    std::ifstream file(model_path);
+    std::ifstream file(modelPath);
     if(file){
         std::string name;
         float rating;
         int games;
         while(file >> name >> rating >> games){
-            auto it = loaded_models.find(name);
-            if(it != loaded_models.end()){
+            auto it = loadedModels.find(name);
+            if(it != loadedModels.end()){
                 it->second = {rating, games};
             }
         }
     }
 
-    for(auto& name : model_names){
-        ratings.push_back(loaded_models[name].first);
-        game_counts.push_back(loaded_models[name].second);
+    for(auto& name : modelNames){
+        ratings.push_back(loadedModels[name].first);
+        gameCounts.push_back(loadedModels[name].second);
     }
 }
 
-void EloCalculator::UpdateRatings(int player_a, int player_b, const std::vector<bool>& result) { // result : true -> player_a win, false -> player_b win
-    float rating_a = ratings[player_a];
-    float rating_b = ratings[player_b];
+void EloCalculator::update_ratings(int playerA, int playerB, const std::vector<bool>& result) { // result : true -> player_a win, false -> player_b win
+    float ratingA = ratings[playerA];
+    float ratingB = ratings[playerB];
 
     // tried to decrease rating variance as model plays more games, but this seems to be inappropriate.
     // float a_K = globalConfig.initK / (1.0f + game_counts[player_a] / 30.0f);
     // float b_K = globalConfig.initK / (1.0f + game_counts[player_b] / 30.0f);
 
-    float a_K = globalConfig.initK;
-    float b_K = globalConfig.initK;
+    float aK = globalConfig.initK;
+    float bK = globalConfig.initK;
 
     for (bool win : result) {
-        float ea = 1.0f / (1.0f + pow(10.0f, (rating_b - rating_a) / 400.0f));
+        float ea = 1.0f / (1.0f + pow(10.0f, (ratingB - ratingA) / 400.0f));
         float sa = (win ? 1.0f : 0.0f);
         float sb = 1.0f - sa;
-        ratings[player_a] += a_K * (sa - ea);
-        ratings[player_b] += b_K * (sb - (1.0 - ea));
+        ratings[playerA] += aK * (sa - ea);
+        ratings[playerB] += bK * (sb - (1.0 - ea));
     }
-    game_counts[player_a] += result.size();
-    game_counts[player_b] += result.size();
+    gameCounts[playerA] += result.size();
+    gameCounts[playerB] += result.size();
 }
 
-std::vector<float> EloCalculator::GetRatings(bool adjust){
+std::vector<float> EloCalculator::get_ratings(bool adjust){
     if (!adjust) {
         return ratings;
     }
 
-    float min_rating = *std::min_element(ratings.begin(), ratings.end());
+    float minRating = *std::min_element(ratings.begin(), ratings.end());
     for(int i = 0; i < ratings.size(); ++i){
-        ratings[i] -= min_rating;
+        ratings[i] -= minRating;
     }
 
     return ratings;
 }
 
-void EloCalculator::saveRating(const std::string& model_path, const std::vector<std::string>& model_names) {
+void EloCalculator::save_rating(const std::string& modelPath, const std::vector<std::string>& modelNames) {
     // TODO : update the file
-    std::unordered_map<std::string, std::pair<float, int>> updated_ratings;
+    std::unordered_map<std::string, std::pair<float, int>> updatedRatings;
     std::unordered_map<std::string, bool> updated;
-    std::ifstream file(model_path);
+    std::ifstream file(modelPath);
     std::vector<std::string> lines;
     
 
-    for(int i=0; i<model_names.size(); ++i){
-        updated_ratings[model_names[i]] = {ratings[i], game_counts[i]};
+    for(int i=0; i<modelNames.size(); ++i){
+        updatedRatings[modelNames[i]] = {ratings[i], gameCounts[i]};
     }
 
     if(file){
@@ -89,9 +89,9 @@ void EloCalculator::saveRating(const std::string& model_path, const std::vector<
             std::string name;
             if(!(iss >> name)) continue;
 
-            if(updated_ratings.count(name) != 0){
+            if(updatedRatings.count(name) != 0){
                 std::ostringstream oss;
-                oss << name << " " << updated_ratings[name].first << " " << updated_ratings[name].second;
+                oss << name << " " << updatedRatings[name].first << " " << updatedRatings[name].second;
                 lines.push_back(oss.str());
                 updated[name] = true;
             }
@@ -101,7 +101,7 @@ void EloCalculator::saveRating(const std::string& model_path, const std::vector<
         }
     }
 
-    for(const auto& [name, rating_pair] : updated_ratings){
+    for(const auto& [name, rating_pair] : updatedRatings){
         if(updated.count(name) == 0){
             std::ostringstream oss;
             oss << name << " " << rating_pair.first << " " << rating_pair.second;
@@ -109,13 +109,13 @@ void EloCalculator::saveRating(const std::string& model_path, const std::vector<
         }
     }
 
-    std::ofstream fout(model_path, std::ios::trunc);
+    std::ofstream fout(modelPath, std::ios::trunc);
     for(const auto& line : lines){
         fout << line << "\n";
     }
 }
 
-std::vector<float> EloCalculator::calculateRating(const std::vector<std::vector<float>> winrate){
+std::vector<float> EloCalculator::calculate_rating(const std::vector<std::vector<float>> winrate){
     int n = winrate.size();
     std::vector<float> R(n, 0.0f); // initial ratings
 

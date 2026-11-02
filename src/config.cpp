@@ -4,7 +4,7 @@
 #include "nlohmann/json.hpp"
 
 
-Config loadConfig(const std::string& path) {
+Config load_config(const std::string& path) {
     using json = nlohmann::json;
 
     std::ifstream f(path);
@@ -79,12 +79,12 @@ Config loadConfig(const std::string& path) {
     // train
     auto& T = j.at("train");
     c.epochs             = T.at("epochs");
-    c.check_freq         = T.at("check_freq");
-    c.compare_game_cnt   = T.at("compare_game_cnt");
-    c.compare_thread_num = T.at("compare_thread_num");
-    c.search_thread_num  = T.at("search_thread_num");
-    c.train_wait_time    = T.at("train_wait_time");
-    c.save_freq          = T.at("save_freq");
+    c.checkFreq         = T.at("check_freq");
+    c.compareGameCnt   = T.at("compare_game_cnt");
+    c.compareThreadNum = T.at("compare_thread_num");
+    c.searchThreadNum  = T.at("search_thread_num");
+    c.trainWaitTime    = T.at("train_wait_time");
+    c.synchronizeFreq          = T.at("synchronize_freq");
     c.capacity           = T.at("capacity");
     c.trainStartPoint    = T.at("trainStartPoint");
     if(c.trainStartPoint < c.batchSize)

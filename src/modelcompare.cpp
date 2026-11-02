@@ -9,39 +9,39 @@
 
 namespace{
 	// search params of idx-th engine; global config values if not given.
-	SearchParams paramsOf(const std::vector<SearchParams>& params, int idx){
-		return (idx < static_cast<int>(params.size())) ? params[idx] : globalConfig.searchParams();
+	SearchParams params_of(const std::vector<SearchParams>& params, int idx){
+		return (idx < static_cast<int>(params.size())) ? params[idx] : globalConfig.search_params();
 	}
 }
 
 
-float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& part_res, bool is_shown, float temp) { // black wins : 1.0f, white wins : 0.0f
+float ModelCompare::start_play(std::array<MCTS*, 2> playerList, std::ostream& partRes, bool isShown, float temp) { // black wins : 1.0f, white wins : 0.0f
 	// if(is_shown)
 	// 	std::cout << "start play" << std::endl;
 	//std::cerr << "start play" << std::endl;
-	Game game_manager = Game();
+	Game gameManager = Game();
 	int diff, idx = 0;
 	Move move;
     Color res;
 	std::vector<Move> seq;
 
 	while (true) {
-		move = player_list[idx]->getMove(temp);
-		if(is_shown){
+		move = playerList[idx]->get_move(temp);
+		if(isShown){
 			std::cout << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
 		}
 		seq.push_back(move);
-        res = game_manager.makeMove(move).first;
+        res = gameManager.make_move(move).first;
 
 		if (res == EMPTY) {
-            player_list[0]->jump(move);
-            player_list[1]->jump(move);
+            playerList[0]->jump(move);
+            playerList[1]->jump(move);
 			idx = 1 - idx;
 			continue;
 		}
 		
-        player_list[0]->reset(Game());
-        player_list[1]->reset(Game());
+        playerList[0]->reset(Game());
+        playerList[1]->reset(Game());
 		//std::cerr << std::endl;
 
 		// if (is_shown) {
@@ -49,14 +49,14 @@ float ModelCompare::start_play(std::array<MCTS*, 2> player_list, std::ostream& p
 		// 		part_res << static_cast<int>(moves.first) << static_cast<int>(moves.second) << " ";
 		// }
 
-        if(is_shown)
-            part_res << static_cast<int>(res) << "\n";
+        if(isShown)
+            partRes << static_cast<int>(res) << "\n";
         return res == BLACK ? 1.0f : 0.0f;
 	}
 }
 
 void ModelCompare::play(const std::string& model, Color side, float temp, bool gpu, bool shown) {
-	Game game_manager = Game();
+	Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
 
@@ -64,30 +64,30 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 	Color res;
 
 	while (true) {
-		if (side == game_manager.getTurn()) {
+		if (side == gameManager.get_turn()) {
 			int r, c;
 			std::cin >> r >> c;
 			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 		}
 		else {
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-			cord = player.getMove(temp);
+			cord = player.get_move(temp);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "move : " << static_cast<int>(cord.first) << " " << static_cast<int>(cord.second) << std::endl;
 			std::cout << "move time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		if(cord == PASSMOVE || game_manager.isLegal(cord)){
-			res = game_manager.makeMove(cord).first;
+		if(cord == PASSMOVE || gameManager.is_legal(cord)){
+			res = gameManager.make_move(cord).first;
 			//game_manager.displayBoardGUI(true);
 			if (res != EMPTY) {
-				game_manager.onGameEnd(res);
+				gameManager.on_game_end(res);
 				break;
 			}
 			player.jump(cord);
 		}
 
-		game_manager.displayBoardGUI(false);
+		gameManager.display_board_gui(false);
 	}
 
 	delete evaluator;
@@ -104,14 +104,14 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 	// read, so poll() always sees exactly what's actually still unconsumed.
 	setvbuf(stdin, nullptr, _IONBF, 0);
 
-	Game game_manager = Game();
+	Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator, params);
 	// Owns debug-mode state and the printAnalysis/printVariation implementations (see
 	// analysis.hpp) -- attach it so player's own hot path (playout()/updateEval()) can reach it
 	// for debug-line streaming too, per MCTS::attachAnalysis's own comment.
 	Analysis analysis;
-	player.attachAnalysis(&analysis);
+	player.attach_analysis(&analysis);
 
 	std::cout << "search params : FPU " << params.fpu << " minVisitRatio " << params.minVisitRatio << std::endl;
 	std::cout << "analysis ready" << std::endl;
@@ -126,7 +126,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			break;
 		}
 		else if (cmd == "reset") {
-			game_manager = Game();
+			gameManager = Game();
 			player.reset(Game());
 			std::cout << "reset ok" << std::endl;
 		}
@@ -135,8 +135,8 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			iss >> r >> c;
 			Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
-			if (m == PASSMOVE || game_manager.isLegal(m)) {
-				Color res = game_manager.makeMove(m).first;
+			if (m == PASSMOVE || gameManager.is_legal(m)) {
+				Color res = gameManager.make_move(m).first;
 				player.jump(m);
 				std::cout << "play ok" << std::endl;
 				if (res != EMPTY) {
@@ -164,14 +164,14 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 			bool ranAny = false;
-			while (player.rootVisits() < targetVisits && player.rootForcedState() == 0) {
-				int remaining = targetVisits - player.rootVisits();
+			while (player.root_visits() < targetVisits && player.root_forced_state() == 0) {
+				int remaining = targetVisits - player.root_visits();
 				int n = std::min(chunk, remaining);
 				// minVisitRatio of this call's own playout budget, same ratio MCTS::getMove uses
 				// -- e.g. n == chunk == 400 with minVisitRatio 0.005 gives 2 forced playouts
 				// per child every chunk.
-				player.runSimulation(PLAYOUT, n, 0, player.searchParams().minVisits(n));
-				analysis.printAnalysis(player);
+				player.run_simulation(PLAYOUT, n, 0, player.search_params().min_visits(n));
+				analysis.print_analysis(player);
 				ranAny = true;
 
 				// Let a queued command (e.g. "pause") interrupt a long-running search: peek
@@ -182,7 +182,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 					break;
 			}
 			if (!ranAny)
-				analysis.printAnalysis(player);
+				analysis.print_analysis(player);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "analyze time : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
@@ -192,7 +192,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			// the caller sends "play" afterwards. Pass is printed as "<rowSize> 0", resign as "255 255".
 			float temp = globalConfig.temp;
 			iss >> temp;
-			Move m = player.selectMove(temp);
+			Move m = player.select_move(temp);
 			std::cout << "selected " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 		}
 		else if (cmd == "pause") {
@@ -208,8 +208,8 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			// stream.
 			std::string state;
 			iss >> state;
-			analysis.setDebugMode(state == "on");
-			std::cout << "debug " << (analysis.getDebugMode() ? "on" : "off") << std::endl;
+			analysis.set_debug_mode(state == "on");
+			std::cout << "debug " << (analysis.get_debug_mode() ? "on" : "off") << std::endl;
 		}
 		else {
 			std::cout << "unknown command" << std::endl;
@@ -220,8 +220,8 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 	return;
 }
 
-void ModelCompare::playWeb(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
-	Game game_manager = Game();
+void ModelCompare::play_web(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
+	Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
 
@@ -230,23 +230,23 @@ void ModelCompare::playWeb(const std::string& model, const Color humanColor, int
 
 	std::cout << "model loaded" << std::endl;
 	while (true) {
-		if (game_manager.getTurn() == humanColor) { // human turn
+		if (gameManager.get_turn() == humanColor) { // human turn
 			int r, c;
 			std::cin >> r >> c;
 			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 		}
 		else { // engine turn
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-			cord = player.getMove(temp);
+			cord = player.get_move(temp);
 			std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 			std::cout << "move: " << (int)cord.first << " " << (int)cord.second << std::endl;
 			std::cout << "move time: " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]" << std::endl;
 		}
 
-		if(game_manager.isLegal(cord)){
-			res = game_manager.makeMove(cord).first;
+		if(gameManager.is_legal(cord)){
+			res = gameManager.make_move(cord).first;
 			if (res != EMPTY) {
-				game_manager.onGameEnd(res);
+				gameManager.on_game_end(res);
 				break;
 			}
 			player.jump(cord);
@@ -257,8 +257,8 @@ void ModelCompare::playWeb(const std::string& model, const Color humanColor, int
 	return;
 }
 
-void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
-    Game game_manager = Game();
+void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
+    Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
 	Move cord;
@@ -268,14 +268,14 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 	std::mutex evalMutex;	
 	std::condition_variable evalcv;
 
-	std::thread eval_thread([&](){
+	std::thread evalThread([&](){
 		std::unique_lock<std::mutex> lk(evalMutex);
         evalcv.wait(lk, [&]{ return evaluating == true; });
 
 		lk.unlock();
 		while (evaluating) {
-			player.runSimulation(PLAYOUT, 400, 0);
-			float eval = player.getEval().first;
+			player.run_simulation(PLAYOUT, 400, 0);
+			float eval = player.get_eval().first;
 			ok(std::to_string(eval));
 		}
 		lk.lock();
@@ -298,8 +298,8 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
         ok("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
         else if (cmd == "boardsize") ok(std::to_string(boardSize));
         else if (cmd == "clear_board") {
-            game_manager = Game();
-            player.reset(game_manager);
+            gameManager = Game();
+            player.reset(gameManager);
             ok();
         }
 		else if(cmd == "evaluate"){
@@ -307,13 +307,13 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
 			evalcv.notify_one();
 		}
         else if (cmd == "play"){ 
-			res = cmd_play(iss, game_manager, player);
+			res = cmd_play(iss, gameManager, player);
 			if(res != EMPTY)
 				std::cerr << "Game Over! Winner is : " << ((res == BLACK) ? "BLACK" : "WHITE") << std::endl;
 		}
         else if (cmd == "genmove") {
 			if(res == EMPTY)
-				cmd_genmove(iss, game_manager, player, temp);
+				cmd_genmove(iss, gameManager, player, temp);
 			else
 				ok("resign");
 		}
@@ -325,10 +325,10 @@ void ModelCompare::playGTP(const std::string& model, float temp, bool gpu) {
     return;
 }
 
-void ModelCompare::playHuman() {
-	Game game_manager = Game();
+void ModelCompare::play_human() {
+	Game gameManager = Game();
 	Game experiment = Game();
-	experiment.setPolicyMask();
+	experiment.set_policy_mask();
 	Move cord;
 	Color res;
 	while (true) {
@@ -336,8 +336,8 @@ void ModelCompare::playHuman() {
 		std::cin >> r >> c;
 		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
 
-		res = game_manager.makeMove(cord).first;
-		game_manager.displayBoardGUI(true);
+		res = gameManager.make_move(cord).first;
+		gameManager.display_board_gui(true);
 		std::cout << std::endl;
 
 		// auto [onlymove, forcedState] = experiment.tacticCheck();
@@ -345,8 +345,8 @@ void ModelCompare::playHuman() {
 		// 	std::cout << "threat detected! " << static_cast<int>(onlymove.first) 
 		// 	<< " " << static_cast<int>(onlymove.second) << std::endl;
 		// }
-		const auto& moves = experiment.getAvailableMoves();
-		const auto& transTable = experiment.getTransferTable();
+		const auto& moves = experiment.get_available_moves();
+		const auto& transTable = experiment.get_transfer_table();
 		
 		int idx;
 		for(idx = 0; idx < moves.size(); ++idx)
@@ -359,13 +359,13 @@ void ModelCompare::playHuman() {
 			std::cout << m << " ";
 		std::cout << std::endl;
 		 
-		experiment.makeMoveGivenScore(cord);
-		experiment.setPolicyMask();
-		experiment.displayBoardGUI(true);
+		experiment.make_move_given_score(cord);
+		experiment.set_policy_mask();
+		experiment.display_board_gui(true);
 		std::cout << std::endl;
 
 		if (res != EMPTY) {
-			game_manager.onGameEnd(res);
+			gameManager.on_game_end(res);
 			break;
 		}
 	}
@@ -373,86 +373,86 @@ void ModelCompare::playHuman() {
 	return;
 }
 
-std::vector<bool> ModelCompare::play_match(MCTS* player_one, MCTS* player_two,
-		std::ostream& total_res, bool is_shown, float temp, int n_games) {
+std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo,
+		std::ostream& totalRes, bool isShown, float temp, int nGames) {
 
-	std::vector<bool> result(n_games << 1);
-	for (int i = 0; i < n_games; ++i) {
+	std::vector<bool> result(nGames << 1);
+	for (int i = 0; i < nGames; ++i) {
 		//player_one plays as black
-		result[i] = static_cast<bool>(ModelCompare::start_play({ player_one, player_two }, total_res, is_shown, temp));
+		result[i] = static_cast<bool>(ModelCompare::start_play({ playerOne, playerTwo }, totalRes, isShown, temp));
 	}
 
-	for (int i = n_games; i < (n_games << 1); ++i) {
-		result[i] = !static_cast<bool>(ModelCompare::start_play({ player_two, player_one }, total_res, is_shown, temp));
+	for (int i = nGames; i < (nGames << 1); ++i) {
+		result[i] = !static_cast<bool>(ModelCompare::start_play({ playerTwo, playerOne }, totalRes, isShown, temp));
 	}
 	return result;
 }
 
-float ModelCompare::policy_evaluate(const std::string& mod_one, const std::string& mod_two, std::ostream& total_res, std::ostream& part_res, bool is_shown,
-	bool gpu, float temp, int n_games, int n_thread, const std::vector<SearchParams>& params) {
-	auto eo = new Evaluator(globalConfig.modelPath + mod_one, gpu);
-	auto et = new Evaluator(globalConfig.modelPath + mod_two, gpu);
-	std::vector<MCTS*> base_players, oppo_players;
+float ModelCompare::policy_evaluate(const std::string& modOne, const std::string& modTwo, std::ostream& totalRes, std::ostream& partRes, bool isShown,
+	bool gpu, float temp, int nGames, int nThread, const std::vector<SearchParams>& params) {
+	auto eo = new Evaluator(globalConfig.modelPath + modOne, gpu);
+	auto et = new Evaluator(globalConfig.modelPath + modTwo, gpu);
+	std::vector<MCTS*> basePlayers, oppoPlayers;
 
-	for(int i=0; i<n_thread; ++i){
-		base_players.push_back(new MCTS(eo, paramsOf(params, 0)));
-		oppo_players.push_back(new MCTS(et, paramsOf(params, 1)));
+	for(int i=0; i<nThread; ++i){
+		basePlayers.push_back(new MCTS(eo, params_of(params, 0)));
+		oppoPlayers.push_back(new MCTS(et, params_of(params, 1)));
 	}
 
-	std::vector<std::thread> evaluate_threads;
-	std::atomic<int> total_win = 0;
-	for(int i=0; i<n_thread; ++i){
-		evaluate_threads.emplace_back([&, i]{
-			std::vector<bool> b = play_match(base_players[i], oppo_players[i], total_res, (i == 0) && is_shown, temp, n_games / n_thread);
-			total_win += std::count(b.begin(), b.end(), true);
+	std::vector<std::thread> evaluateThreads;
+	std::atomic<int> totalWin = 0;
+	for(int i=0; i<nThread; ++i){
+		evaluateThreads.emplace_back([&, i]{
+			std::vector<bool> b = play_match(basePlayers[i], oppoPlayers[i], totalRes, (i == 0) && isShown, temp, nGames / nThread);
+			totalWin += std::count(b.begin(), b.end(), true);
 		}
 		);
 	}
-	for(auto& th : evaluate_threads){
+	for(auto& th : evaluateThreads){
 		th.join();
 	}
 
-	for(int i=0; i<n_thread; ++i){
-		delete base_players[i];
-		delete oppo_players[i];
+	for(int i=0; i<nThread; ++i){
+		delete basePlayers[i];
+		delete oppoPlayers[i];
 	}
 	delete eo;
 	delete et;
-	total_res << "win count : " << total_win << std::endl;
-	return total_win / static_cast<float>(n_games << 1);
+	totalRes << "win count : " << totalWin << std::endl;
+	return totalWin / static_cast<float>(nGames << 1);
 }
 
-std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_list,
-	std::ostream& total_res, bool is_shown, bool gpu, float temp, int n_games, const std::vector<SearchParams>& params) {
-	int N = model_list.size();
+std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelList,
+	std::ostream& totalRes, bool isShown, bool gpu, float temp, int nGames, const std::vector<SearchParams>& params) {
+	int N = modelList.size();
 	std::vector<MCTS*> players(N);
 	std::vector<Evaluator*> evaluators(N);
 
 	for (int i = 0; i < N; ++i) {
-		evaluators[i] = new Evaluator(globalConfig.modelPath + model_list[i], gpu);
-		players[i] = new MCTS(evaluators[i], paramsOf(params, i));
+		evaluators[i] = new Evaluator(globalConfig.modelPath + modelList[i], gpu);
+		players[i] = new MCTS(evaluators[i], params_of(params, i));
 	}
 
-	bool load_from_file = false;
-	EloCalculator elo_calculator(globalConfig.modelPath + "ratings.txt", model_list, load_from_file);
+	bool loadFromFile = false;
+	EloCalculator eloCalculator(globalConfig.modelPath + "ratings.txt", modelList, loadFromFile);
 
 	for(int i=1; i<N; ++i){
 		for(int j=0; j<N-i; ++j){
-			std::vector<bool> b = play_match(players[j], players[j+i], total_res, is_shown, temp, n_games);
-			elo_calculator.UpdateRatings(j, j+i, b);
+			std::vector<bool> b = play_match(players[j], players[j+i], totalRes, isShown, temp, nGames);
+			eloCalculator.update_ratings(j, j+i, b);
 			
-			int win_cnt = std::count(b.begin(), b.end(), true);
-			total_res << "Model " << model_list[j] << " VS Model " << model_list[j+i] << " : " 
-				<< win_cnt << "/" << (n_games << 1) << " (" << (win_cnt * 100.0f / (n_games << 1)) << "%)" << std::endl;
+			int winCnt = std::count(b.begin(), b.end(), true);
+			totalRes << "Model " << modelList[j] << " VS Model " << modelList[j+i] << " : " 
+				<< winCnt << "/" << (nGames << 1) << " (" << (winCnt * 100.0f / (nGames << 1)) << "%)" << std::endl;
 		}
 	}
 
-	if(load_from_file){
-		elo_calculator.saveRating(globalConfig.modelPath + "ratings.txt", model_list);
+	if(loadFromFile){
+		eloCalculator.save_rating(globalConfig.modelPath + "ratings.txt", modelList);
 	}
-	std::vector<float> ratings = elo_calculator.GetRatings(/*adjust=*/false);
+	std::vector<float> ratings = eloCalculator.get_ratings(/*adjust=*/false);
 	for(int i=0; i<N; ++i){
-		total_res << model_list[i] << " Elo Rating : " << ratings[i] << std::endl;
+		totalRes << modelList[i] << " Elo Rating : " << ratings[i] << std::endl;
 	}
 
 	for(int i=0; i<N; ++i){
@@ -463,13 +463,13 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> model_
 }
 
 
-Color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& player) {
+Color ModelCompare::cmd_play(std::istringstream& iss, Game gameManager, MCTS& player) {
     char c;
     std::string v;
     iss >> c >> v;
 
     Move m = parse_vertex(v);
-    Color res = game_manager.makeMove(m).first;
+    Color res = gameManager.make_move(m).first;
 	if(res == EMPTY){
     	player.jump(m);
     	ok();
@@ -477,12 +477,12 @@ Color ModelCompare::cmd_play(std::istringstream& iss, Game game_manager, MCTS& p
 	return res;
 }
 
-void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS& player, float temp) {
+void ModelCompare::cmd_genmove(std::istringstream& iss, Game gameManager, MCTS& player, float temp) {
     char c;
     iss >> c;
 
     auto begin = std::chrono::steady_clock::now();
-    Move m = player.getMove(temp);
+    Move m = player.get_move(temp);
     auto end = std::chrono::steady_clock::now();
 
     std::cerr << "move time: "
@@ -490,7 +490,7 @@ void ModelCompare::cmd_genmove(std::istringstream& iss, Game game_manager, MCTS&
                 << " us\n";
 
 	if(m != RESIGNMOVE){
-		Color res = game_manager.makeMove(m).first;
+		Color res = gameManager.make_move(m).first;
 		player.jump(m);
 	}
 
