@@ -44,7 +44,7 @@ public:
     Game();
     // copy constructor which gets called during MCTS search to generate child node.
     // do not copy transferGroups/availableMoves.
-    Game(const Game& parent);
+    // Game(const Game& parent);
 
     inline bool is_legal(uint8_t r, uint8_t c) const{
         return board[r][c] & EMPTY;

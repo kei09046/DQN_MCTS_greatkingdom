@@ -156,10 +156,10 @@ int Node::select_child_in_search(float fpu){
 
 Move Node::select_move(float temp, int minVisit){
     //std::cout << "available move size : " << game.getAvailableMoves().size() << std::endl;
-    game.display_board_gui(true);
-    for(const auto& m : game.get_available_moves())
-        std::cout << m / colSize << m % colSize << " ";
-    std::cout << std::endl;
+    // game.display_board_gui(true);
+    // for(const auto& m : game.get_available_moves())
+    //     std::cout << m / colSize << m % colSize << " ";
+    // std::cout << std::endl;
 
     if(forcedState == -1 || forcedState == 1){
         game.display_board_gui(true);

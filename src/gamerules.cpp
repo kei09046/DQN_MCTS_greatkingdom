@@ -36,30 +36,30 @@ Game::Game() : moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGN
     }
 }
 
-Game::Game(const Game& parent) : possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
-    pTransferGroups.fill(BASEGROUPID);
+// Game::Game(const Game& parent) : possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
+//     pTransferGroups.fill(BASEGROUPID);
 
-    currentTurn = parent.currentTurn;
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            board[i][j] = parent.board[i][j];
-        }
-    }
-    for(int i=0; i<2; ++i){
-        lastTwoMoves[i] = parent.lastTwoMoves[i];
-        score[i] = parent.score[i];
-    }
-    moveCount = parent.moveCount;
+//     currentTurn = parent.currentTurn;
+//     for(int i=0; i<rowSize; ++i){
+//         for(int j=0; j<colSize; ++j){
+//             board[i][j] = parent.board[i][j];
+//         }
+//     }
+//     for(int i=0; i<2; ++i){
+//         lastTwoMoves[i] = parent.lastTwoMoves[i];
+//         score[i] = parent.score[i];
+//     }
+//     moveCount = parent.moveCount;
 
-    for(int i=0; i<boardSize; ++i){
-        chains[i] = parent.chains[i];
-    }
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            stones[i][j] = parent.stones[i][j];
-        }
-    }
-}
+//     for(int i=0; i<boardSize; ++i){
+//         chains[i] = parent.chains[i];
+//     }
+//     for(int i=0; i<rowSize; ++i){
+//         for(int j=0; j<colSize; ++j){
+//             stones[i][j] = parent.stones[i][j];
+//         }
+//     }
+// }
 
 std::pair<Color, Wintype> Game::make_move(Move move){
     lastTwoMoves[0] = lastTwoMoves[1];
@@ -218,6 +218,12 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
 }
 
 void Game::set_policy_mask(){
+    // first reset mask inherited from parent.
+    possibleMoves.clear();
+    std::fill(pTransferGroups.begin(), pTransferGroups.end(), BASEGROUPID);
+    winmove = RESIGNMOVE;
+    threat = RESIGNMOVE;
+
     const auto& [tactic, wdl] = tactic_check();
     if(wdl > 0){
         winmove = tactic;
