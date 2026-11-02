@@ -1004,7 +1004,7 @@ class Game:
 
         self.boardFrame = Frame(self.content)
         self.passButton = Button(self.boardFrame, text="pass")
-        self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 14))
+        self.statusLabel = Label(self.boardFrame, text="", font=("Helvetica", 10), width=20, height=3)
 
         self.sideFrame = Frame(self.content)
         self.analysisResultPanel = None
