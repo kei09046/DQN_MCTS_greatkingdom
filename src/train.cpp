@@ -386,9 +386,9 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 							std::cout << "training data saved : " << dataFile << " (" << replayBuffer.size() << " positions)" << std::endl;
 
 							// optimizer state filename.
-							const std::string optFile = modelName;
-							trainModel.save_optimizer(optFile);
-							std::cout << "optimizer state saved : " << optFile << std::endl;
+							const std::string optPath = modelPath;
+							trainModel.save_optimizer(optPath);
+							std::cout << "optimizer state saved : " << optPath << std::endl;
 						}
 						
 						globalConfig = load_config("../configs/train_config.json");
