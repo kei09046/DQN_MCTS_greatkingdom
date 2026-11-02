@@ -7,6 +7,8 @@
 #include <bitset>
 #include "consts.h"
 
+using SegId = uint8_t;
+using GroupId = uint8_t;
 
 struct Chain {
     uint8_t size;        // Number of stones in the chain
@@ -19,9 +21,14 @@ struct Stone {
 };
 
 struct SegInfo{
-    std::vector<uint8_t> connectedSeg;
+    std::vector<SegId> connectedSeg;
     bool adjOpp;
     std::bitset<4> adjEdge;
+};
+
+struct SegTable{
+    std::vector<SegInfo> segInformation;
+    std::array<SegId, boardSize> segId;
 };
 
 enum Wintype{
@@ -35,6 +42,9 @@ enum Wintype{
 class Game{
 public:
     Game();
+    // copy constructor which gets called during MCTS search to generate child node.
+    // do not copy transferGroups/availableMoves.
+    Game(const Game& parent);
 
     inline bool is_legal(uint8_t r, uint8_t c) const{
         return board[r][c] & EMPTY;
@@ -60,15 +70,13 @@ public:
 
     void on_game_end(Color winner);
 
-    // Neither function supports continuing the game after a capture.
     std::pair<Color, Wintype> make_move(Move move);
 
-    // optimized version of makeMove. Used inside MCTS search only. resetMask(), setPolicyMask() should be called beforehand.
+    // optimized version of makeMove. Used inside MCTS search only. setPolicyMask() should be called beforehand.
     Color make_move_given_score(const Move& move);
 
     // unlike makeMove function, do not return immediately even if terminal condition is met. Check every detail.
     // At game end also returns a map : the captured stones (1) for a capture, the occupancy (black -1 / white +1) for a score ending.
-    // After a capture the board is left as it was (captured stones are not turned into territory) : the game must not continue.
     std::tuple<Color, Wintype, std::vector<float>> make_move_with_stat(Move move);
 
     // set up list of possible moves, logit transfer list.
@@ -76,10 +84,9 @@ public:
     // During MCTS, called on first visit on that node.
     void set_policy_mask();
 
-    // should be called after copy is created.
-    void reset_mask();
-
     std::pair<Move, int> tactic_check() const;
+
+    std::vector<int> opponent_scoring_moves() const;
 
     // print the board to stdout. If showScore is set, territory is shown as 'b' / 'w'.
     void display_board_gui(bool showScore) const;
@@ -136,7 +143,7 @@ public:
         return possibleMoves;
     }
 
-    inline const std::vector<int>& get_transfer_table() const{
+    inline const std::array<GroupId, boardSize + 1>& get_transfer_table() const{
         return pTransferGroups;
     }
 
@@ -166,7 +173,7 @@ private:
     Move threat;
     Move winmove;
     std::vector<int> possibleMoves;
-    std::vector<int> pTransferGroups;
+    std::array<GroupId, boardSize + 1> pTransferGroups;
 
 
     // overflow is managed.
@@ -195,7 +202,7 @@ private:
 
     void merge_chains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2);
 
-    Color capture_resultby_move(uint8_t r, uint8_t c);
+    Color capture_result_after(uint8_t r, uint8_t c);
 
     std::pair<Color, std::vector<int>> capture_result_with_stat(uint8_t r, uint8_t c);
 
@@ -214,9 +221,9 @@ private:
     // Faster version of checkScore but segTable should be provided.
     // Calculate whether playing at {r, c} would give territory, without changing game state.
     // Returns bitset with 1 if corresponding segment becomes territory.
-    std::bitset<boardSize> check_score(uint8_t r, uint8_t c, Color clr, const std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>>& segTable) const;
+    std::bitset<boardSize> check_score(uint8_t r, uint8_t c, Color clr, const SegTable& segTable) const;
 
-    std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> segment_table(const std::bitset<boardSize>& potScore) const;
+    SegTable segment_table(const std::bitset<boardSize>& potScore, Color turn) const;
 
     // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
     std::vector<int> candidates_when_threat(const std::bitset<boardSize>& potScore) const;

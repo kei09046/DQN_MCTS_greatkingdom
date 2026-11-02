@@ -90,7 +90,7 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
 
     std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
     for(int i=0; i<transferList.size(); ++i){
-        if(transferList[i] != -1){
+        if(transferList[i] != BASEGROUPID){
             transferred.at(transferList[i]) = std::max(transferred[transferList[i]], logAct.at(i));
         }
     }

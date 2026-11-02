@@ -1,5 +1,6 @@
 #include "train.h"
 #include "modelcompare.h"
+#include "analysis.hpp"
 #include "config.h"
 #include "hash.h"
 #include <iostream>
@@ -58,6 +59,11 @@ int main(int argc, char** argv) {
         if(argc > 4)
             params.minVisitRatio = std::stof(argv[4]);
         ModelCompare::analyze(modelFile, true, params);
+    }
+    else if(mod == "nninput"){
+        // ./play nninput -- no model; see Analysis::nn_input_server.
+        globalConfig = load_config("../configs/play_config.json");
+        Analysis::nn_input_server();
     }
     else if(mod == "web"){
         globalConfig = load_config("../configs/play_config.json");

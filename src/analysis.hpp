@@ -34,6 +34,15 @@ public:
     // One-line-per-ply dump of the current principal variation.
     void print_variation(MCTS& mcts);
 
+    // "./play nninput": a model-free REPL for the GUI's NN input overlay, which shows the raw
+    // network input of whatever position is on the board with or without an engine running.
+    // Each request is self-contained -- "nninput <id> [r c]..." with the whole move sequence
+    // from the empty board (pass = "<rowSize> 0") -- and is answered with one line,
+    // "nninput <id> <channels> <values...>" (PolicyValueNet::get_data, channel-major, each
+    // channel inputSize values indexed r * colSize + c), or "nninput <id> error" if a move is
+    // illegal. "quit" exits.
+    static void nn_input_server();
+
     // Debug mode: while on, every playout's search path and leaf NN evaluation is printed to
     // stdout the moment that playout finishes (see printPlayoutDebugLine below) -- nothing is
     // stored or accumulated here either; the GUI (Python) owns collecting and displaying the

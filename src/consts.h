@@ -48,6 +48,8 @@ constexpr uint8_t WSCORE = 128U;
 constexpr uint8_t BOARDMASK = EMPTY | BLACK | NEUTRAL | WHITE;
 constexpr uint8_t SCOREMASK = BSCORE | WSCORE;
 
+constexpr uint8_t BASEGROUPID = 255U;
+
 constexpr Trainhead POLICYHEAD = 1U;
 constexpr Trainhead VALUEHEAD = 2U;
 constexpr Trainhead SCOREHEAD = 4U;

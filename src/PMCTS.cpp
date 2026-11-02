@@ -45,8 +45,6 @@ void Node::add_child(const Move& move, int idx){
             else{
                 winner = ng.make_move_given_score(move);
             }
-            // reset policyMask state. It would be reevaluated when this node gets selected during search.
-            ng.reset_mask();
             childNode = new Node(ng, newHash, transposTable);
             childNode->forcedState = (winner == EMPTY) ? 0 : (winner == turn) ? -1 : 1;
             transposTable->emplace(newHash, std::make_pair(childNode, 1));
@@ -558,7 +556,6 @@ Move MCTS::get_move(float temp){
     for(int i=0; i<10; ++i){
         run_simulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
             minVisit * (i + 1) / 10 - minVisit * i / 10);
-        // printVariation();
         const auto& [winProb, scoreEXP] = get_eval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
     }
@@ -600,7 +597,6 @@ bool MCTS::jump(Move move){
 void MCTS::reset(const Game& startPos){
     root->delete_tree();
     root = new Node(startPos, hash.compute_hash(startPos), transposTable);
-    root->game.reset_mask();
 
     if(globalConfig.transTable){
         transposTable->clear();

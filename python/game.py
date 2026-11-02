@@ -392,6 +392,27 @@ CAPTURE_RISK_THRESHOLD = 0.1
 _PAUSED_MOVE_MIN_VISITS = 2
 
 
+# What each channel of PolicyValueNet::get_data (src/neuralNet.cpp) holds, for the NN input
+# overlay's label -- keep in step with get_data's own comments. "My" = the side to move.
+_NN_INPUT_CHANNEL_NAMES = (
+    "my stones", "opponent stones", "neutral stones",
+    "my stones, 1 move ago", "opponent stones, 1 move ago", "neutral stones, 1 move ago",
+    "my stones, 2 moves ago", "opponent stones, 2 moves ago", "neutral stones, 2 moves ago",
+    "my territory", "opponent territory", "score difference / board size",
+    "my stones, 1 liberty", "my stones, 2 liberties", "my stones, 3 liberties",
+    "my stones, 4+ liberties", "my stones, alive",
+    "opponent stones, 1 liberty", "opponent stones, 2 liberties", "opponent stones, 3 liberties",
+    "opponent stones, 4+ liberties", "opponent stones, alive",
+    "available moves", "my territory-building moves", "opponent territory-building moves",
+)
+NN_INPUT_POS_COLOR = OVERLAY_COLOR
+NN_INPUT_NEG_COLOR = "#C62828"
+
+
+def _fmt_nn_value(v):
+    return str(int(v)) if v == int(v) else f"{v:.3g}"
+
+
 def _blend_hex(c1, c2, t):
     """Lerp between two '#rrggbb' colors by t in [0, 1]; used to fake per-marker opacity
     (Tk canvas fills have no real alpha) by blending toward the board background instead."""
@@ -808,6 +829,68 @@ class AnalysisEngine:
             self.proc.terminate()
 
 
+class NNInputServer:
+    """Wraps `./play nninput` (Analysis::nn_input_server in src/analysis.cpp): computes the raw
+    network input (PolicyValueNet::get_data) for any position, without loading a model -- so
+    the NN input overlay works whether or not an analysis engine is running. Requests are
+    self-contained (the whole move sequence each time), so there is no position state to keep
+    in sync; replies are matched to requests by id.
+    """
+
+    def __init__(self, build_dir=BUILD_DIR):
+        self.proc = subprocess.Popen(
+            ["./play", "nninput"],
+            cwd=build_dir,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        # replies: (id, None) for an illegal sequence, else (id, {"channels": int,
+        # "values": [float, ...]}) -- channel-major, boardSize * boardSize values per channel.
+        self.replies = queue.Queue()
+        self._next_id = 0
+        threading.Thread(target=self._read_loop, daemon=True).start()
+
+    def _read_loop(self):
+        for line in self.proc.stdout:
+            parts = line.split()
+            if len(parts) < 3 or parts[0] != "nninput":
+                continue
+            if parts[2] == "error":
+                self.replies.put((parts[1], None))
+            else:
+                self.replies.put((parts[1], {"channels": int(parts[2]),
+                                             "values": [float(x) for x in parts[3:]]}))
+
+    def request(self, moves):
+        """Asks for the input of the position after `moves` ((r, c) pairs from the empty
+        board, pass = (rowSize, 0)); returns the id its reply will carry."""
+        self._next_id += 1
+        req_id = str(self._next_id)
+        if self.proc.poll() is None:
+            try:
+                self.proc.stdin.write("nninput " + req_id + "".join(f" {r} {c}" for r, c in moves) + "\n")
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
+        return req_id
+
+    def is_alive(self):
+        return self.proc.poll() is None
+
+    def get_reply_nowait(self):
+        try:
+            return self.replies.get_nowait()
+        except queue.Empty:
+            return None
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+
+
 class MatchRunner:
     """Drives an engine-vs-engine match for the "Engine Match" dialog: two independently
     configured AnalysisEngine processes (each its own `./play analyze <model>` subprocess, so
@@ -1086,6 +1169,14 @@ class Game:
         # while debug_mode_var is checked. See _on_debug_mode_change / _draw_playout_path_overlay.
         self.playout_log = []
         self.selected_playout_index = None
+        # NN input overlay (see _nn_input_tick): the model-free NNInputServer (started the
+        # first time the overlay is turned on), the latest input it returned as
+        # {"key": move sequence it describes, "channels", "values"} (or "error": True), and the
+        # move sequence/id of the request still in flight.
+        self.nnInputServer = None
+        self.nn_input = None
+        self._nn_input_pending = None  # (req_id, key) or None
+        self._nn_input_tick_id = None
         # The pending root.after() id of the poll_analysis loop, so (re)starting the engine can
         # cancel the old loop instead of stacking a second one on top of it.
         self._poll_after_id = None
@@ -1357,6 +1448,24 @@ class Game:
         self.show_capture_var = BooleanVar(value=False)
         Checkbutton(nn_map_row, text="Capture risk (captureMap)", variable=self.show_capture_var,
                     command=self._on_overlay_mode_change).pack(side=LEFT, padx=(10, 0))
+
+        # The raw network input (PolicyValueNet::get_data), one channel at a time, as each
+        # point's value printed on the board -- independent of the overlays above.
+        nn_input_row = Frame(panel)
+        nn_input_row.pack(fill=X)
+        self.show_nn_input_var = BooleanVar(value=False)
+        Checkbutton(nn_input_row, text="NN input, channel:", variable=self.show_nn_input_var,
+                    command=self._on_nn_input_toggle).pack(side=LEFT)
+        self.nn_input_channel_var = StringVar(value="0")
+        channel_box = Spinbox(nn_input_row, from_=0, to=99, width=4,
+                              textvariable=self.nn_input_channel_var,
+                              command=self._draw_nn_input_overlay)
+        channel_box.pack(side=LEFT, padx=(5, 0))
+        channel_box.bind("<Return>", lambda e: self._draw_nn_input_overlay())
+        channel_box.bind("<KeyRelease>", lambda e: self._draw_nn_input_overlay())
+        self.nnInputInfoLabel = Label(panel, text="", fg="#555555", anchor="w",
+                                      wraplength=260, justify=LEFT)
+        self.nnInputInfoLabel.pack(fill=X, pady=(0, 10))
 
         self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
         self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
@@ -2044,6 +2153,9 @@ class Game:
 
     def _draw_move_overlay(self, result):
         self.canvas.delete("move_overlay")
+        # Drawn shapes stack in creation order; keep the NN input values above everything
+        # this redraws.
+        self.root.after_idle(lambda: self.canvas.tag_raise("nn_input_overlay"))
 
         # Territory dots are an independent checkbox, layered under whichever candidate-move
         # mode below is also active -- drawn unconditionally so it still shows up even with
@@ -2152,6 +2264,112 @@ class Game:
             self.canvas.create_text(cx + r, cy - r, text=f"{p * 100:.0f}%", fill=CAPTURE_RISK_COLOR,
                                      anchor="sw", font=("Helvetica", font_size, "bold"),
                                      tags=("move_overlay", "capture_ring"))
+
+    def _nn_input_key(self):
+        """The board position as the move sequence the NN input server takes (pass = (boardSize, 0))."""
+        return tuple((self.boardSize, 0) if x == -1 or y == -1 else (x, y) for x, y in self.rule.seq)
+
+    def _on_nn_input_toggle(self):
+        if self.show_nn_input_var.get():
+            if self.nnInputServer is None or not self.nnInputServer.is_alive():
+                self.nnInputServer = NNInputServer(build_dir=BUILD_DIR)
+                self.nn_input = None
+                self._nn_input_pending = None
+            if self._nn_input_tick_id is None:
+                self._nn_input_tick()
+        self._draw_nn_input_overlay()
+
+    def _nn_input_tick(self):
+        """Runs while the NN input overlay is on: whenever the position on the board changes --
+        by any route (a move, Clear Board, browsing a game...) -- asks the server for the new
+        position's input, and redraws once it arrives. Polling the position here keeps every
+        one of those routes covered without each having to remember to notify the overlay."""
+        self._nn_input_tick_id = None
+        if not self.show_nn_input_var.get():
+            return
+        key = self._nn_input_key()
+        while True:
+            reply = self.nnInputServer.get_reply_nowait()
+            if reply is None:
+                break
+            req_id, data = reply
+            if self._nn_input_pending and req_id == self._nn_input_pending[0]:
+                self.nn_input = {"key": self._nn_input_pending[1], "error": data is None, **(data or {})}
+                self._nn_input_pending = None
+                self._draw_nn_input_overlay()
+        if not self.nnInputServer.is_alive():
+            self._draw_nn_input_overlay()
+            self._nn_input_tick_id = None
+            return
+        have = self.nn_input is not None and self.nn_input["key"] == key
+        pending = self._nn_input_pending is not None and self._nn_input_pending[1] == key
+        if not have and not pending:
+            self._nn_input_pending = (self.nnInputServer.request(key), key)
+            self._draw_nn_input_overlay()  # clears the previous position's values meanwhile
+        self._nn_input_tick_id = self.root.after(150, self._nn_input_tick)
+
+    def _draw_nn_input_overlay(self):
+        """Prints the selected channel of the current position's network input on every point:
+        zero as faint text, anything else on a box shaded by magnitude (blue positive, red
+        negative). Values index r * colSize + c in engine coordinates, the same (x, y) the board
+        and every other overlay use."""
+        self.canvas.delete("nn_input_overlay")
+        if not self.show_nn_input_var.get():
+            self.nnInputInfoLabel.configure(text="")
+            return
+        data = self.nn_input
+        if data is None or data["key"] != self._nn_input_key():
+            if self.nnInputServer is not None and not self.nnInputServer.is_alive():
+                # e.g. a build/play from before the "nninput" mode existed: it exits at once.
+                self.nnInputInfoLabel.configure(
+                    text="The NN input server (build/play nninput) exited -- rebuild build/play.")
+            else:
+                self.nnInputInfoLabel.configure(text="Computing...")
+            return
+        if data["error"]:
+            self.nnInputInfoLabel.configure(text="The engine's rules reject this move sequence.")
+            return
+        channels = data["channels"]
+        try:
+            ch = int(self.nn_input_channel_var.get())
+        except ValueError:
+            ch = -1
+        if not 0 <= ch < channels:
+            self.nnInputInfoLabel.configure(text=f"Enter a channel from 0 to {channels - 1}.")
+            return
+        name = _NN_INPUT_CHANNEL_NAMES[ch] if ch < len(_NN_INPUT_CHANNEL_NAMES) else ""
+        self.nnInputInfoLabel.configure(text=f"Channel {ch} / {channels - 1}" + (f": {name}" if name else ""))
+
+        n = self.boardSize * self.boardSize
+        values = data["values"][ch * n:(ch + 1) * n]
+        half = int(self.delta * 0.3)
+        font = ("Helvetica", max(7, int(self.delta * 0.2)), "bold")
+        for i, v in enumerate(values):
+            x, y = divmod(i, self.boardSize)
+            cx = self.m + x * self.delta
+            cy = self.m + y * self.delta
+            if v == 0:
+                color = "#9e9e9e" if self._stone_color_at(x, y) == 0 else "#7d6a3a"
+                self.canvas.create_text(cx, cy, text="0", fill=color, font=font,
+                                        tags=("nn_input_overlay",))
+                continue
+            fill = _blend_hex(BOARD_BG, NN_INPUT_POS_COLOR if v > 0 else NN_INPUT_NEG_COLOR,
+                              0.35 + 0.65 * min(abs(v), 1.0))
+            self.canvas.create_rectangle(cx - half, cy - half * 0.6, cx + half, cy + half * 0.6,
+                                         fill=fill, outline="", tags=("nn_input_overlay",))
+            text_color = "#ffffff" if _luminance(fill) < 140 else "#000000"
+            self.canvas.create_text(cx, cy, text=_fmt_nn_value(v), fill=text_color, font=font,
+                                    tags=("nn_input_overlay",))
+
+    def _stone_color_at(self, x, y):
+        """0 = Black stone, 1 = White stone, 2 = neutral, None = empty -- from RuleManager's
+        padded board (+1 = Black, -1 = White, RuleManager.Max = neutral)."""
+        v = self.rule.board[x + 1][y + 1]
+        if v == 0:
+            return None
+        if v == RuleManager.Max:
+            return 2
+        return 0 if v > 0 else 1
 
     def _draw_territory_overlay(self, result):
         """KataGo-style ownership dots: a small black dot on points the network expects to end
@@ -3198,6 +3416,8 @@ class Game:
     def on_close(self):
         if self.analysisEngine is not None:
             self.analysisEngine.close()
+        if self.nnInputServer is not None:
+            self.nnInputServer.close()
         self.root.destroy()
 
     @staticmethod

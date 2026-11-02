@@ -1,5 +1,6 @@
 #include "analysis.hpp"
 #include <iostream>
+#include <sstream>
 
 // score map and capture map of game's position. Neither is part of the search's evaluation (nor its cache), so both come
 // from one forward pass of their own.
@@ -29,6 +30,44 @@ static BoardMaps board_maps(PolicyValueNet* net, const Game& game){
 }
 
 // See analysis.hpp for what lives here and why it's split into its own class.
+
+void Analysis::nn_input_server(){
+    std::string line;
+    while(std::getline(std::cin, line)){
+        std::istringstream iss(line);
+        std::string cmd, id;
+        iss >> cmd;
+        if(cmd == "quit")
+            break;
+        if(cmd != "nninput" || !(iss >> id))
+            continue;
+
+        Game game;
+        bool legal = true;
+        int r, c;
+        while(legal && iss >> r >> c){
+            const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+            if(m == PASSMOVE || game.is_legal(m))
+                game.make_move(m);
+            else
+                legal = false;
+        }
+        if(!legal){
+            std::cout << "nninput " << id << " error" << std::endl;
+            continue;
+        }
+
+        // The available-move list (and everything derived from it) is only filled in by
+        // set_policy_mask(), which search runs on a node's first visit before the net
+        // evaluates it -- apply it here too, to dump exactly what the net sees.
+        game.set_policy_mask();
+        const NNInput input = PolicyValueNet::get_data(game);
+        std::cout << "nninput " << id << " " << input.size() / inputSize;
+        for(float v : input)
+            std::cout << " " << v;
+        std::cout << std::endl;
+    }
+}
 
 void Analysis::print_variation(MCTS& mcts){
     Node* node = mcts.root;

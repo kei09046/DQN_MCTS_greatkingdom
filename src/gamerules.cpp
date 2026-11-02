@@ -14,7 +14,7 @@ namespace{
 }
 
 
-Game::Game() : moveCount(0), possibleMoves(), pTransferGroups(boardSize + 1, -1), threat(RESIGNMOVE), winmove(RESIGNMOVE){
+Game::Game() : moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
@@ -29,9 +29,35 @@ Game::Game() : moveCount(0), possibleMoves(), pTransferGroups(boardSize + 1, -1)
     score[1] = 0.0f;
     lastTwoMoves[0] = PASSMOVE;
     lastTwoMoves[1] = PASSMOVE;
+    pTransferGroups.fill(BASEGROUPID);
 
     for(const auto& neutral : globalConfig.neutrals){
         board[neutral.first][neutral.second] = NEUTRAL;
+    }
+}
+
+Game::Game(const Game& parent) : possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
+    pTransferGroups.fill(BASEGROUPID);
+
+    currentTurn = parent.currentTurn;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            board[i][j] = parent.board[i][j];
+        }
+    }
+    for(int i=0; i<2; ++i){
+        lastTwoMoves[i] = parent.lastTwoMoves[i];
+        score[i] = parent.score[i];
+    }
+    moveCount = parent.moveCount;
+
+    for(int i=0; i<boardSize; ++i){
+        chains[i] = parent.chains[i];
+    }
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            stones[i][j] = parent.stones[i][j];
+        }
     }
 }
 
@@ -65,7 +91,7 @@ std::pair<Color, Wintype> Game::make_move(Move move){
         }
     }
 
-    Color clr = capture_resultby_move(r, c);
+    Color clr = capture_result_after(r, c);
     if(clr != EMPTY)
         return {clr, CAPTURE};
     if(moveCount >= 2)
@@ -115,7 +141,7 @@ Color Game::make_move_given_score(const Move& move){
         }
     }
 
-    Color clr = capture_resultby_move(r, c);
+    Color clr = capture_result_after(r, c);
     if(clr != EMPTY)
         return clr;
     
@@ -190,7 +216,6 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
     return {EMPTY, NONE, {}};
 }
 
-
 void Game::set_policy_mask(){
     const auto& [tactic, wdl] = tactic_check();
     if(wdl > 0){
@@ -222,8 +247,8 @@ void Game::set_policy_mask(){
             //     printMove(m);
 
             // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
-            const auto segTable = segment_table(potScore);
-            const auto& segIdx = segTable.second;
+            const auto segTable = segment_table(potScore, currentTurn);
+            const auto& segIdx = segTable.segId;
             // for(int i=0; i<rowSize; ++i){
             //     for(int j=0; j<colSize; ++j){
             //         std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
@@ -269,8 +294,8 @@ void Game::set_policy_mask(){
 
         else{
             int groupCntr = -1;
-            const auto segTable = segment_table(potScore);
-            const auto& segIdx = segTable.second;
+            const auto segTable = segment_table(potScore, currentTurn);
+            const auto& segIdx = segTable.segId;
             std::bitset<boardSize> acquiredSeg;
 
             std::array<std::bitset<boardSize>, boardSize> buffer;
@@ -321,11 +346,48 @@ void Game::set_policy_mask(){
     }
 }
 
-void Game::reset_mask(){
-    possibleMoves.clear();
-    std::fill(pTransferGroups.begin(), pTransferGroups.end(), -1);
-    winmove = RESIGNMOVE;
-    threat = RESIGNMOVE;
+// Suppose it's opponent's turn and compute list of possible moves which generates score.
+std::vector<int> Game::opponent_scoring_moves() const{
+    Color oppTurn = reverse_color(currentTurn);
+    std::vector<int> scoringMoves;
+
+    int groupCntr = -1;
+    std::bitset<boardSize> potScore;
+    for(int i=0; i<rowSize; ++i){
+        for(int j=0; j<colSize; ++j){
+            potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbe_score(i, j, oppTurn));
+        }
+    }
+    const auto segTable = segment_table(potScore, oppTurn);
+    const auto& segIdx = segTable.segId;
+    std::bitset<boardSize> acquiredSeg;
+
+    std::array<std::bitset<boardSize>, boardSize> buffer;
+    // push back possible moves
+    std::vector<uint8_t> nonEmptySquaresIdx;
+    for(uint8_t i=0U; i<boardSize; ++i){
+        if(is_legal(i / colSize, i % colSize))
+            nonEmptySquaresIdx.push_back(i);
+    }
+
+    for(const auto i : nonEmptySquaresIdx){
+        if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
+            auto acquired = check_score(i/colSize, i%colSize, oppTurn, segTable);
+            acquiredSeg |= acquired;
+            buffer[i] = acquired;
+        }
+    }
+
+    for(const auto i : nonEmptySquaresIdx){
+        // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
+        if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
+            // if territory is gained.
+            if(!buffer[i].none()){
+                scoringMoves.push_back(i);
+            }
+        }
+    }
+    return scoringMoves;
 }
 
 std::pair<Move, int> Game::tactic_check() const{
@@ -379,6 +441,7 @@ std::pair<Move, int> Game::tactic_check() const{
     return {tactic, 0};
 }
 
+
 void Game::on_game_end(Color winner){
     std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;
 }
@@ -407,7 +470,7 @@ void Game::merge_chains(uint8_t r1, uint8_t c1, uint8_t r2, uint8_t c2) {
 }
 
 
-Color Game::capture_resultby_move(uint8_t r, uint8_t c){
+Color Game::capture_result_after(uint8_t r, uint8_t c){
     uint8_t cord = static_cast<uint8_t>(r * colSize + c);
     stones[r][c] = {cord, cord}; // head, next
     chains[r * colSize + c] = {1U, {}};
@@ -572,12 +635,12 @@ uint8_t Game::check_score(uint8_t r, uint8_t c, Color clr) {
     return areaCount;
 }
 
-std::bitset<boardSize> Game::check_score(uint8_t r, uint8_t c, Color clr, const std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>>& segTable) const{
-    if (!(inbound(r, c) && (board[r][c] & EMPTY) && canbe_score(r, c, currentTurn)))
+std::bitset<boardSize> Game::check_score(uint8_t r, uint8_t c, Color clr, const SegTable& segTable) const{
+    if (!(inbound(r, c) && (board[r][c] & EMPTY) && canbe_score(r, c, clr)))
         return {};
 
-    const auto& segInfos = segTable.first;
-    const auto& segIdx = segTable.second;
+    const auto& segInfos = segTable.segInformation;
+    const auto& segIdx = segTable.segId;
 
     uint8_t blockedSeg = segIdx[r * colSize + c];
     std::bitset<boardSize> globalVisitMark, terrMark;
@@ -662,7 +725,7 @@ bool Game::canbe_score(uint8_t r, uint8_t c, Color clr) const{
     return cnt >= ((r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) ? 1 : 2);
 }
 
-std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segment_table(const std::bitset<boardSize>& potScore) const{
+SegTable Game::segment_table(const std::bitset<boardSize>& potScore, Color turn) const{
     std::array<uint8_t, boardSize> segMap;
     std::vector<SegInfo> segInfos;
     // maximum possible number of segments
@@ -687,7 +750,7 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segment_ta
                     adjEdge[2] = true;
                 else if(j == colSize - 1) 
                     adjEdge[3] = true;
-                segInfos.emplace_back(std::vector<uint8_t>{}, (board[i][j] & adj_to_opposite(currentTurn)) ? 1U : 0U, std::move(adjEdge));
+                segInfos.emplace_back(std::vector<uint8_t>{}, (board[i][j] & adj_to_opposite(turn)) ? 1U : 0U, std::move(adjEdge));
             }
         }
     }
@@ -720,7 +783,7 @@ std::pair<std::vector<SegInfo>, std::array<uint8_t, boardSize>> Game::segment_ta
                 while(!seg.empty()){
                     Move m = seg.front();
                     seg.pop();
-                    if(board[m.first][m.second] & adj_to_opposite(currentTurn))
+                    if(board[m.first][m.second] & adj_to_opposite(turn))
                         segInfos[segN].adjOpp = true;
                     if(m.first == 0) 
                         segInfos[segN].adjEdge[0] = true;

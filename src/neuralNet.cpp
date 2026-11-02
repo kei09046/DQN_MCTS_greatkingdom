@@ -166,9 +166,7 @@ NNInput PolicyValueNet::get_data(const Game& game){
 	// channel 0, 1, 2 : my/opponent's/neutral stones in current position
 	// channel 3, 4, 5 : same, one turn ago (before the last move)
 	// channel 6, 7, 8 : same, two turns ago (before the last two moves)
-	// stones are never removed during the game (capture ends it), so earlier positions are
-	// the current one without the last move's / last two moves' stones.
-	// lastTwoMoves[1] is the most recent move, lastTwoMoves[0] the one before.
+
 	const Move lastMove = game.get_last_move(1);
 	const Move secondLastMove = game.get_last_move(0);
 	const auto isStone = [](Move m){ return m != PASSMOVE && m != RESIGNMOVE; };
@@ -258,26 +256,28 @@ NNInput PolicyValueNet::get_data(const Game& game){
 	}
 
 	// channel 22 : available moves
+	// channel 23 : territory building move among available moves
+	const auto& tTable = game.get_transfer_table();
+	std::vector<int> groupSizeCntr(boardSize, 0);
+
+	for(const auto& groupId : tTable)
+		if(groupId != BASEGROUPID)
+			groupSizeCntr[groupId]++;
+	
 	for(const auto& m : game.get_available_moves()){
-		if(m < inputSize)
+		if(m < boardSize){
 			ret.at(22 * inputSize + m) = 1.0f;
+			if(tTable[m] != BASEGROUPID && groupSizeCntr[tTable[m]] > 1){
+				ret.at(23 * inputSize + m) = 1.0f;
+			}
+		}
 	}
 
-	// TODO : add algorithm which incrementally computes score gaining move.
-	// Currently, search is done on every turn.
-	// Plan :
-	// B_score : potential score gain for black, W_score : opposite.
-	// turn B : B_score, W_score played at x
-	// turn W : 
-	// W_score - if x is played outside, no change. if x is played inside, do following : 
-	// ex) a - seg1 - seg2(s) - seg3, a : score gainer, x is played at seg1 -> seg2 is next score gaining move with seg3 a territory.
-	// B_score - 
-	// Compute new segment table for both color than rest should not be too time consuming. 
-
-
-	// channel 23 : my territory building move
-
 	// channel 24 : opponent's territory building move
+	const auto ot = game.opponent_scoring_moves();
+	for(const auto& m : ot){
+		ret.at(24 * inputSize + m) = 1.0f;
+	}
 
     return {ret};
 }
