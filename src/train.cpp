@@ -233,7 +233,7 @@ void TrainPipeline::train(){
 void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, const bool isShown, float temp)
 {
 	// name of the model.
-	std::string modelName;
+	std::string modelName = "";
 	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
 	const size_t trainStartPoint = globalConfig.trainStartPoint;
 	const float fallbackWinrate = globalConfig.fallbackWinrate;
@@ -334,6 +334,29 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 					if((gamesPlayed + saveCnt) % globalConfig.checkFreq == 0){
 						globalConfig = load_config("../configs/compare_config.json");
 
+						modelName = trainModel.model_prefix() + std::to_string(gamesPlayed + saveCnt) + ".pt";
+
+						// save model
+						{
+							trainModel.save_model(globalConfig.modelPath + modelName);
+
+							// save to google drive.
+							if(globalConfig.googleDrive)
+								trainModel.save_model(globalConfig.drivePath + modelName);
+
+							// save training data & optimizer state.
+							std::string trunc = modelName.substr(modelName.length() - 3);
+							const std::string dataPath = globalConfig.dataPath + trunc + ".bin";
+							replayBuffer.save(dataPath);
+							std::cout << "training data saved : " << dataPath << " (" << replayBuffer.size() << " positions)" << std::endl;
+
+							// optimizer state filename.
+							const std::string optPath = globalConfig.modelPath + trunc + ".opt";
+							trainModel.save_optimizer(optPath);
+							std::cout << "optimizer state saved : " << optPath << std::endl;
+						}
+
+						// compare model
 						float winrate = ModelCompare::policy_evaluate(modelName, currentBestModelFile, 
 							std::cout, std::cout, true, true, 0.5f, globalConfig.compareGameCnt / 2, globalConfig.compareThreadNum);
 
@@ -350,9 +373,11 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 						if(winrate > 0.5f){
 							std::cout << "Best model updated! " << currentBestModelFile << " to " << modelName << std::endl;
 							currentBestModelFile = modelName;
-							trainModel.save_model(globalConfig.modelPath + trainModel.model_file_name(std::to_string(gamesPlayed + saveCnt) + "B")); // best models are saved
+							// best models are saved
+							trainModel.save_model(globalConfig.modelPath + trainModel.model_prefix() + 
+							std::to_string(gamesPlayed + saveCnt) + "B.pt");
 						}
-						else if(winrate < fallbackWinrate){
+						else if(winrate < fallbackWinrate && currentBestModelFile != "none"){
 							std::cout << "model fallback!" << std::endl;
 							trainModel.load_weights(globalConfig.modelPath + currentBestModelFile); // keeps the optimizer state
 						}
@@ -370,27 +395,6 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 
 						trainModel.set_learning_rate(learningRate);
 
-						// save model
-						{
-							modelName = trainModel.model_file_name(std::to_string(gamesPlayed + saveCnt));
-							const std::string modelPath = globalConfig.modelPath + modelName;
-							trainModel.save_model(modelPath);
-
-							// save to google drive.
-							if(globalConfig.googleDrive)
-								trainModel.save_model(globalConfig.drivePath + modelName);
-
-							// save training data & optimizer state.
-							const std::string dataFile = globalConfig.dataPath + modelName;
-							replayBuffer.save(dataFile);
-							std::cout << "training data saved : " << dataFile << " (" << replayBuffer.size() << " positions)" << std::endl;
-
-							// optimizer state filename.
-							const std::string optPath = modelPath;
-							trainModel.save_optimizer(optPath);
-							std::cout << "optimizer state saved : " << optPath << std::endl;
-						}
-						
 						globalConfig = load_config("../configs/train_config.json");
 					}
 
@@ -581,7 +585,7 @@ void train_on_static_data(const std::string& dataFile, int steps, float lr, floa
 		}
 	}
 
-	const std::string modelName = globalConfig.modelPath + net.model_file_name("static");
+	const std::string modelName = globalConfig.modelPath + net.model_prefix() + "static.pt";
 	net.save_model(modelName);
 	std::cout << "model saved : " << modelName << std::endl;
 }

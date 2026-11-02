@@ -243,8 +243,8 @@ public:
 
 	static ModelName parse_model_name(const std::string& modelFile);
 
-	// file name of a model of this type and size, e.g. modelFileName("13440") -> K_10b_13440.pt
-	std::string model_file_name(const std::string& tag) const;
+	// Gives model name prefix. ex) K_10b_
+	std::string model_prefix() const;
 
 	const std::string& model_type() const { return modelType; }
 

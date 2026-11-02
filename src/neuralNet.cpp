@@ -326,8 +326,8 @@ ModelName PolicyValueNet::parse_model_name(const std::string& modelFile){
 	return {globalConfig.modelPrefix, globalConfig.numHiddenBlock, std::nullopt};
 }
 
-std::string PolicyValueNet::model_file_name(const std::string& tag) const{
-	return modelType + "_" + std::to_string(numBlocks) + "b_" + tag;
+std::string PolicyValueNet::model_prefix() const{
+	return modelType + "_" + std::to_string(numBlocks) + "b_";
 }
 
 std::vector<PolicyValueOutput>
@@ -738,7 +738,7 @@ void PolicyValueNet::save_model(const std::string& modelFile) const
 	if(!net){
 		throw std::runtime_error("Model type mismatch when saving: " + modelFile);
 	}
-	torch::save(net, modelFile + ".pt");
+	torch::save(net, modelFile);
 }
 
 std::shared_ptr<NetBase> PolicyValueNet::make_net() const{
@@ -773,7 +773,7 @@ void PolicyValueNet::load_model(const std::string& modelFile){
 }
 
 void PolicyValueNet::save_optimizer(const std::string& file) const{
-	torch::save(*optimizer, file + ".opt");
+	torch::save(*optimizer, file);
 }
 
 void PolicyValueNet::load_optimizer(const std::string& file){

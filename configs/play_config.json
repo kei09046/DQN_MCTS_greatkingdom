@@ -10,7 +10,7 @@
   "path": {
      "model_path": "../models/",
      "model_prefix": "L",
-     "drive_path": "../drive/MyDrive",
+     "drive_path": "../drive/MyDrive/",
      "data_path": "../data/"
   },
 
