@@ -744,8 +744,10 @@ void PolicyValueNet::save_model(const std::string& modelFile) const
 std::shared_ptr<NetBase> PolicyValueNet::make_net() const{
 	if(modelType == "J") //  23 channel model
 		return std::make_shared<Net>(23, numBlocks);
-	if(modelType == "K") // J + capture map head; games end at the first capture
+	if(modelType == "K") // J + capture map head
 		return std::make_shared<Net>(23, numBlocks, 32, 256, true);
+	if(modelType == "L")
+		return std::make_shared<Net>(25, numBlocks, 32, 256, true);
 	throw std::runtime_error("Unsupported model type: " + modelType);
 }
 

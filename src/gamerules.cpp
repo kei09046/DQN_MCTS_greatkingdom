@@ -164,6 +164,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
 
+    assert(move != RESIGNMOVE);
     if(move == PASSMOVE){ // pass
         switch_turn();
         moveCount++;
