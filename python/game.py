@@ -329,6 +329,9 @@ import math
 import time
 import random
 import json
+import io
+import pickle
+import zipfile
 from datetime import datetime
 
 from tkinter import *
@@ -407,6 +410,16 @@ _NN_INPUT_CHANNEL_NAMES = (
 )
 NN_INPUT_POS_COLOR = OVERLAY_COLOR
 NN_INPUT_NEG_COLOR = "#C62828"
+
+
+# Evaluation graph (Game._draw_eval_graph): (series key, label, line color) -- each series keeps
+# its color whichever of them currently has data.
+EVAL_GRAPH_SERIES = (("a", "A eval", "#2a78d6"), ("b", "B eval", "#eb6834"), ("cur", "Current eval", "#1baf7a"))
+EVAL_GRAPH_SURFACE = "#fcfcfb"
+EVAL_GRAPH_GRID = "#e1e0d9"
+EVAL_GRAPH_AXIS = "#c3c2b7"
+EVAL_GRAPH_MUTED = "#6f6d68"
+EVAL_GRAPH_INK = "#0b0b0b"
 
 
 def _fmt_nn_value(v):
@@ -609,6 +622,60 @@ def list_models(models_dir=MODELS_DIR):
                   key=_model_sort_key)
 
 
+class _PickleStub:
+    def __setstate__(self, state):
+        if isinstance(state, dict):
+            self.__dict__.update(state)
+
+
+class _ModelPickle(pickle.Unpickler):
+    """Reads a torch::save archive's data.pkl without torch: every module becomes a _PickleStub
+    holding its children, every tensor just its shape."""
+
+    def find_class(self, module, name):
+        if name.startswith("_rebuild_tensor"):
+            return lambda storage, offset, size, *rest: tuple(size)
+        return type(name, (_PickleStub,), {})
+
+    def persistent_load(self, pid):
+        return None
+
+
+def model_input_channels(model, models_dir=MODELS_DIR):
+    """How many input channels a saved model takes (its first conv layer cv1's weight shape), or
+    None if that can't be read from the file."""
+    try:
+        with zipfile.ZipFile(os.path.join(models_dir, model)) as archive:
+            name = next(n for n in archive.namelist() if n.endswith("/data.pkl"))
+            net = _ModelPickle(io.BytesIO(archive.read(name))).load()
+        return net.cv1.weight[1]
+    except Exception:
+        return None
+
+
+def engine_input_channels():
+    """The input channel count `./play analyze` runs with (play_config.json), or None if unreadable."""
+    try:
+        with open(os.path.join(REPO_ROOT, "configs", "play_config.json")) as f:
+            return json.load(f)["nn"]["inputChannel"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def model_incompatibility(model):
+    """Why the engine can't run this model, or None if it can (or that can't be determined). A
+    model with the wrong channel count loads fine and only crashes on its first evaluation."""
+    channels, expected = model_input_channels(model), engine_input_channels()
+    if channels is None or expected is None or channels == expected:
+        return None
+    return f"it takes {channels} input channels, the engine uses {expected}"
+
+
+def default_model(models):
+    """The first model the engine can run, falling back to the first one listed."""
+    return next((m for m in models if model_incompatibility(m) is None), models[0] if models else "")
+
+
 class AnalysisEngine:
     """Wraps `./play analyze <model>` (ModelCompare::analyze in src/modelcompare.cpp).
 
@@ -632,10 +699,14 @@ class AnalysisEngine:
             cwd=build_dir,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             bufsize=1,
         )
+        # The reason given for a crash, if any -- see exit_reason.
+        self._crash_reason = None
+        threading.Thread(target=self._read_stderr, daemon=True).start()
         # results: dicts {"winrate": float, "visits": int,
         #                 "moves": [{"move": (r,c), "visits": float, "prior": float, "winrate": float,
         #                            "q": float, "forced": int}, ...]}
@@ -660,6 +731,17 @@ class AnalysisEngine:
         self._ack_gen = 0
         self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
         self._reader_thread.start()
+
+    def _read_stderr(self):
+        for line in self.proc.stderr:
+            if "what():" in line:
+                self._crash_reason = line.split("what():", 1)[1].strip()
+
+    def is_alive(self):
+        return self.proc.poll() is None
+
+    def exit_reason(self):
+        return self._crash_reason or f"exit code {self.proc.poll()}"
 
     def _read_loop(self):
         in_block = False
@@ -803,7 +885,8 @@ class AnalysisEngine:
             try:
                 return self.selections.get(timeout=poll_interval)
             except queue.Empty:
-                pass
+                if not self.is_alive():
+                    return None
         return None
 
     def send_pause(self):
@@ -943,6 +1026,8 @@ class MatchRunner:
                     while engine.get_result_nowait() is not None:
                         pass
                     return latest
+            elif not engine.is_alive():
+                return latest
             else:
                 time.sleep(poll_interval)
         return latest
@@ -1095,7 +1180,7 @@ class Game:
         # see _start_analysis_from_panel. Picking a different one mid-session and pressing it
         # again swaps engines in place, on whatever position is on the board.
         models = list_models()
-        self.engine_model_var = StringVar(value=models[0] if models else "")
+        self.engine_model_var = StringVar(value=default_model(models))
         # Which field the candidate-move Listbox is currently sorted by, and in which direction --
         # set before the panel is built since _build_search_column's clickable column headers read
         # it to render their initial sort-indicator arrow. See _sorted_candidate_moves/
@@ -1121,6 +1206,7 @@ class Game:
         self.cl = int(self.delta * 0.2)
         self.canvas = Canvas(self.boardFrame, width=board_px, height=board_px, bg=BOARD_BG,
                              highlightthickness=0)
+        self.statusLabel.configure(wraplength=board_px - 20)
 
         self.stones = []
         self.stones.append(
@@ -1175,6 +1261,9 @@ class Game:
         # move sequence/id of the request still in flight.
         self.nnInputServer = None
         self.nn_input = None
+        # Why the engine couldn't start or stopped unexpectedly, for the toolbar status (see
+        # _update_engine_status); cleared by the next successful start or Clear Board.
+        self.engine_error = None
         self._nn_input_pending = None  # (req_id, key) or None
         self._nn_input_tick_id = None
         # The pending root.after() id of the poll_analysis loop, so (re)starting the engine can
@@ -1310,8 +1399,12 @@ class Game:
         scrollbar.pack(side=RIGHT, fill=Y)
         listbox.pack(side=LEFT, fill=BOTH, expand=True)
 
-        for m in models:
-            listbox.insert(END, m)
+        for i, m in enumerate(models):
+            if model_incompatibility(m):
+                listbox.insert(END, f"{m} ({model_input_channels(m)} ch, can't run)")
+                listbox.itemconfig(i, fg="#999999")
+            else:
+                listbox.insert(END, m)
 
         current = model_var.get()
         if current in models:
@@ -1375,7 +1468,8 @@ class Game:
         self.startEngineButton.pack(side=LEFT, padx=(8, 0))
         if not models:
             self.startEngineButton.configure(state=DISABLED)
-        self.engineStatusLabel = Label(engine_row, text="", fg="#555555", anchor="w")
+        self.engineStatusLabel = Label(engine_row, text="", fg="#555555", anchor="w",
+                                       wraplength=420, justify=LEFT)
         self.engineStatusLabel.pack(side=LEFT, padx=(10, 0))
 
         Frame(panel, height=1, bg="#999999").pack(fill=X, pady=(0, 10))
@@ -1467,7 +1561,7 @@ class Game:
                                       wraplength=260, justify=LEFT)
         self.nnInputInfoLabel.pack(fill=X, pady=(0, 10))
 
-        self.analysisWinrateLabel = Label(panel, text="Win probability: -", font=("Helvetica", 12), anchor="w")
+        self.analysisWinrateLabel = Label(panel, text="Win probability (Black): -", font=("Helvetica", 12), anchor="w")
         self.analysisWinrateLabel.pack(fill=X, pady=5, anchor="w")
         self.analysisInitQLabel = Label(panel, text="Initial value (initQ): -", font=("Helvetica", 12), anchor="w")
         self.analysisInitQLabel.pack(fill=X, pady=5, anchor="w")
@@ -1605,7 +1699,8 @@ class Game:
     def _build_moves_tab(self, panel):
         """The former standalone "Load Game for Review" window's content, now a tab of the
         merged Analysis window: an optional loaded game's info, position navigation, the move
-        table itself (see _update_moves_tab for the B eval/W eval/Current eval convention).
+        table itself (see _update_moves_tab for the A eval/B eval/Current eval convention) and the
+        evaluation graph below it (_draw_eval_graph).
         Loading a game and starting the engine live in the toolbar above all three columns --
         see _build_analysis_result_panel.
         """
@@ -1630,8 +1725,8 @@ class Game:
         tree_frame = Frame(panel)
         tree_frame.pack(fill=BOTH, expand=True, pady=(2, 10))
         tree_scrollbar = Scrollbar(tree_frame, orient=VERTICAL)
-        columns = ("ply", "move", "b_eval", "w_eval", "cur_eval")
-        self.movesTree = ttk.Treeview(tree_frame, columns=columns, show="headings",
+        columns = ("ply", "move", "a_eval", "b_eval", "cur_eval")
+        self.movesTree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8,
                                        yscrollcommand=tree_scrollbar.set, selectmode="browse")
         # Column widths are measured from the actual fonts (heading text, and the widest value
         # a cell can hold) rather than hard-coded pixels, which were too narrow on displays
@@ -1641,7 +1736,7 @@ class Game:
         body_font = tkfont.nametofont("TkDefaultFont")
         ttk.Style(self.root).configure("Treeview", rowheight=body_font.metrics("linespace") + 4)
         for col, heading, widest_value in (("ply", "#", "000"), ("move", "Move", "(00,00)"),
-                                           ("b_eval", "B eval", "100.0%"), ("w_eval", "W eval", "100.0%"),
+                                           ("a_eval", "A eval", "100.0%"), ("b_eval", "B eval", "100.0%"),
                                            ("cur_eval", "Current eval", "100.0%")):
             width = max(heading_font.measure(heading), body_font.measure(widest_value)) + 16
             self.movesTree.heading(col, text=heading)
@@ -1650,6 +1745,19 @@ class Game:
         tree_scrollbar.pack(side=RIGHT, fill=Y)
         self.movesTree.pack(side=LEFT, fill=BOTH, expand=True)
         self.movesTree.bind("<<TreeviewSelect>>", self._on_moves_tree_select)
+
+        # width=1: the graph takes whatever width the table above sets, never widening the column.
+        self._eval_graph_font = tkfont.nametofont("TkSmallCaptionFont")
+        self.evalGraph = Canvas(panel, width=1, height=11 * self._eval_graph_font.metrics("linespace"),
+                                bg=EVAL_GRAPH_SURFACE, highlightthickness=1,
+                                highlightbackground=EVAL_GRAPH_AXIS)
+        self.evalGraph.pack(fill=X)
+        self._eval_graph_series = {}
+        self._eval_graph_geom = None
+        self._eval_graph_hover_ply = None
+        self.evalGraph.bind("<Configure>", lambda e: self._draw_eval_graph())
+        self.evalGraph.bind("<Motion>", self._on_eval_graph_motion)
+        self.evalGraph.bind("<Leave>", self._on_eval_graph_leave)
 
     def start(self):
         """Open the main window with a freely playable board and the session panel."""
@@ -1660,7 +1768,9 @@ class Game:
         self.canvas.pack()
         self.passButton.pack()
         self.passButton.configure(command=self.on_pass)
-        self.statusLabel.pack()
+        # fill=X: the label's own width is only a minimum, and text past it would be clipped
+        # rather than wrapped (the review-mode result line easily is).
+        self.statusLabel.pack(fill=X)
 
         for i in range(self.boardSize):
             self.canvas.create_line(i * self.delta + self.m, self.m, i * self.delta + self.m,
@@ -1932,6 +2042,7 @@ class Game:
         if self.analysisEngine is not None:
             self.analysisEngine.close()
             self.analysisEngine = None
+        self.engine_error = None
         self.canvas.delete("stone")
         self._clear_analysis_display()
         self.analysis_turn_base_visits = 0
@@ -1972,7 +2083,7 @@ class Game:
         self.last_analysis_result = None
         self.selected_variation_move = None
         self.analysisListbox.delete(0, END)
-        self.analysisWinrateLabel.configure(text="Win probability: -")
+        self.analysisWinrateLabel.configure(text="Win probability (Black): -")
         self.analysisInitQLabel.configure(text="Initial value (initQ): -")
         self.analysisScoreExpLabel.configure(text="Score head (initial): -")
         self.analysisScoreSearchLabel.configure(text="Score head (search): -")
@@ -1990,6 +2101,10 @@ class Game:
         else:
             self.engineStatusLabel.configure(text="No engine running")
             self.startEngineButton.configure(text="Start Engine")
+        if self.engine_error:
+            self.engineStatusLabel.configure(text=self.engine_error, fg="#C62828")
+        else:
+            self.engineStatusLabel.configure(fg="#555555")
 
     def start_session(self, model=None):
         """Launch (or restart, possibly with a different model) the analysis engine on the
@@ -2007,6 +2122,14 @@ class Game:
             model = self.engine_model_var.get()
         if not model:
             return
+
+        # Refused before touching any engine already running, so it keeps going.
+        problem = model_incompatibility(model)
+        if problem:
+            self.engine_error = f"Can't start {model}: {problem}."
+            self._update_engine_status()
+            return
+        self.engine_error = None
 
         if self.analysisEngine is not None:
             self.analysisEngine.close()
@@ -2141,8 +2264,24 @@ class Game:
             self._update_analysis_result_panel(latest)
         if got_playout and self.debug_mode_var.get():
             self._update_debug_listbox()
+        if not self.analysisEngine.is_alive():
+            self._on_engine_died()
+            return
         if self.analysis_mode and not self.game_over:
             self._poll_after_id = self.root.after(200, self.poll_analysis)
+
+    def _on_engine_died(self):
+        """The engine process exited without being asked to: say why and drop back to a plain
+        local game on the same position, instead of waiting on results that will never come."""
+        reason = self.analysisEngine.exit_reason()
+        self.engine_error = f"Engine stopped: {reason[:200]}"
+        self.analysisEngine = None
+        self.analysis_mode = False
+        self.analysis_paused = False
+        self.analysisPauseButton.configure(text="Pause")
+        self._clear_analysis_display()
+        self._update_engine_status()
+        self._update_status()
 
     def _on_overlay_mode_change(self):
         if self.last_analysis_result is not None:
@@ -2489,10 +2628,10 @@ class Game:
         }
         self._update_moves_tab()
 
-        winrate = result.get("winrate")
+        winrate = self._black_winrate(result.get("winrate"), ply)
         if winrate is not None:
             pct = (winrate + 1) / 2 * 100
-            self.analysisWinrateLabel.configure(text=f"Win probability: {pct:.1f}%")
+            self.analysisWinrateLabel.configure(text=f"Win probability (Black): {pct:.1f}%")
 
         init_q = result.get("initQ")
         if init_q is not None:
@@ -2827,7 +2966,7 @@ class Game:
         def build_engine_column(parent, label):
             col = Frame(parent, padx=10)
             Label(col, text=label, font=("Helvetica", 11, "bold")).pack(anchor="w")
-            model_var = StringVar(value=models[0])
+            model_var = StringVar(value=default_model(models))
             self._build_model_row(col, model_var, models, pady=(2, 6))
             Label(col, text="Playouts:", anchor="w").pack(fill=X)
             playouts_var = StringVar(value="800")
@@ -2911,6 +3050,12 @@ class Game:
         cfg_b = {"model": dialog.model_b.get(), "playouts": playouts_b, "temp": temp_b,
                  "fpu": fpu_b, "min_visit_ratio": mvr_b}
 
+        for cfg in (cfg_a, cfg_b):
+            problem = model_incompatibility(cfg["model"])
+            if problem:
+                dialog.status_label.configure(text=f"Can't run {cfg['model']}: {problem}.")
+                return
+
         dialog.records = []
         dialog.tally = {"A": 0, "B": 0, "draw": 0}
         dialog.games_listbox.delete(0, END)
@@ -2970,8 +3115,11 @@ class Game:
         out["black"] = names.get(rec.get("black"), rec.get("black"))
         out["white"] = names.get(rec.get("white"), rec.get("white"))
         out["winner"] = names.get(rec.get("winner"), rec.get("winner"))
-        out["moves"] = [dict(mv, by=names.get(mv.get("by"), mv.get("by"))) if "by" in mv else mv
+        # "engine" keeps the raw tag: both engines can be the same model, so the resolved name
+        # alone can't tell whose move it was (see _moves_eval_series).
+        out["moves"] = [dict(mv, by=names.get(mv.get("by"), mv.get("by")), engine=mv.get("by")) if "by" in mv else mv
                          for mv in rec.get("moves", [])]
+        out["engine_names"] = names
         return out
 
     @staticmethod
@@ -3144,14 +3292,14 @@ class Game:
         return entries
 
     def _load_game_for_reference(self, record):
-        """Loads a recorded game as the Moves tab's reference data (its B eval/W eval columns --
+        """Loads a recorded game as the Moves tab's reference data (its A eval/B eval columns --
         see _update_moves_tab) and jumps the board to its final position. review_mode locks out
         board clicks/pass while a game is loaded (see on_click/on_pass/_is_engine_turn) -- it's
         fixed, already-finished history to browse and analyze, not something to play new moves
         into. If a live analysis session is already running, it's kept (and resynced to the new
         position by _jump_to_ply below) rather than closed, so swapping which game is being
         browsed mid-session doesn't interrupt analysis; if none is running yet, the board/rule
-        are simply rebuilt and the B/W columns show up immediately, ready for "Start Engine"
+        are simply rebuilt and the A/B columns show up immediately, ready for "Start Engine"
         (with any model) whenever you like.
         """
         self.engine_plays_black_var.set(False)
@@ -3182,7 +3330,7 @@ class Game:
         session's own move history (self.session_move_log -- grows as moves are played, and can
         be rewound/diverged from, see _commit_move's truncation). Each entry has at least "ply"
         and "move"; loaded-game entries additionally carry "root_winrate" (that game's own
-        recorded evaluation -- see _update_moves_tab's B eval/W eval column).
+        recorded evaluation -- see _update_moves_tab's A eval/B eval columns).
         """
         if self.review_record is not None:
             return self.review_record.get("moves", [])
@@ -3280,48 +3428,189 @@ class Game:
     def _fmt_winrate_pct(wr):
         return f"{(wr + 1) / 2 * 100:.0f}%" if wr is not None else ""
 
+    @staticmethod
+    def _black_winrate(wr, ply):
+        """A root winrate is relative to the side to move at that ply; Black moves on even plies
+        (a pass still uses up its ply). Negating a White-to-move value in the engine's [-1, 1]
+        range is the same as 100% - winrate once _fmt_winrate_pct converts it."""
+        if wr is None:
+            return None
+        return wr if ply % 2 == 0 else -wr
+
+    def _moves_eval_series(self, moves):
+        """{series key: {ply: winrate from Black's perspective}} for the move table and graph.
+        A/B route by the engine that moved, not by color, since a match alternates which engine
+        is Black from game to game. "cur" can also hold the final position (ply == len(moves)),
+        which has no row of its own in the table but is still a point on the graph."""
+        series = {"a": {}, "b": {}, "cur": {}}
+        if self.review_record is not None:
+            for i, mv in enumerate(moves):
+                ply = mv.get("ply", i)
+                wr = self._black_winrate(mv.get("root_winrate"), ply)
+                if wr is not None:
+                    is_a = mv["engine"] == "A" if "engine" in mv else ply % 2 == 0
+                    series["a" if is_a else "b"][ply] = wr
+        for ply, entry in self.position_eval_log.items():
+            wr = self._black_winrate(entry.get("winrate"), ply)
+            if wr is not None and ply <= len(moves):
+                series["cur"][ply] = wr
+        return series
+
+    def _draw_eval_graph(self):
+        """Line chart under the move table: Black's win probability against position (moves
+        played), one line per series with data, a marker at the position on the board. Hovering
+        reads off every series at the nearest position (see _draw_eval_graph_hover)."""
+        c = self.evalGraph
+        c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        self._eval_graph_geom = None
+        if w <= 1:
+            return
+        moves = self._current_moves_list()
+        n_pos = len(moves)
+        series = self._moves_eval_series(moves)
+        self._eval_graph_series = series
+        font = self._eval_graph_font
+        line_h = font.metrics("linespace")
+        active = [item for item in EVAL_GRAPH_SERIES if series[item[0]]]
+
+        left = font.measure("100%") + 10
+        right = w - 12
+        top = 2 * line_h
+        bottom = h - line_h - 8
+        if right <= left or bottom <= top:
+            return
+        self._eval_graph_geom = (left, right, top, bottom, n_pos)
+        xpos = lambda ply: left + (right - left) * ply / max(n_pos, 1)
+        ypos = lambda wr: bottom - (bottom - top) * (wr + 1) / 2
+
+        # Title plus a right-aligned line-key legend; one series is named by the title instead.
+        title = "Black win %"
+        if len(active) == 1:
+            title += f" -- {active[0][1]}"
+        c.create_text(left, line_h * 0.7, text=title, anchor="w", font=font, fill=EVAL_GRAPH_INK)
+        if len(active) > 1:
+            x = right
+            for _, label, color in reversed(active):
+                x -= font.measure(label)
+                c.create_text(x, line_h * 0.7, text=label, anchor="w", font=font, fill=EVAL_GRAPH_INK)
+                x -= 18
+                c.create_line(x, line_h * 0.7, x + 14, line_h * 0.7, fill=color, width=2)
+                x -= 8
+
+        for pct in (0, 50, 100):
+            y = ypos(pct / 50 - 1)
+            c.create_line(left, y, right, y, fill=EVAL_GRAPH_AXIS if pct == 50 else EVAL_GRAPH_GRID)
+            c.create_text(left - 5, y, text=f"{pct}%", anchor="e", font=font, fill=EVAL_GRAPH_MUTED)
+        step = next((s for s in (1, 2, 5, 10, 20, 50) if n_pos / s <= 6), 100)
+        for ply in range(0, n_pos + 1, step):
+            c.create_text(xpos(ply), bottom + 4, text=str(ply), anchor="n", font=font, fill=EVAL_GRAPH_MUTED)
+
+        if not active:
+            c.create_text((left + right) / 2, (3 * top + bottom) / 4, text="No evaluations yet",
+                          font=font, fill=EVAL_GRAPH_MUTED)
+        if n_pos > 0:
+            x = xpos(min(self.review_index, n_pos))
+            c.create_line(x, top, x, bottom, fill=EVAL_GRAPH_MUTED)
+
+        for key, _, color in active:
+            points = sorted(series[key].items())
+            coords = [v for ply, wr in points for v in (xpos(ply), ypos(wr))]
+            if len(points) > 1:
+                c.create_line(*coords, fill=color, width=2, capstyle=ROUND, joinstyle=ROUND)
+            self._draw_eval_graph_dot(coords[-2], coords[-1], color)
+        self._draw_eval_graph_hover()
+
+    def _draw_eval_graph_dot(self, x, y, color, tags=()):
+        self.evalGraph.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline=EVAL_GRAPH_SURFACE,
+                                   width=2, tags=tags)
+
+    def _on_eval_graph_motion(self, event):
+        if self._eval_graph_geom is None:
+            return
+        left, right, _, _, n_pos = self._eval_graph_geom
+        ply = round((event.x - left) / (right - left) * max(n_pos, 1))
+        self._eval_graph_hover_ply = max(0, min(ply, n_pos))
+        self._draw_eval_graph_hover()
+
+    def _on_eval_graph_leave(self, event=None):
+        self._eval_graph_hover_ply = None
+        self.evalGraph.delete("eval_hover")
+
+    def _draw_eval_graph_hover(self):
+        """Crosshair snapped to the nearest position, with a readout of every series that has a
+        value there -- A and B each only have one on their own engine's turns."""
+        c = self.evalGraph
+        c.delete("eval_hover")
+        ply = self._eval_graph_hover_ply
+        if ply is None or self._eval_graph_geom is None:
+            return
+        left, right, top, bottom, n_pos = self._eval_graph_geom
+        ply = min(ply, n_pos)
+        x = left + (right - left) * ply / max(n_pos, 1)
+        tags = ("eval_hover",)
+        c.create_line(x, top, x, bottom, fill=EVAL_GRAPH_INK, tags=tags)
+
+        rows = []
+        for key, label, color in EVAL_GRAPH_SERIES:
+            wr = self._eval_graph_series[key].get(ply)
+            if wr is not None:
+                rows.append((f"{label}  {self._fmt_winrate_pct(wr)}", color))
+                self._draw_eval_graph_dot(x, bottom - (bottom - top) * (wr + 1) / 2, color, tags)
+
+        font = self._eval_graph_font
+        line_h = font.metrics("linespace")
+        header = f"Position {ply}"
+        box_w = 16 + max([font.measure(header)] + [font.measure(text) + 20 for text, _ in rows])
+        box_h = 8 + line_h * (1 + len(rows))
+        bx = x + 10 if x + 10 + box_w <= right else x - 10 - box_w
+        bx = max(left, bx)
+        c.create_rectangle(bx, top, bx + box_w, top + box_h, fill=EVAL_GRAPH_SURFACE,
+                           outline=EVAL_GRAPH_AXIS, tags=tags)
+        c.create_text(bx + 8, top + 4, text=header, anchor="nw", font=font, fill=EVAL_GRAPH_INK, tags=tags)
+        for i, (text, color) in enumerate(rows, start=1):
+            y = top + 4 + i * line_h
+            c.create_line(bx + 8, y + line_h / 2, bx + 22, y + line_h / 2, fill=color, width=2, tags=tags)
+            c.create_text(bx + 28, y, text=text, anchor="nw", font=font, fill=EVAL_GRAPH_INK, tags=tags)
+
     def _update_moves_tab(self):
         """Refreshes the Moves tab: the info line (which game, if any, is loaded, and its
         result), the move table, and the position counter -- see _current_moves_list for which
-        move source is being shown. Per the "B eval"/"W eval"/"Current evaluation" convention:
-        B/W come from a *loaded* game's own recorded per-ply evaluation (root_winrate -- turn-
-        relative, so it's already "how did this look for the side about to move," i.e. self-
-        relative for whichever color's row it is) and stay blank with no game loaded, since
-        there's no separate "recorded by the original engine" evaluation to show then; Current
-        always comes from position_eval_log -- the position-currently-being-analyzed engine's
-        own evaluation of that same ply, filled in as it's (re-)visited during live analysis,
-        regardless of whether a game is loaded.
+        move source is being shown. Per the "A eval"/"B eval"/"Current evaluation" convention
+        (see _moves_eval_series; all three are from Black's perspective): A/B come from a *loaded*
+        game's own recorded per-ply evaluation, in the column of whichever engine moved (A = Black
+        and B = White for a game that isn't an engine match), and stay blank with no game loaded,
+        since there's no separate "recorded by the original engine" evaluation to show then;
+        Current always comes from position_eval_log -- the position-currently-being-analyzed
+        engine's own evaluation of that same ply, filled in as it's (re-)visited during live
+        analysis, regardless of whether a game is loaded.
         """
         if self.review_record is not None:
             info = self._review_row_text(self.review_record)
             model = self.review_record.get("model")
             if model:
                 info += f"\nModel: {model}"
+            names = self.review_record.get("engine_names")
+            info += f"\nA: {names['A']}, B: {names['B']}" if names else "\nA: Black, B: White"
         else:
             info = "No game loaded -- showing this session's own move history."
         self.movesInfoLabel.configure(text=info)
 
         moves = self._current_moves_list()
+        series = self._moves_eval_series(moves)
         for row in self.movesTree.get_children():
             self.movesTree.delete(row)
         selected_iid = None
         for i, mv in enumerate(moves):
             ply = mv.get("ply", i)
-            color = "black" if ply % 2 == 0 else "white"
             move = mv.get("move")
             move_txt = "pass" if move is None else f"({move[0]},{move[1]})"
-
-            b_eval = w_eval = ""
-            if self.review_record is not None:
-                txt = self._fmt_winrate_pct(mv.get("root_winrate"))
-                if color == "black":
-                    b_eval = txt
-                else:
-                    w_eval = txt
-            cur_eval = self._fmt_winrate_pct(self.position_eval_log.get(ply, {}).get("winrate"))
+            a_eval = self._fmt_winrate_pct(series["a"].get(ply))
+            b_eval = self._fmt_winrate_pct(series["b"].get(ply))
+            cur_eval = self._fmt_winrate_pct(series["cur"].get(ply))
 
             iid = str(i)
-            self.movesTree.insert("", END, iid=iid, values=(ply + 1, move_txt, b_eval, w_eval, cur_eval))
+            self.movesTree.insert("", END, iid=iid, values=(ply + 1, move_txt, a_eval, b_eval, cur_eval))
             if self.review_index == i + 1:
                 selected_iid = iid
 
@@ -3333,6 +3622,7 @@ class Game:
             self.movesTree.see(selected_iid)
 
         self.movesPositionLabel.configure(text=f"Position {self.review_index} / {len(moves)}")
+        self._draw_eval_graph()
 
     def _on_moves_tree_select(self, event=None):
         sel = self.movesTree.selection()
