@@ -345,7 +345,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 								trainModel.save_model(globalConfig.drivePath + modelName);
 
 							// save training data & optimizer state.
-							std::string trunc = modelName.substr(modelName.length() - 3);
+							std::string trunc = modelName.substr(0, modelName.length() - 3);
 							const std::string dataPath = globalConfig.dataPath + trunc + ".bin";
 							replayBuffer.save(dataPath);
 							std::cout << "training data saved : " << dataPath << " (" << replayBuffer.size() << " positions)" << std::endl;
