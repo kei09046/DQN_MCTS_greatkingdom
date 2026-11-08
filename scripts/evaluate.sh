@@ -1,0 +1,1 @@
+../build/play evaluate_multi ../testmodels/L_10b_*B.pt 48 0.5

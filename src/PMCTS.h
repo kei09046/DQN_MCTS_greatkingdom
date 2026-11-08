@@ -20,6 +20,7 @@ public:
     Move select_move(float temperature, int minVisit);
 
     // return move + training target.
+    // modified : move target for passMove is set to 0.
     MoveData select_move_with_stat(float temperature, int minVisit);
 
     Node* jump(Move move);

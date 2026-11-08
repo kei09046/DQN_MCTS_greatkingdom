@@ -318,6 +318,8 @@ MoveData Node::select_move_with_stat(float temp, int minVisit){
     else if(value_n() > 0.0f)
         value = std::clamp(wp / value_n(), -0.9f, 0.9f);
 
+    // modified : PASSMOVE's visitPortion set to 0.
+    visitPortion[boardSize] = 0.0f;
     return {selectedMove, visitPortion, forcedState, game.get_available_moves().size() == 1, value};
 }
 
