@@ -79,7 +79,9 @@ void Node::expand(){
     //std::cerr << "Expand called" << std::endl;
 
     expanded = true;
-    // if forcedState != 0, then there is either a winning move or there will be no available moves anyway. Don't expand.
+    // if forcedState != 0, then there is either a winning move or there will be no available moves anyway. 
+    // Don't expand to save memory.
+    // If node with non-zero forcedState is forced to jump, Node::jump should handle that part.
     if(forcedState != 0)
         return;
 
@@ -328,11 +330,13 @@ Node* Node::jump(Move move){
         game.set_policy_mask();
     }
     if(!expanded){
-        expand();
+        // expand function call itself does not allocate memory if the position is proven win/lost. 
+        // However, in order to jump, memory allocation is required.
+        if(forcedState == 0)
+            expand();
+        else
+            child = std::vector<Node*>(game.get_available_moves().size(), nullptr);
     }
-    // a proven node (e.g. an immediate win found on its first visit) is never expanded, so it has no child slots yet.
-    if(child.size() < game.get_available_moves().size())
-        child.resize(game.get_available_moves().size(), nullptr);
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
