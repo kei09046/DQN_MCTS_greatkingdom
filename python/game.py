@@ -1,69 +1,109 @@
 import numpy as np
-import copy
+import subprocess
+import threading
+
+
+class _RulesServer:
+    """`./play rules` (Analysis::rules_server in src/analysis.cpp): the C++ engine's own rules,
+    model-free. One process is shared by every RuleManager (GUI and MatchRunner thread alike);
+    requests are synchronous and serialized by a lock."""
+
+    def __init__(self, build_dir):
+        try:
+            self.proc = subprocess.Popen(["./play", "rules"], cwd=build_dir, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         text=True, bufsize=1)
+        except OSError as e:
+            raise RuntimeError(f"cannot start the rules server ({build_dir}/play rules): {e}") from e
+        self.lock = threading.Lock()
+        self._next_id = 0
+        for line in self.proc.stdout:
+            parts = line.split()
+            if parts[:2] == ["rules", "ready"]:
+                rows, cols, komi, n = int(parts[2]), int(parts[3]), float(parts[4]), int(parts[5])
+                vals = [int(v) for v in parts[6:6 + 2 * n]]
+                self.board_size = rows
+                self.komi = komi
+                self.neutrals = list(zip(vals[0::2], vals[1::2]))
+                assert rows == cols, "RuleManager assumes a square board"
+                return
+        raise RuntimeError("rules server exited before it was ready")
+
+    def query(self, moves):
+        """moves: (r, c) pairs from the empty board, pass = (board_size, 0). Returns the reply's
+        fields after the id (see Analysis::rules_server)."""
+        with self.lock:
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"rules server died (exit code {self.proc.poll()})")
+            self._next_id += 1
+            req_id = str(self._next_id)
+            self.proc.stdin.write("rules " + req_id + "".join(f" {r} {c}" for r, c in moves) + "\n")
+            self.proc.stdin.flush()
+            for line in self.proc.stdout:
+                parts = line.split()
+                if len(parts) >= 3 and parts[0] == "rules" and parts[1] == req_id:
+                    return parts[2:]
+            raise RuntimeError(f"rules server died (exit code {self.proc.wait()})")
 
 
 class RuleManager:
+    """Game state for the GUI and MatchRunner. It holds only the move sequence: legality, game end
+    and scoring all come from the C++ engine's rules (Game::make_move, via `./play rules`), so
+    Python never re-implements them and can't disagree with what the engines play -- e.g. the
+    game ends by score as soon as the last empty point is filled, exactly as in C++.
+
+    Board size, neutral points and komi (`penalty`) are read from the C++ side
+    (configs/play_config.json) when the first RuleManager is made."""
 
     Max = 2 ** 16 - 1
     boardSize = 9
     neutral = [(4, 4)]
     penalty = 2.5
-    x_adj = [-1, 0, 1, 0]
-    y_adj = [0, 1, 0, -1]
+    _server = None
+    _server_lock = threading.Lock()
 
-    def __init__(self, board_size=None, neutral=None, penalty=None):
-        self.turn = 1
-        self.pp = False
-        self.territory = [0, 0]
-        if board_size is not None:
-            RuleManager.boardSize = board_size
-        if neutral is not None:
-            RuleManager.neutral = neutral
-        if penalty is not None:
-            RuleManager.penalty = penalty
+    @classmethod
+    def _rules(cls):
+        with cls._server_lock:
+            if cls._server is None or cls._server.proc.poll() is not None:
+                cls._server = _RulesServer(BUILD_DIR)
+                RuleManager.boardSize = cls._server.board_size
+                RuleManager.neutral = cls._server.neutrals
+                RuleManager.penalty = cls._server.komi
+            return cls._server
 
-        # 플레이어가 보는 판
-        self.board = np.pad(np.zeros((self.boardSize, self.boardSize), dtype=int),
-                            ((1, 1), (1, 1)), 'constant', constant_values=(RuleManager.Max, RuleManager.Max))
-        # 돌의 사활 결정
-        self.st_board = np.pad(np.zeros((self.boardSize, self.boardSize), dtype=int), ((1, 1), (1, 1)),
-                               'constant', constant_values=(RuleManager.Max, RuleManager.Max))
-        self.liberty_list = np.zeros(self.boardSize * self.boardSize, dtype=int)
-        self.st_cnt = 0
-        # 집 결정
-        self.bound_board = np.pad(np.zeros((self.boardSize, self.boardSize), dtype=int),
-                                 ((1, 1), (1, 1)), 'constant', constant_values=(-1, -1))
-
-        # 1이면 흑집 -1이면 백집
-        # 다른 판과 크기 맞춰주기 위해 +2
-        self.terr_board = np.zeros((self.boardSize + 2, self.boardSize + 2), dtype=int)
-        self.area_cnt = 0
-        # 영역 계산 알고리즘(calc)에 필요
-        self.eq_list = np.empty(self.boardSize * self.boardSize + 2, dtype=int)
-        # 0 : 흑 돌과 인접한 칸이면 true 아니면 false
-        self.cl = np.zeros((2, self.boardSize + 2, self.boardSize + 2), dtype=bool)
-        # 학습 시 컴퓨터가 착수할 수 있는 영역 -1:pass
-        self.available = list(range(self.boardSize * self.boardSize))
-        self.available.append(-1)
-
-        for i in RuleManager.neutral:
-            self.available.remove(RuleManager.convert(i, is_pair=True))
+    def __init__(self):
         self.seq = []
+        self._apply(self._rules().query([])[1:])
 
-        for cord in RuleManager.neutral:
-            self.board[cord[0] + 1][cord[1] + 1] = RuleManager.Max
-            self.st_board[cord[0] + 1][cord[1] + 1] = RuleManager.Max
-            self.bound_board[cord[0] + 1][cord[1] + 1] = -1
+    def _wire(self, seq):
+        return [(self.boardSize, 0) if x == -1 else (x, y) for x, y in seq]
+
+    def _apply(self, reply):
+        status, winner, turn, score_diff, b_terr, w_terr, board = reply
+        n = self.boardSize
+        self.status = status
+        self.winner = {0: 0, 1: 1, 2: -1}[int(winner)]
+        self.turn = 1 if int(turn) == 1 else -1
+        self._score_diff = float(score_diff)
+        self.territory = [int(b_terr), int(w_terr)]
+        # padded like the old pure-Python board: +1 Black, -1 White, Max for neutral and the rim.
+        self.board = np.full((n + 2, n + 2), RuleManager.Max, dtype=int)
+        values = {"b": 1, "w": -1, "n": RuleManager.Max}
+        for i, ch in enumerate(board):
+            self.board[i // n + 1][i % n + 1] = values.get(ch, 0)
+        self.available = [i for i, ch in enumerate(board) if ch == "."] + [-1]
 
     def current_state(self):
         ret = np.zeros((4, self.boardSize, self.boardSize), dtype=float)
         s = self.board[1:-1, 1:-1].astype(float)
+        s[s == RuleManager.Max] = 0
         ret[1][s * self.turn < 0] = 1.0
         ret[0][s * self.turn > 0] = 1.0
         for n in self.neutral:
             ret[1][n[0]][n[1]] = 1.0
             ret[0][n[0]][n[1]] = 1.0
-        if self.seq:
+        if self.seq and self.seq[-1][0] != -1:
             last_move = self.seq[-1]
             ret[2][last_move[0]][last_move[1]] = 1.0
         ret[3][:, :] = self.turn
@@ -72,10 +112,12 @@ class RuleManager:
     def available_move(self):
         return self.available
 
+    def score(self):
+        return self.territory[0], self.territory[1]
+
     # 흑 승: 1반환, 무승부: 0반환, 백 승: -1반환
     def end_game(self):
-        b_score, w_score = self.score()
-        diff = b_score - w_score - self.penalty
+        diff = self._score_diff - self.penalty
         if diff > 0:
             return 1, diff
         if diff == 0:
@@ -84,233 +126,27 @@ class RuleManager:
 
     # 착수 시 승리 : 1반환, 패배 : -1반환, 지속 : 0반환 계가 : -2반환
     def make_move(self, x, y=None):
-        if (x == -1 or y == -1) and self.pp:
-            self.seq.append((x, y))
-            return -2
-        if x == -1 or y == -1:
-            self.seq.append((x, y))
-            self.pp = True
-            self.turn *= -1
-            return 0
+        """(x, y) or a flat index; pass = x == -1 (or y == -1). Returns 0 (game goes on), 1 / -1
+        (the mover captured / got captured -- turn is NOT flipped, so `code * turn` is the
+        winner), or -2 (game over by score: last empty point filled, move limit, or two passes
+        in a row; see end_game). Raises ValueError on an illegal move (occupied point, either
+        side's territory, or a move after the game ended) without changing any state."""
         if y is None:
-            pair = RuleManager.convert(x, is_pair=False)
-            return self.make_move(pair[0], pair[1])
-        self.seq.append((x, y))
-
-        self.available.remove(RuleManager.convert((x, y), is_pair=True))
-
-        # 패딩된 행렬 연산 위해서 +1
-        x += 1
-        y += 1
-
-        # 돌이 있는 곳에 착수했는지 체크
-        if not (self.st_board[x][y] == 0):
+            if x == -1:
+                return self.make_move(-1, 0)
+            return self.make_move(*RuleManager.convert(x, is_pair=False))
+        move = (-1, 0) if (x == -1 or y == -1) else (int(x), int(y))
+        mover = self.turn
+        reply = self._rules().query(self._wire(self.seq + [move]))
+        if reply[0] == "illegal":
+            raise ValueError(f"illegal move {move} after {len(self.seq)} moves")
+        self.seq.append(move)
+        self._apply(reply[1:])
+        if self.status == "ongoing":
             return 0
-
-        # 상대 집에 착수했는지 체크
-        if self.terr_board[x][y] * self.turn == -1:
-            return -1
-
-        self.pp = False
-
-        # 돌의 활로를 계산, 잡힌 돌이 있는지 판단
-        self.board[x][y] = self.turn
-        empty_space = 0
-        same_adj = set()
-        # liberty_list holds pseudo-liberties (one per stone-empty adjacency), so a group loses one
-        # for every one of its stones adjacent to (x, y), not one per group.
-        same_touch = 0
-        diff_touch = {}
-
-        for i in range(4):
-            u = self.board[x + self.x_adj[i]][y + self.y_adj[i]]
-            if u == 0:
-                empty_space += 1
-            elif u == RuleManager.Max:
-                pass
-            elif u * self.turn > 0:
-                same_adj.add(self.st_board[x + self.x_adj[i]][y + self.y_adj[i]])
-                same_touch += 1
-            else:
-                g = self.st_board[x + self.x_adj[i]][y + self.y_adj[i]]
-                diff_touch[g] = diff_touch.get(g, 0) + 1
-
-        # print(empty_space)
-        s = len(same_adj)
-
-        # 인접한 상대 돌의 활로 감소
-        for temp, cnt in diff_touch.items():
-            self.liberty_list[temp] -= cnt
-            if self.liberty_list[temp] == 0:
-                return 1
-
-        # 인접한 내 돌이 없는 경우
-        if s == 0:
-            self.st_cnt += 1
-            self.st_board[x][y] = self.st_cnt
-            self.liberty_list[self.st_cnt] = empty_space
-            m = self.st_cnt
-
-        # 인접한 내 돌이 있는 경우
-        else:
-            m = min(same_adj)
-            same_adj.discard(m)
-            self.st_board[x][y] = m
-
-            for i in range(self.boardSize):
-                for j in range(self.boardSize):
-                    if self.st_board[i + 1][j + 1] in same_adj:
-                        self.st_board[i + 1][j + 1] = m
-
-            for i in range(s - 1):
-                temp = same_adj.pop()
-                self.liberty_list[m] += self.liberty_list[temp]
-                self.liberty_list[temp] = 0
-
-            self.liberty_list[m] += empty_space - same_touch
-
-        if self.liberty_list[m] == 0:
-            return -1
-
-        # print(self.liberty_list)
-
-        # 영역 갱신
-        self.bound_board[x][y] = -1
-        for i in range(4):
-            self.cl[int((1 - self.turn) / 2)][x + self.x_adj[i]][y + self.y_adj[i]] = True
-
-        # 자기 집 안에 착수한 경우
-        if self.terr_board[x][y] == self.turn:
-            self.territory[int((-self.turn + 1)/2)] -= 1
-            self.terr_board[x][y] = 0
-
-        # 공배에 착수한 경우
-        else:
-            for i in range(4):
-                nx = x + self.x_adj[i]
-                ny = y + self.y_adj[i]
-                if self.bound_board[nx][ny] != -1:
-                    self.calc(self.bound_board[nx][ny])
-                    break
-
-        # print(self.territory)
-        self.turn *= -1
-        return 0
-
-    def score(self):
-        return self.territory[0], self.territory[1]
-
-    def calc(self, where):
-        if where < 0:
-            return
-        if where > self.area_cnt:
-            print("error")
-
-        c = copy.deepcopy(self.bound_board)
-        # print(where)
-        cnt = 0
-        adj = np.full((4, 6), False, dtype=bool)
-
-        for i in range(len(self.eq_list)):
-            self.eq_list[i] = i
-
-        for i in range(self.boardSize):
-            for j in range(self.boardSize):
-                if c[i + 1][j + 1] == where:
-                    if c[i][j + 1] == -1 and c[i + 1][j] == -1:
-                        c[i + 1][j + 1] = cnt
-                        cnt += 1
-
-                    elif c[i][j + 1] == -1:
-                        c[i + 1][j + 1] = c[i + 1][j]
-
-                    elif c[i + 1][j] == -1:
-                        c[i + 1][j + 1] = c[i][j + 1]
-
-                    elif c[i][j + 1] == c[i + 1][j]:
-                        c[i + 1][j + 1] = c[i][j + 1]
-
-                    elif c[i][j + 1] < c[i + 1][j]:
-                        c[i + 1][j + 1] = c[i][j + 1]
-                        self.__modify(c[i + 1][j], c[i][j + 1])
-
-                    else:
-                        c[i + 1][j + 1] = c[i + 1][j]
-                        self.__modify(c[i][j + 1], c[i + 1][j])
-
-        dnt = 0
-        for i in range(cnt):
-            if i == self.eq_list[i]:
-                self.eq_list[i] = dnt
-                dnt += 1
-            else:
-                self.eq_list[i] = self.eq_list[self.eq_list[i]]
-
-        for i in range(self.boardSize):
-            for j in range(self.boardSize):
-                if self.bound_board[i + 1][j + 1] > where:
-                    self.bound_board[i + 1][j + 1] -= 1
-                elif self.bound_board[i + 1][j + 1] == where:
-                    self.bound_board[i + 1][j + 1] = self.area_cnt + self.eq_list[c[i + 1][j + 1]]
-
-        if dnt > 4:
-            print("dnt to big")
-            print(self.board, "move sequence ", self.seq)
-
-        # print(self.bound_board)
-
-        for i in range(self.boardSize):
-            for j in range(self.boardSize):
-                if self.bound_board[i + 1][j + 1] >= self.area_cnt:
-                    d = self.bound_board[i + 1][j + 1] - self.area_cnt
-                    # print(d)
-                    if i == 0:
-                        adj[d][0] = True
-                    if j == 0:
-                        adj[d][1] = True
-                    if i == self.boardSize - 1:
-                        adj[d][2] = True
-                    if j == self.boardSize - 1:
-                        adj[d][3] = True
-                    if self.cl[0][i + 1][j + 1]:
-                        adj[d][4] = True
-                    if self.cl[1][i + 1][j + 1]:
-                        adj[d][5] = True
-
-        # print(cnt, dnt)
-        t = [[False for i in range(2)] for j in range(4)]
-        for i in range(dnt):
-            t[i][0] = not (adj[i][0] and adj[i][1] and adj[i][2] and adj[i][3]) and not adj[i][5]
-            t[i][1] = not (adj[i][0] and adj[i][1] and adj[i][2] and adj[i][3]) and not adj[i][4]
-
-        for i in range(self.boardSize):
-            for j in range(self.boardSize):
-                u = self.bound_board[i + 1][j + 1] - self.area_cnt
-                if u >= 0 and t[u][0]:
-                    self.terr_board[i + 1][j + 1] = 1
-                    self.available.remove(RuleManager.convert((i, j), is_pair=True))
-                    self.territory[0] += 1
-                if u >= 0 and t[u][1]:
-                    self.terr_board[i + 1][j + 1] = -1
-                    self.available.remove(RuleManager.convert((i, j), is_pair=True))
-                    self.territory[1] += 1
-
-        self.area_cnt += dnt - 1
-        # print(self.bound_board)
-        return
-
-    def __modify(self, n, m):
-        eqv = self.eq_list[n]
-        if eqv == n:
-            self.eq_list[n] = m
-            return
-        if eqv > n:
-            self.eq_list[n] = m
-            self.__modify(eqv, m)
-            return
-        self.eq_list[n] = min(eqv, m)
-        self.__modify(max(eqv, m), min(eqv, m))
-        return
+        if self.status == "score":
+            return -2
+        return 1 if self.winner == mover else -1
 
     @staticmethod
     def convert(no, is_pair=False):
@@ -979,7 +815,7 @@ class MatchRunner:
     configured AnalysisEngine processes (each its own `./play analyze <model>` subprocess, so
     each genuinely runs its own model at its own playout budget -- there is no shared engine
     state between them) alternate turns on a position tracked locally by a plain headless
-    RuleManager, the same rules implementation used for local play. RuleManager is the sole
+    RuleManager (backed by the C++ rules, `./play rules`), the same one used for local play. RuleManager is the sole
     authority on legality/scoring here -- the match doesn't depend on parsing "game over"/score
     text out of either engine process at all, just its own make_move()/end_game() the same way
     Game._commit_move already does for the interactive board. Each engine is only ever asked
@@ -1062,8 +898,8 @@ class MatchRunner:
                 while True:
                     if self._stop.is_set():
                         break
-                    # Safety valve: a real game always ends via capture, suicide, or double-pass
-                    # scoring well before this -- this only guards against an unforeseen rules
+                    # Safety valve: a real game always ends via capture, suicide, or scoring
+                    # (full board, move limit, double pass) well before this -- this only guards against an unforeseen rules
                     # desync leaving the two sides passing the loop back and forth forever.
                     if len(rm.seq) > 4 * RuleManager.boardSize * RuleManager.boardSize:
                         by = "move limit"
@@ -1125,6 +961,11 @@ class MatchRunner:
                             break
                     else:
                         code = rm.make_move(r, c)
+                        if code == -2:
+                            # filling the last empty point (or the move limit) ends the game by score.
+                            winner_color, margin = rm.end_game()
+                            by = "score"
+                            break
                         if code == 1 or code == -1:
                             # Read immediately: rm.turn hasn't flipped yet for either the
                             # capture-win or self-capture/illegal-territory path (same
@@ -1980,7 +1821,9 @@ class Game:
             self.turn = 1 - self.turn
             self._update_status()
         else:
-            if result == 1 or result == -1 or result == -2:
+            if result == -2:
+                self.on_end(-2)
+            elif result == 1 or result == -1:
                 self.on_end(result * self.rule.turn)
             else:
                 self._update_status()

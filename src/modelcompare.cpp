@@ -16,21 +16,18 @@ namespace{
 
 
 float ModelCompare::start_play(std::array<MCTS*, 2> playerList, std::ostream& partRes, bool isShown, float temp) { // black wins : 1.0f, white wins : 0.0f
-	// if(is_shown)
-	// 	std::cout << "start play" << std::endl;
-	//std::cerr << "start play" << std::endl;
 	Game gameManager = Game();
-	int diff, idx = 0;
+	int idx = 0;
 	Move move;
     Color res;
-	std::vector<Move> seq;
+	//std::vector<Move> seq;
 
 	while (true) {
 		move = playerList[idx]->get_move(temp);
 		if(isShown){
 			std::cout << static_cast<int>(move.first) << static_cast<int>(move.second) << " ";
 		}
-		seq.push_back(move);
+		//seq.push_back(move);
         res = gameManager.make_move(move).first;
 
 		if (res == EMPTY) {

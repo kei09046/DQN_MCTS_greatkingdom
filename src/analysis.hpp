@@ -43,6 +43,20 @@ public:
     // illegal. "quit" exits.
     static void nn_input_server();
 
+    // "./play rules": a model-free REPL that is the GUI's (game.py RuleManager) only source of
+    // move legality, game end and scoring, so Python never re-implements the rules. Prints
+    // "rules ready <rows> <cols> <komi> <nNeutrals> [r c]..." on start. Each request is
+    // self-contained -- "rules <id> [r c]..." with the whole move sequence from the empty board
+    // (pass = "<rowSize> 0") -- and is answered with one line:
+    //   "rules <id> illegal <ply>"  -- move <ply> (0-based) is illegal or comes after the game ended, or
+    //   "rules <id> ok <status> <winner> <turn> <scoreDiff> <bTerr> <wTerr> <board>"
+    // status : ongoing | capture | score (Game::make_move's ending, or two passes in a row).
+    // winner/turn : 1 = black, 2 = white (winner 0 = none). turn is the side to move -- after a capture it is
+    // still the side that played the capturing move, as in Game::make_move.
+    // scoreDiff : black - white territory, komi not applied. board : rowSize * colSize chars,
+    // b/w stone, n neutral, B/W territory, . empty point (exactly the legal points). "quit" exits.
+    static void rules_server();
+
     // Debug mode: while on, every playout's search path and leaf NN evaluation is printed to
     // stdout the moment that playout finishes (see printPlayoutDebugLine below) -- nothing is
     // stored or accumulated here either; the GUI (Python) owns collecting and displaying the

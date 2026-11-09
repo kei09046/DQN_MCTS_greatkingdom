@@ -65,6 +65,11 @@ int main(int argc, char** argv) {
         globalConfig = load_config("../configs/play_config.json");
         Analysis::nn_input_server();
     }
+    else if(mod == "rules"){
+        // ./play rules -- no model; see Analysis::rules_server.
+        globalConfig = load_config("../configs/play_config.json");
+        Analysis::rules_server();
+    }
     else if(mod == "web"){
         globalConfig = load_config("../configs/play_config.json");
         std::string modelFile = argv[2];

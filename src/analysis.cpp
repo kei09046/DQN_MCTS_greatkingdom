@@ -69,6 +69,81 @@ void Analysis::nn_input_server(){
     }
 }
 
+void Analysis::rules_server(){
+    std::cout << "rules ready " << rowSize << " " << colSize << " " << globalConfig.komi << " " << globalConfig.neutrals.size();
+    for(const auto& n : globalConfig.neutrals)
+        std::cout << " " << static_cast<int>(n.first) << " " << static_cast<int>(n.second);
+    std::cout << std::endl;
+
+    std::string line;
+    while(std::getline(std::cin, line)){
+        std::istringstream iss(line);
+        std::string cmd, id;
+        iss >> cmd;
+        if(cmd == "quit")
+            break;
+        if(cmd != "rules" || !(iss >> id))
+            continue;
+
+        Game game;
+        Color winner = EMPTY;
+        const char* status = "ongoing";
+        bool prevPass = false;
+        int ply = 0, illegalPly = -1;
+        int r, c;
+        while(iss >> r >> c){
+            const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+            // a move after the game already ended, an off-board point, or an occupied/territory point.
+            if(winner != EMPTY || !(m == PASSMOVE || (r >= 0 && r < rowSize && c >= 0 && c < colSize && game.is_legal(m)))){
+                illegalPly = ply;
+                break;
+            }
+            // Game::make_move doesn't end on two passes in a row (the engine only lets the side
+            // ahead on score pass), but a human can; two passes end the game by score.
+            if(m == PASSMOVE && prevPass){
+                winner = game.score_winner();
+                status = "score";
+            }
+            else{
+                const auto [w, type] = game.make_move(m);
+                if(w != EMPTY){
+                    winner = w;
+                    status = (type == CAPTURE) ? "capture" : "score";
+                }
+            }
+            prevPass = (m == PASSMOVE);
+            ply++;
+        }
+        if(illegalPly >= 0){
+            std::cout << "rules " << id << " illegal " << illegalPly << std::endl;
+            continue;
+        }
+
+        // board : b/w stone, n neutral, B/W territory, . empty (legal) point.
+        std::string board(boardSize, '.');
+        int bTerr = 0, wTerr = 0;
+        for(int i=0; i<rowSize; ++i){
+            for(int j=0; j<colSize; ++j){
+                char& ch = board[i * colSize + j];
+                switch(game.get_board({i, j})){
+                    case BLACK: ch = 'b'; break;
+                    case WHITE: ch = 'w'; break;
+                    case NEUTRAL: ch = 'n'; break;
+                    default:
+                        if(game.get_score_board({i, j}) == BSCORE){ ch = 'B'; bTerr++; }
+                        else if(game.get_score_board({i, j}) == WSCORE){ ch = 'W'; wTerr++; }
+                        break;
+                }
+            }
+        }
+        // get_turn() is the side to move after the last move -- except after a capture, where
+        // Game::make_move returns before switching turns, so it is still the side that moved.
+        std::cout << "rules " << id << " ok " << status << " " << ((winner == EMPTY) ? 0 : static_cast<int>(winner)) << " "
+                  << static_cast<int>(game.get_turn()) << " " << game.score_diff(BLACK) << " "
+                  << bTerr << " " << wTerr << " " << board << std::endl;
+    }
+}
+
 void Analysis::print_variation(MCTS& mcts){
     Node* node = mcts.root;
 

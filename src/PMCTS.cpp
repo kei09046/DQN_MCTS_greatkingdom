@@ -332,11 +332,10 @@ Node* Node::jump(Move move){
     if(!expanded){
         // expand function call itself does not allocate memory if the position is proven win/lost. 
         // However, in order to jump, memory allocation is required.
-        if(forcedState == 0)
-            expand();
-        else
-            child = std::vector<Node*>(game.get_available_moves().size(), nullptr);
+        expand();
     }
+    if(forcedState != 0 && child.empty())
+        child = std::vector<Node*>(game.get_available_moves().size(), nullptr);
     N++;
 
     // std::cerr << "requested move : " << static_cast<int>(move.first) << "," << static_cast<int>(move.second) << std::endl;
