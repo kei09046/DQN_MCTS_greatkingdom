@@ -78,22 +78,8 @@ void Evaluator::free_pinned_memory(){
 NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& game){
     const auto& [logAct, winP, scoreEXP, scoreMap, captureMap] = nnOutput;
 
-    // compute policy.(apply softmax + remove unplayable moves)
-    const auto& availableMoves = game.get_available_moves();
-    const auto& transferList = game.get_transfer_table();
-    const int moveSize = availableMoves.size();
-    // available moves : [1, 6, 8, ...]
-    // transferList : [0, 0, 0, -1, -1, -1, 1, 0, 2, ...] (boardSize + 1)
-    // all cords with same transferList value >= 0 shares one available move that makes it all territory.
-    // transferList = -1 => illegal move(occupied etc.)
-    // nth available move corresponds to transferList value n.
-
-    std::vector<float> transferred(moveSize, std::numeric_limits<float>::lowest());
-    for(int i=0; i<transferList.size(); ++i){
-        if(transferList[i] != BASEGROUPID){
-            transferred.at(transferList[i]) = std::max(transferred[transferList[i]], logAct.at(i));
-        }
-    }
+    auto transferred = game.transfer_logit(logAct);
+    const int moveSize = transferred.size();
 
     // std::vector<float> n_logit(moveSize);
     // for(int i=0; i<moveSize; ++i){
@@ -124,10 +110,14 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
 
     scoreV += scoreEXP;
     for(int i=0; i<boardSize; ++i){
-        if(game.get_board({i / colSize, i % colSize}) == EMPTY){
-            Color owned = game.get_score_board({i / colSize, i % colSize});
-            scoreV += (owned == oppturnScore) ? 1.0f : ((owned == turnScore) ? -1.0f : scoreMap[i]);
-        }
+        const Move m = {i / colSize, i % colSize};
+        const Color owned = game.get_score_board(m);
+        if(owned == oppturnScore)      
+            scoreV += 1.0f;
+        else if(owned == turnScore)    
+            scoreV -= 1.0f;
+        else if(game.is_legal(m.first, m.second)) 
+            scoreV += scoreMap[i];
     }
 
     //float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;

@@ -255,27 +255,21 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		}
 	}
 
-	// channel 22 : available moves
-	// channel 23 : territory building move among available moves
-	const auto& tTable = game.get_transfer_table();
-	std::vector<int> groupSizeCntr(boardSize, 0);
-
-	for(const auto& groupId : tTable)
-		if(groupId != BASEGROUPID)
-			groupSizeCntr[groupId]++;
-	
+	// channel 22 : available moves	
 	for(const auto& m : game.get_available_moves()){
 		if(m < boardSize){
 			ret.at(22 * inputSize + m) = 1.0f;
-			if(tTable[m] != BASEGROUPID && groupSizeCntr[tTable[m]] > 1){
-				ret.at(23 * inputSize + m) = 1.0f;
-			}
 		}
 	}
 
+	// channel 23 : territory building move (change : may not be legal right now(due to threat))
+	// right now : keep original version.
+	for(const auto& m : game.maximize_score(turn, 1)){
+		ret.at(23 * inputSize + m) = (ret.at(22 * inputSize + m) == 1.0f) ? 1.0f : 0.0f;
+	}
+
 	// channel 24 : opponent's territory building move
-	const auto ot = game.opponent_scoring_moves();
-	for(const auto& m : ot){
+	for(const auto& m : game.maximize_score(oppturn, 1)){
 		ret.at(24 * inputSize + m) = 1.0f;
 	}
 

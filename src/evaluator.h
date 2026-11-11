@@ -4,10 +4,6 @@
 
 #include <atomic>
 #include <condition_variable>
-#include <mutex>
-#include <memory>
-#include <thread>
-#include <coroutine>
 #include "consts.h"
 #include "evalcache.h"
 #include "neuralNet.h"

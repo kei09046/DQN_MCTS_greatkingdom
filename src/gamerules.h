@@ -6,9 +6,8 @@
 #include <vector>
 #include <bitset>
 #include "consts.h"
-
-using SegId = uint8_t;
-using GroupId = uint8_t;
+#include "board.h"
+#include "territoryhelper.h"
 
 struct Chain {
     uint8_t size;        // Number of stones in the chain
@@ -20,24 +19,12 @@ struct Stone {
     uint8_t head;   // Head of the chain
 };
 
-struct SegInfo{
-    std::vector<SegId> connectedSeg;
-    bool adjOpp;
-    std::bitset<4> adjEdge;
-};
-
-struct SegTable{
-    std::vector<SegInfo> segInformation;
-    std::array<SegId, boardSize> segId;
-};
-
 enum Wintype{
     SCORE,
     CAPTURE,
     RESIGN,
     NONE
 };
-
 
 class Game{
 public:
@@ -47,7 +34,7 @@ public:
     // Game(const Game& parent);
 
     inline bool is_legal(uint8_t r, uint8_t c) const{
-        return board[r][c] & EMPTY;
+        return board.is_empty(to_idx(r, c));
     }
 
     inline bool is_legal(Move m) const{ // return true if square is not occupied / nor is score of any side.
@@ -86,17 +73,25 @@ public:
 
     std::pair<Move, int> tactic_check() const;
 
-    std::vector<int> opponent_scoring_moves() const;
+    // return a list of cords which does not have superior score building move.
+    // only return moves that gains equal or more points than minScore.
+    std::vector<int> maximize_score(const Color c, const uint8_t minScore) const;
+
+    // find a move that maximizes score which includes cord. If no move generates score, returns cord.
+    int maximize_score(Color c, const Move& cord) const;
+
+    // transfers suboptimal move's logit value to superior move.
+    std::vector<float> transfer_logit(const std::vector<float>& logits) const; 
 
     // print the board to stdout. If showScore is set, territory is shown as 'b' / 'w'.
     void display_board_gui(bool showScore) const;
 
     inline float score_diff(Color turn) const { // does not calculate komi; Just return raw difference in territory.
-        return (score[0] - score[1]) * ((turn == BLACK) ? 1.0f : -1.0f);
+        return (scoreChecker.obtained_score(BLACK) - scoreChecker.obtained_score(WHITE)) * ((turn == BLACK) ? 1.0f : -1.0f);
     };
 
     inline Color score_winner() const {
-        return score[0] - score[1] - globalConfig.komi > 0 ? BLACK : WHITE;
+        return scoreChecker.obtained_score(BLACK) - scoreChecker.obtained_score(WHITE) - globalConfig.komi > 0 ? BLACK : WHITE;
     };
 
     inline Color get_turn() const{
@@ -107,12 +102,18 @@ public:
         return moveCount;
     };
 
+    // BLACK / WHITE / NEUTRAL / EMPTY, or 0 for territory.
     inline Color get_board(Move m) const{
-        return board[m.first][m.second] & BOARDMASK;
+        return board.at(m);
     }
 
+    // BSCORE / WSCORE, or 0.
     inline Color get_score_board(Move m) const{
-        return board[m.first][m.second] & SCOREMASK;
+        return board.score_at(m);
+    }
+
+    inline const Board& get_board_state() const{
+        return board;
     }
 
     inline const int get_chain_idx(int cord) const{
@@ -143,10 +144,6 @@ public:
         return possibleMoves;
     }
 
-    inline const std::array<GroupId, boardSize + 1>& get_transfer_table() const{
-        return pTransferGroups;
-    }
-
     inline Move get_threat() const{
         return threat;
     }
@@ -161,10 +158,9 @@ public:
 
 private:    
     Color currentTurn;
-    Color board[rowSize][colSize];
+    Board board;
     Move lastTwoMoves[2];
     int moveCount;
-    float score[2];
 
     Chain chains[boardSize];   // Chain data
     Stone stones[rowSize][colSize];    // Stone linked list info
@@ -173,25 +169,8 @@ private:
     Move threat;
     Move winmove;
     std::vector<int> possibleMoves;
-    std::array<GroupId, boardSize + 1> pTransferGroups;
-
-
-    // overflow is managed.
-    inline static bool inbound(uint8_t r, uint8_t c){
-        return (r < rowSize) && (c < colSize);
-    }
-
-    inline static bool oppstate(Color x, Color y){
-        return (x == BLACK && y == WHITE) || (x == WHITE && y == BLACK);
-    }
-
-    inline static uint8_t adj_to_opposite(Color clr){
-        return (clr == BLACK) ? ADJTOWHITE : ADJTOBLACK;
-    }
-
-    inline static uint8_t adj_to(Color clr){
-        return (clr == BLACK) ? ADJTOBLACK : ADJTOWHITE;
-    }
+    // is not needed for normal gameplay, but if game branches a lot, this optimizes score computation.
+    TerritoryHelper scoreChecker;
 
     inline void switch_turn(){
         currentTurn = reverse_color(currentTurn);
@@ -206,27 +185,8 @@ private:
 
     std::pair<Color, std::vector<int>> capture_result_with_stat(uint8_t r, uint8_t c);
 
-    // score related functions
-    void update_score(uint8_t r, uint8_t c);
-
-    bool canbe_score(uint8_t r, uint8_t c, Color clr) const;
-
-    // calculates if territory is formed on given grid using BFS.
-    // Also updates game state.
-    uint8_t check_score(uint8_t r, uint8_t c, Color clr);
-
-    /////////////////////////////////////////////////////////
-    // Functions needed for effective expansion.
-
-    // Faster version of checkScore but segTable should be provided.
-    // Calculate whether playing at {r, c} would give territory, without changing game state.
-    // Returns bitset with 1 if corresponding segment becomes territory.
-    std::bitset<boardSize> check_score(uint8_t r, uint8_t c, Color clr, const SegTable& segTable) const;
-
-    SegTable segment_table(const std::bitset<boardSize>& potScore, Color turn) const;
-
     // returns possible moves that handles imminent threat. Later options are inferior ones; If first candidate makes territory, no need to check any other options.
-    std::vector<int> candidates_when_threat(const std::bitset<boardSize>& potScore) const;
+    // std::vector<int> candidates_when_threat(const std::bitset<boardSize>& potScore) const;
     /////////////////////////////////////////////////////////////////////////
 };
 

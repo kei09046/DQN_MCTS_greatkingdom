@@ -8,32 +8,19 @@
 #include <bitset>
 #include <cassert>
 
-namespace{
-    constexpr char dr[4] = {-1, 0, 1, 0};
-    constexpr char dc[4] = {0, 1, 0, -1};
-}
 
-
-Game::Game() : moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
+Game::Game() : board(globalConfig.neutrals), moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE), scoreChecker(){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
-            board[i][j] = EMPTY;
             chains[temp] = {0, {}};
             stones[i][j] = {temp, temp};
             temp++;
         }
     
     currentTurn = BLACK;
-    score[0] = 0.0f;
-    score[1] = 0.0f;
     lastTwoMoves[0] = PASSMOVE;
     lastTwoMoves[1] = PASSMOVE;
-    pTransferGroups.fill(BASEGROUPID);
-
-    for(const auto& neutral : globalConfig.neutrals){
-        board[neutral.first][neutral.second] = NEUTRAL;
-    }
 }
 
 // Game::Game(const Game& parent) : possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE){
@@ -70,6 +57,7 @@ std::pair<Color, Wintype> Game::make_move(Move move){
     }
 
     if(move == PASSMOVE){ // pass
+        scoreChecker.update_move(board, move);
         switch_turn();
         moveCount++;
         return {EMPTY, NONE};
@@ -80,22 +68,15 @@ std::pair<Color, Wintype> Game::make_move(Move move){
     // if(r >= rowSize || c >= colSize) [[unlikely]]
     //     throw std::out_of_range("Game::makeMove : move off the board");
 
-    assert(board[r][c] & EMPTY);
-    // turn off the empty bit, turn on the color bit.
-    board[r][c] ^= currentTurn | EMPTY;
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            board[nr][nc] |= adj_to(currentTurn);
-        }
-    }
+    board.place_stone(move, currentTurn);
 
+    // update capture related functions
     Color clr = capture_result_after(r, c);
     if(clr != EMPTY)
         return {clr, CAPTURE};
-    if(moveCount >= 2)
-        update_score(r, c);
+
+    // update score related functions
+    scoreChecker.update_move(board, {r, c});
     
     switch_turn();
     moveCount++;
@@ -107,17 +88,11 @@ std::pair<Color, Wintype> Game::make_move(Move move){
 }
 
 Color Game::make_move_given_score(const Move& move){
-    std::vector<int> acquired;
-    int moveInt = move.first * colSize + move.second;
-    for(int i=0; i<pTransferGroups.size(); ++i){
-        if(i != moveInt && pTransferGroups[i] == pTransferGroups[moveInt])
-            acquired.push_back(i);
-    }
-
     lastTwoMoves[0] = lastTwoMoves[1];
     lastTwoMoves[1] = move;
 
     if(move == PASSMOVE){ // pass
+        scoreChecker.update_move_given_score(board, move);
         switch_turn();
         moveCount++;
         return EMPTY;
@@ -126,36 +101,25 @@ Color Game::make_move_given_score(const Move& move){
     uint8_t r = move.first;
     uint8_t c = move.second;
 
-    if(!(board[r][c] & EMPTY)){
+    if(!board.is_empty(move)){
         print_move(move);
         display_board_gui(true);
     }
-    assert(board[r][c] & EMPTY);
-    // turn off the empty bit, turn on the color bit.
-    board[r][c] ^= currentTurn | EMPTY;
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            board[nr][nc] |= adj_to(currentTurn);
-        }
-    }
+    board.place_stone(move, currentTurn);
 
     Color clr = capture_result_after(r, c);
     if(clr != EMPTY)
         return clr;
-    
-    // update territory without BFS.
-    const Color scoreBit = (currentTurn == BLACK) ? BSCORE : WSCORE;
-    const int scoreIdx = (currentTurn == BLACK) ? 0 : 1;
 
-    for(const auto& idx : acquired){
-        board[idx / colSize][idx % colSize] = scoreBit;
-    }
-    score[scoreIdx] += acquired.size();
+    // after place_stone (color is read from board) and capture check, same order as make_move.
+    scoreChecker.update_move_given_score(board, move);
 
     switch_turn();
     moveCount++;
+
+    if(get_legal_move_count() == 0 || moveCount > boardSize){
+        return score_winner();
+    }
 
     return EMPTY;
 }
@@ -166,6 +130,7 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
 
     assert(move != RESIGNMOVE);
     if(move == PASSMOVE){ // pass
+        scoreChecker.update_move(board, move);
         switch_turn();
         moveCount++;
         return {EMPTY, NONE, {}};
@@ -174,28 +139,19 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
     uint8_t r = move.first;
     uint8_t c = move.second;
 
-    if(!(board[r][c] & EMPTY)){
+    if(!board.is_empty(move)){
         display_board_gui(true);
         print_move(move);
     }
-    assert(board[r][c] & EMPTY);
-    // turn off empty bit, turn on color bit.
-    board[r][c] ^= currentTurn | EMPTY;
-    for(int i=0; i<4; ++i){ // make sure it can't be used for opponent
-        uint8_t nr = r + dr[i];
-        uint8_t nc = c + dc[i];
-        if(inbound(nr, nc)){
-            board[nr][nc] |= adj_to(currentTurn);
-        }
-    }
+    board.place_stone(move, currentTurn);
+
+    // update capture related functions
+    auto [clr, captured] = capture_result_with_stat(r, c);
+    // update score related functions. Turn is already switched here, so use the color of the placed stone.
+    scoreChecker.update_move(board, {r, c});
 
     switch_turn();
     moveCount++;
-
-    auto [clr, captured] = capture_result_with_stat(r, c);
-        
-    if(moveCount >= 2)
-        update_score(r, c);
 
     // end by capture
     if(clr != EMPTY){
@@ -207,194 +163,68 @@ std::tuple<Color, Wintype, std::vector<float>> Game::make_move_with_stat(Move mo
     // end by score
     else if(get_legal_move_count() == 0 || moveCount > boardSize){
         std::vector<float> occupyMap(boardSize);
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                occupyMap[i * colSize + j] = (board[i][j] & (BSCORE | BLACK)) ? -1.0f : (board[i][j] & (WSCORE | WHITE) ? 1.0f : 0.0f);
-            }
-        }
+        const BitBoard bOccupy = board.stones(BLACK) | board.score(BLACK);
+        const BitBoard wOccupy = board.stones(WHITE) | board.score(WHITE);
+        for(int i=0; i<boardSize; ++i)
+            occupyMap[i] = bOccupy[i] ? -1.0f : (wOccupy[i] ? 1.0f : 0.0f);
         return {score_winner(), SCORE, occupyMap};
     }
     return {EMPTY, NONE, {}};
 }
 
 void Game::set_policy_mask(){
-    // first reset mask inherited from parent.
+    // first reset informations from parent which are no longer needed.
     possibleMoves.clear();
-    std::fill(pTransferGroups.begin(), pTransferGroups.end(), BASEGROUPID);
     winmove = RESIGNMOVE;
     threat = RESIGNMOVE;
+
+    // update score map topology
+    scoreChecker.update_topology(board);
 
     const auto& [tactic, wdl] = tactic_check();
     if(wdl > 0){
         winmove = tactic;
         possibleMoves.push_back(winmove.first * colSize + winmove.second);
-        pTransferGroups.at(winmove.first * colSize + winmove.second) = 0;
         return;
     }
     else if(wdl < 0){
         threat = tactic;
         possibleMoves.push_back(PASSMOVE.first * colSize + PASSMOVE.second);
-        pTransferGroups.at(PASSMOVE.first * colSize + PASSMOVE.second) = 0;
         return;
     }
     else{
         threat = tactic;
-        std::bitset<boardSize> potScore;
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbe_score(i, j, currentTurn));
-            }
-        }
-
         if(threat != RESIGNMOVE){
-            // first find list of possible moves.
-            std::vector<int> candidates = candidates_when_threat(potScore);
-            // std::cerr << "possible moves : " << std::endl;
-            // for(const auto& m : possibleMoves)
-            //     printMove(m);
-
-            // now, consider all options in possibleMoves. If none of them makes T territory, should play at T.
-            const auto segTable = segment_table(potScore, currentTurn);
-            const auto& segIdx = segTable.segId;
-            // for(int i=0; i<rowSize; ++i){
-            //     for(int j=0; j<colSize; ++j){
-            //         std::cerr << static_cast<int>(segTable.second[i * colSize + j]) << " ";
-            //     }
-            //     std::cerr << std::endl;
-            // }
-
-            const auto threatSeg = segIdx.at(threat.first * colSize + threat.second);
-            std::bitset<boardSize> acquiredSeg, threatAcquireSeg;
-
-            int threatInt = threat.first * colSize + threat.second;
-            // if only possible move is to play at threat, and if it can't generate any score
-            if(candidates.size() == 1 && segIdx[threatInt] == 255U){
-                assert(candidates[0] == threatInt);
-                possibleMoves.push_back(threatInt);
-                pTransferGroups.at(threatInt) = 0;
-                return;
-            }
-
-            else{
-                for(const auto& option : candidates){
-                    const std::bitset<boardSize> acquired = check_score(option / colSize, option % colSize, currentTurn, segTable);
-                    acquiredSeg |= acquired;
-                    // if option == threat, it means that no other move made threat a territory.
-                    if(acquired[threatSeg] || (option == threatInt)){
-                        possibleMoves.push_back(option);
-                        pTransferGroups.at(option) = 0;
-                        threatAcquireSeg = acquired;
-                        // can break here. Not a bug.
-                        break;
-                    }
-                }
-            }
-
-            if(!threatAcquireSeg.none()){
-                for(uint8_t i=0U; i<boardSize; ++i){
-                    if(segIdx[i] != 255U && threatAcquireSeg.test(segIdx[i]))
-                        pTransferGroups[i] = 0;
-                }
-            }
+            auto best = scoreChecker.maximize_score(board, currentTurn, threat);
+            possibleMoves.push_back(best);
             return;
         }
 
         else{
-            int groupCntr = -1;
-            const auto segTable = segment_table(potScore, currentTurn);
-            const auto& segIdx = segTable.segId;
-            std::bitset<boardSize> acquiredSeg;
+            auto optimals = scoreChecker.maximize_score(board, currentTurn, 0U);
+            for(const auto& m : optimals)
+                possibleMoves.push_back(m);
 
-            std::array<std::bitset<boardSize>, boardSize> buffer;
-            // push back possible moves
-            std::vector<uint8_t> nonEmptySquaresIdx;
-            for(uint8_t i=0U; i<boardSize; ++i){
-                if(is_legal(i / colSize, i % colSize))
-                    nonEmptySquaresIdx.push_back(i);
-            }
-
-            for(const auto i : nonEmptySquaresIdx){
-                // if(segIdx[i] < 0 || segIdx[i] >= 81){
-                //     for(int j=0; j<rowSize; ++j){
-                //         for(int k=0; k<colSize; ++k){
-                //             std::cerr << static_cast<int>(segIdx[j * colSize + k]);
-                //         }
-                //         std::cerr << std::endl;
-                //     }
-                // }
-
-                if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
-                    auto acquired = check_score(i/colSize, i%colSize, currentTurn, segTable);
-                    acquiredSeg |= acquired;
-                    buffer[i] = acquired;
-                }
-            }
-
-            for(const auto i : nonEmptySquaresIdx){
-                // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
-                if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
-                    possibleMoves.push_back(i);
-                    pTransferGroups.at(i) = ++groupCntr;
-
-                    // if territory is gained.
-                    if(!buffer[i].none()){
-                        for(const auto j : nonEmptySquaresIdx){
-                            if((segIdx[j] != 255U) && buffer[i].test(segIdx[j]))
-                                pTransferGroups.at(j) = groupCntr;
-                        }
-                    }
-                }
-            }
-            if(score_winner() == currentTurn){
+            if(score_winner() == currentTurn)
                 possibleMoves.push_back(PASSMOVE.first * colSize + PASSMOVE.second);
-                pTransferGroups.at(boardSize) = ++groupCntr;
-            }
+            return;
         }
     }
 }
 
-// Suppose it's opponent's turn and compute list of possible moves which generates score.
-std::vector<int> Game::opponent_scoring_moves() const{
-    Color oppTurn = reverse_color(currentTurn);
-    std::vector<int> scoringMoves;
+// return a list of cords which does not have superior score building move.
+// only return moves that gains equal or more points than minScore.
+std::vector<int> Game::maximize_score(const Color c, const uint8_t minScore) const{
+    return scoreChecker.maximize_score(board, c, minScore);
+}
 
-    int groupCntr = -1;
-    std::bitset<boardSize> potScore;
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            potScore.set(i * colSize + j, (board[i][j] & EMPTY) && canbe_score(i, j, oppTurn));
-        }
-    }
-    const auto segTable = segment_table(potScore, oppTurn);
-    const auto& segIdx = segTable.segId;
-    std::bitset<boardSize> acquiredSeg;
+// find a move that maximizes score which includes cord. If no move generates score, returns cord.
+int Game::maximize_score(Color c, const Move& cord) const{
+    return scoreChecker.maximize_score(board, c, cord);
+}
 
-    std::array<std::bitset<boardSize>, boardSize> buffer;
-    // push back possible moves
-    std::vector<uint8_t> nonEmptySquaresIdx;
-    for(uint8_t i=0U; i<boardSize; ++i){
-        if(is_legal(i / colSize, i % colSize))
-            nonEmptySquaresIdx.push_back(i);
-    }
-
-    for(const auto i : nonEmptySquaresIdx){
-        if(potScore.test(i) && !acquiredSeg.test(segIdx[i])){
-            auto acquired = check_score(i/colSize, i%colSize, oppTurn, segTable);
-            acquiredSeg |= acquired;
-            buffer[i] = acquired;
-        }
-    }
-
-    for(const auto i : nonEmptySquaresIdx){
-        // segIdx[i] = 255 for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
-        if(segIdx[i] == 255U || !acquiredSeg.test(segIdx[i])){
-            // if territory is gained.
-            if(!buffer[i].none()){
-                scoringMoves.push_back(i);
-            }
-        }
-    }
-    return scoringMoves;
+std::vector<float> Game::transfer_logit(const std::vector<float>& logits) const{
+    return scoreChecker.transfer_logit(logits, possibleMoves, currentTurn);
 }
 
 std::pair<Move, int> Game::tactic_check() const{
@@ -410,7 +240,7 @@ std::pair<Move, int> Game::tactic_check() const{
 
                 if(is_legal(onlyLib / colSize, onlyLib % colSize)){
                     // if my stone is under threat -> have to find only move unless can capture opponent's stone.
-                    if(board[i][j] & currentTurn){
+                    if(board.stones(currentTurn)[to_idx(i, j)]){
                         tactic = {onlyLib / colSize, onlyLib % colSize};
                     }
 
@@ -428,16 +258,12 @@ std::pair<Move, int> Game::tactic_check() const{
 
     // check if playing at threat would extend it's liberties
     std::bitset<boardSize> liberties;
-    for(int i=0; i<4; ++i){
-        uint8_t r = tactic.first + dr[i];
-        uint8_t c = tactic.second + dc[i];
-        if(inbound(r, c)){
-            if(board[r][c] & EMPTY){
-                return {tactic, 0};    
-            }
-            else if(board[r][c] & currentTurn){
-                liberties |= chains[find_head(r, c)].liberties;
-            }
+    for(auto [r, c] : neighbors4(tactic)){
+        if(board.is_empty(to_idx(r, c))){
+            return {tactic, 0};
+        }
+        else if(board.stones(currentTurn)[to_idx(r, c)]){
+            liberties |= chains[find_head(r, c)].liberties;
         }
     }
     liberties[tactic.first * colSize + tactic.second] = false;
@@ -483,10 +309,7 @@ Color Game::capture_result_after(uint8_t r, uint8_t c){
     chains[r * colSize + c] = {1U, {}};
     Color sColor = get_board({r, c});
 
-    for (int i = 0; i < 4; ++i) {
-        uint8_t nr = r + dr[i], nc = c + dc[i];
-        if (!inbound(nr, nc)) continue;
-
+    for (auto [nr, nc] : neighbors4(r, c)) {
         Color adjColor = get_board({nr, nc});
         if(adjColor == EMPTY){ 
             chains[find_head(r, c)].liberties.set(nr * colSize + nc, true);
@@ -518,10 +341,7 @@ std::pair<Color, std::vector<int>> Game::capture_result_with_stat(uint8_t r, uin
     chains[r * colSize + c] = {1U, {}};
     Color sColor = get_board({r, c});
 
-    for (int i = 0; i < 4; ++i) {
-        uint8_t nr = r + dr[i], nc = c + dc[i];
-        if (!inbound(nr, nc)) continue;
-
+    for (auto [nr, nc] : neighbors4(r, c)) {
         Color adjColor = get_board({nr, nc});
         if(adjColor == EMPTY){ 
             chains[find_head(r, c)].liberties.set(nr * colSize + nc, true);
@@ -552,7 +372,7 @@ std::pair<Color, std::vector<int>> Game::capture_result_with_stat(uint8_t r, uin
             int v = (winner == BLACK) ? 0 : 1;
             uint8_t repl = (winner == BLACK) ? BSCORE : WSCORE;
 
-            score[v] += chains[idx].size;
+            //score[v] += chains[idx].size;
 
             uint8_t cur = idx, start = idx;
             do {
@@ -574,334 +394,80 @@ std::pair<Color, std::vector<int>> Game::capture_result_with_stat(uint8_t r, uin
 }
 
 
-//////////////////////////////////////////////////////////////////////////////////
-/// Score related functions
-
-void Game::update_score(uint8_t r, uint8_t c) { // major bottleneck
-    Color toCheck = get_board({r, c});
-    int idx = (toCheck == BLACK) ? 0 : 1;
-    if(!canbe_score(r, c, toCheck))
-        return;
-
-    for (int i = 0; i < 4; ++i) {
-        uint8_t tr = r + dr[i], tc = c + dc[i];
-        score[idx] += static_cast<float>(check_score(tr, tc, toCheck));
-    }
-}
-
-uint8_t Game::check_score(uint8_t r, uint8_t c, Color clr) {
-    if (!(inbound(r, c) && (board[r][c] & EMPTY)))
-        return 0U;
-
-    uint8_t adjToOppositeSide = adj_to_opposite(clr);
-    uint8_t meetEdgeFlags = 0;  // 4bit integer to track edge touching
-    std::queue<Move> q;
-    std::vector<Move> emptyCells;
-    uint8_t areaCount = 0;
-
-    q.emplace(r, c);
-    std::bitset<boardSize> marker;
-    marker[r * colSize + c] = true;
-
-    while (!q.empty()) {
-        auto [tr, tc] = q.front();
-        q.pop();
-
-        if (board[tr][tc] & EMPTY) { // if cell is empty
-            if (board[tr][tc] & adjToOppositeSide) { // if place is adjacent to opponent stone
-                return 0; 
-            }
-            meetEdgeFlags |= (tr == 0);          // Top edge
-            meetEdgeFlags |= (tr == rowSize - 1) << 1; // Bottom edge
-            meetEdgeFlags |= (tc == 0) << 2;          // Left edge
-            meetEdgeFlags |= (tc == colSize - 1) << 3; // Right edge
-
-            areaCount++;
-            emptyCells.emplace_back(tr, tc);
-
-            for (int i = 0; i < 4; ++i) {
-                uint8_t nr = tr + dr[i], nc = tc + dc[i];
-                if (inbound(nr, nc) && !marker[nr * colSize + nc]) {
-                    q.emplace(nr, nc);
-                    marker[nr * colSize + nc] = true;
-                }
-            }
-        }
-        // else neutral; nothing to be done
-    }
-
-    if (meetEdgeFlags == 0b1111)  // All edges are touched
-        return 0U;
-
-    // Mark valid territory
-    Color scoreMarker = (clr == BLACK) ? BSCORE : WSCORE;
-    for (auto [tr, tc] : emptyCells) {
-        board[tr][tc] = scoreMarker;
-    }
-
-    return areaCount;
-}
-
-std::bitset<boardSize> Game::check_score(uint8_t r, uint8_t c, Color clr, const SegTable& segTable) const{
-    if (!(inbound(r, c) && (board[r][c] & EMPTY) && canbe_score(r, c, clr)))
-        return {};
-
-    const auto& segInfos = segTable.segInformation;
-    const auto& segIdx = segTable.segId;
-
-    uint8_t blockedSeg = segIdx[r * colSize + c];
-    std::bitset<boardSize> globalVisitMark, terrMark;
-    globalVisitMark[blockedSeg] = true;
-
-
-    for(int i=0; i<4; ++i){
-        auto nr = r + dr[i];
-        auto nc = c + dc[i];
-        if(!(inbound(nr, nc) && (board[nr][nc] & EMPTY)))
-            continue;
-
-        std::bitset<4> meetEdgeFlags;  // 4bit integer to track edge touching
-        std::queue<uint8_t> segQ;
-        std::bitset<boardSize> localVisitMark;
-        bool isScore = true;
-
-        const auto startSeg = segIdx[nr * colSize + nc];
-        assert(blockedSeg != startSeg);
-
-        // if segment was checked by previous iterations.
-        if(globalVisitMark[startSeg])
-            continue;
-
-        segQ.push(startSeg);
-        localVisitMark[blockedSeg] = true;
-        localVisitMark[startSeg] = true;
-
-        // perform BFS on segment
-        while (!segQ.empty()) {
-            const SegInfo sInfo = segInfos[segQ.front()];
-            segQ.pop();
-
-            // if segment is adjacent to opposite color
-            if(sInfo.adjOpp){
-                isScore = false;
-                break;
-            }
-            meetEdgeFlags |= sInfo.adjEdge;
-            if(meetEdgeFlags.all()){
-                isScore = false;
-                break;
-            }
-
-            for(const uint8_t adjSegs : sInfo.connectedSeg){
-                if(localVisitMark[adjSegs])
-                    continue;
-
-                if(globalVisitMark[adjSegs]){
-                    // if flow reaches here, it basically means that startSeg hasn't been visited yet reachable segment has been visited.
-                    // This indicates BFS quitted in previous iteration, which means this is not territory.
-                    isScore = false;
-                    break;
-                }
-                else{
-                    segQ.push(adjSegs);
-                    localVisitMark[adjSegs] = true;
-                }
-            }
-        }
-
-        if(isScore){
-            // std::cerr << "Territory gained " << localVisitMark << std::endl;
-            terrMark |= localVisitMark;
-        }
-        globalVisitMark |= localVisitMark;
-    }
-
-    terrMark[blockedSeg] = false;
-    return terrMark;
-}
-
-bool Game::canbe_score(uint8_t r, uint8_t c, Color clr) const{
-    int cnt = 0;
-    for (int dr = ((r == 0U) ? 0 : -1); dr <= ((r == rowSize-1) ? 0 : 1); dr++)
-        for (int dc = ((c == 0U) ? 0 : -1); dc <= ((c == colSize-1) ? 0 : 1); dc++)
-                cnt += ((board[r+dr][c+dc] & (clr | NEUTRAL)) ? 1 : 0);
-    
-    if(board[r][c] & (clr | NEUTRAL))
-        cnt--;
-
-    return cnt >= ((r == 0U || c == 0U || r == rowSize-1 || c == colSize-1) ? 1 : 2);
-}
-
-SegTable Game::segment_table(const std::bitset<boardSize>& potScore, Color turn) const{
-    std::array<uint8_t, boardSize> segMap;
-    std::vector<SegInfo> segInfos;
-    // maximum possible number of segments
-    // Absolutely essential to prevent memory reallocation.
-    segInfos.reserve(boardSize);
-    segMap.fill(255U);
-
-    std::vector<Move> terrCandidate;
-    uint8_t segN = 0U;
-
-    for(int i=0; i<rowSize; ++i){
-        for(int j=0; j<colSize; ++j){
-            if(potScore[i * colSize + j]){
-                segMap[i * colSize + j] = segN++;
-                terrCandidate.push_back({i, j});
-                std::bitset<4> adjEdge;
-                if(i == 0) 
-                    adjEdge[0] = true;
-                else if(i == rowSize - 1) 
-                    adjEdge[1] = true;
-                if(j == 0) 
-                    adjEdge[2] = true;
-                else if(j == colSize - 1) 
-                    adjEdge[3] = true;
-                segInfos.emplace_back(std::vector<uint8_t>{}, (board[i][j] & adj_to_opposite(turn)) ? 1U : 0U, std::move(adjEdge));
-            }
-        }
-    }
-
-    for(const Move& cand : terrCandidate){
-        SegInfo& currentSeg = segInfos.at(segMap[cand.first * colSize + cand.second]);
-        for(int i=0; i<4; ++i){
-            uint8_t r = cand.first + dr[i];
-            uint8_t c = cand.second + dc[i];
-            if(!(inbound(r, c) && (board[r][c] & EMPTY)))
-                continue;
-
-
-            if(segMap[r * colSize + c] != 255U){
-                currentSeg.connectedSeg.push_back(segMap[r * colSize + c]);
-            }
-            // if new segment is detected
-            else{
-                // set up connection
-                currentSeg.connectedSeg.push_back(segN);
-                segInfos.emplace_back();
-
-                // start BFS
-                std::queue<Move> seg;
-                seg.push({r, c});
-                segMap[r * colSize + c] = segN;
-                std::bitset<boardSize> checker;
-                checker[r * colSize + c] = true;
-
-                while(!seg.empty()){
-                    Move m = seg.front();
-                    seg.pop();
-                    if(board[m.first][m.second] & adj_to_opposite(turn))
-                        segInfos[segN].adjOpp = true;
-                    if(m.first == 0) 
-                        segInfos[segN].adjEdge[0] = true;
-                    else if(m.first == rowSize - 1) 
-                        segInfos[segN].adjEdge[1] = true;
-                    if(m.second == 0) 
-                        segInfos[segN].adjEdge[2] = true;
-                    else if(m.second == colSize - 1) 
-                        segInfos[segN].adjEdge[3] = true;
-                    
-
-                    for(int j=0; j<4; ++j){
-                        uint8_t nr = m.first + dr[j];
-                        uint8_t nc = m.second + dc[j];
-                        if(inbound(nr, nc) && (board[nr][nc] & EMPTY) && !checker[nr * colSize + nc]){
-                            checker[nr * colSize + nc] = true;
-                            uint8_t mapVal = segMap[nr * colSize + nc];
-                            if(mapVal == 255U){
-                                seg.push({nr, nc});
-                                segMap[nr * colSize + nc] = segN;
-                            }
-                            else if(mapVal != segN){
-                                segInfos[segN].connectedSeg.push_back(mapVal);
-                            }
-                        }
-                    }
-                }
-                segN++;
-            }
-        }
-    }
-
-    return {segInfos, segMap};
-}
-
-std::vector<int> Game::candidates_when_threat(const std::bitset<boardSize>& potScore) const{
-    std::vector<int> candidates;
-    if(potScore.none()){
-        candidates = {threat.first * colSize + threat.second};
-        return candidates;
-    }
+// std::vector<int> Game::candidates_when_threat(const std::bitset<boardSize>& potScore) const{
+//     std::vector<int> candidates;
+//     if(potScore.none()){
+//         candidates = {threat.first * colSize + threat.second};
+//         return candidates;
+//     }
         
-    // find shortest path from T to opposite color stone.
-    uint8_t direction[rowSize][colSize] = {0U};
-    std::queue<Move> q;
-    Move oppStone = RESIGNMOVE;
-    Move option = RESIGNMOVE;
-    
-    // direction : stores way to the closest white stone. 
-    direction[threat.first][threat.second] = 5U;
-    q.push(threat);
-    while(!q.empty()){
-        Move m = q.front();
-        q.pop();
-        for(int i=0; i<4; ++i){
-            auto nr = m.first + dr[i];
-            auto nc = m.second + dc[i];
-            if(inbound(nr, nc) && (board[nr][nc] & EMPTY)){
-                if(board[nr][nc] & adj_to_opposite(currentTurn)){
-                    q = {};
-                    oppStone = {nr, nc};
-                    direction[nr][nc] = i+1;
-                    break;
-                }
-                else if(direction[nr][nc] == 0U){
-                    q.push({nr, nc});
-                    direction[nr][nc] = i+1;
-                }
-            }
-        }
-    }
+//     // find shortest path from T to opposite color stone.
+//     // parent : BFS tree toward the closest opposite color stone. NOVISIT = not reached.
+//     constexpr uint8_t NOVISIT = 255U;
+//     std::array<uint8_t, boardSize> parent;
+//     parent.fill(NOVISIT);
+//     std::queue<Move> q;
+//     Move oppStone = RESIGNMOVE;
+//     Move option = RESIGNMOVE;
 
-    // extremely rare case where there are no reachable opposite color stone yet it is not territory.
-    if(oppStone == RESIGNMOVE){
-        for(uint8_t i=0U; i<rowSize; ++i){
-            for(uint8_t j=0U; j<colSize; ++j){
-                if(direction[i][j] > 0U && potScore[i * colSize + j])
-                    candidates.push_back(i * colSize + j);
-            }
-        }
+//     const int threatIdx = threat.first * colSize + threat.second;
+//     parent[threatIdx] = threatIdx;
+//     q.push(threat);
+//     const BitBoard& adjToOpp = board.adjacent(reverse_color(currentTurn));
+//     while(!q.empty()){
+//         Move m = q.front();
+//         q.pop();
+//         const uint8_t mIdx = m.first * colSize + m.second;
+//         for(auto [nr, nc] : neighbors4(m)){
+//             const int nIdx = nr * colSize + nc;
+//             if(!board.is_empty(nIdx))
+//                 continue;
+//             if(adjToOpp[nIdx]){
+//                 q = {};
+//                 oppStone = {nr, nc};
+//                 parent[nIdx] = mIdx;
+//                 break;
+//             }
+//             else if(parent[nIdx] == NOVISIT){
+//                 q.push({nr, nc});
+//                 parent[nIdx] = mIdx;
+//             }
+//         }
+//     }
 
-        // if threat is not inserted, insert threat.
-        if(!(direction[threat.first][threat.second] > 0U && potScore[threat.first * colSize + threat.second])){
-            candidates.push_back(threat.first * colSize + threat.second);
-        }
-    }
+//     // extremely rare case where there are no reachable opposite color stone yet it is not territory.
+//     if(oppStone == RESIGNMOVE){
+//         for(uint8_t i=0U; i<rowSize; ++i){
+//             for(uint8_t j=0U; j<colSize; ++j){
+//                 if(parent[i * colSize + j] != NOVISIT && potScore[i * colSize + j])
+//                     candidates.push_back(i * colSize + j);
+//             }
+//         }
 
-    // for each cord in path, should check if making a move there would make T a territory.
-    else{
-        option = oppStone;
-        while(option != threat){
-            if(potScore[option.first * colSize + option.second])
-                candidates.push_back(option.first * colSize + option.second);
+//         // if threat is not inserted, insert threat. (threat is always visited)
+//         if(!potScore[threatIdx]){
+//             candidates.push_back(threatIdx);
+//         }
+//     }
 
-            const auto dir = direction[option.first][option.second];
-            assert(dir >= 1 && dir <= 4);
-            option.first -= dr[dir - 1];
-            option.second -= dc[dir - 1];
-        }
-        candidates.push_back(threat.first * colSize + threat.second);
-    }
-    return candidates;
-}
+//     // for each cord in path, should check if making a move there would make T a territory.
+//     else{
+//         option = oppStone;
+//         while(option != threat){
+//             if(potScore[option.first * colSize + option.second])
+//                 candidates.push_back(option.first * colSize + option.second);
+
+//             const auto p = parent[option.first * colSize + option.second];
+//             assert(p != NOVISIT);
+//             option = {p / colSize, p % colSize};
+//         }
+//         candidates.push_back(threatIdx);
+//     }
+//     return candidates;
+// }
 
 uint8_t Game::get_legal_move_count() const{
-    uint8_t ret = 0;
-    for(int i=0; i<rowSize; ++i)
-        for(int j=0; j<colSize; ++j)
-            ret += is_legal(i, j) ? 1 : 0;
-    
-    return ret;
+    return static_cast<uint8_t>(board.empty().count());
 }
 
 void Game::display_board_gui(bool showScore) const{

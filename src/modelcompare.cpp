@@ -343,7 +343,7 @@ void ModelCompare::play_human() {
 		// 	<< " " << static_cast<int>(onlymove.second) << std::endl;
 		// }
 		const auto& moves = experiment.get_available_moves();
-		const auto& transTable = experiment.get_transfer_table();
+		// const auto& transTable = experiment.get_transfer_table();
 		
 		int idx;
 		for(idx = 0; idx < moves.size(); ++idx)
@@ -351,9 +351,9 @@ void ModelCompare::play_human() {
 				break;
 
 		std::cout << "move idx : " << idx << std::endl;
-		std::cout << "trans table : ";
-		for(auto m : transTable)
-			std::cout << m << " ";
+		// std::cout << "trans table : ";
+		// for(auto m : transTable)
+		// 	std::cout << m << " ";
 		std::cout << std::endl;
 		 
 		experiment.make_move_given_score(cord);

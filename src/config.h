@@ -2,7 +2,8 @@
 #define CONFIG_H
 #include <string>
 #include <vector>
-#include <utility>
+#include <cstdint>
+
 
 // search options that can differ between engines (e.g. two engines in evaluate_two / evaluate_multi).
 struct SearchParams {
@@ -32,7 +33,7 @@ struct Config {
 
     // board
     float komi;
-    std::vector<std::pair<int, int>> neutrals; 
+    std::vector<std::pair<uint8_t, uint8_t>> neutrals; 
 
     //neuralNet constants
     int batchSize;
