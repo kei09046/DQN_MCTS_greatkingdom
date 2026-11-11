@@ -106,7 +106,7 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
     const Color turnScore = (turn == BLACK) ? BSCORE : WSCORE;
     const Color oppturnScore = (turn == BLACK) ? WSCORE : BSCORE;
 
-    float scoreV = 2 * ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi);
+    float scoreV = 2 * ((turn == BLACK) ? game.get_komi() : -game.get_komi());
 
     scoreV += scoreEXP;
     for(int i=0; i<boardSize; ++i){
@@ -119,8 +119,6 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
         else if(game.is_legal(m.first, m.second)) 
             scoreV += scoreMap[i];
     }
-
-    //float scoreV = ((turn == BLACK) ? globalConfig.komi : -globalConfig.komi) + scoreEXP;
 
     // std::bitset<boardSize> mark;
     // for(int i=0; i<inputSize; ++i){

@@ -273,6 +273,11 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		ret.at(24 * inputSize + m) = 1.0f;
 	}
 
+	// channel 25 : komi from the side to move's perspective (komi is added to white's score).
+	const float komi = (turn == WHITE) ? game.get_komi() : -game.get_komi();
+	for(int i=0; i<inputSize; ++i)
+		ret.at(25*inputSize + i) = komi / boardSize;
+
     return {ret};
 }
 
@@ -742,6 +747,8 @@ std::shared_ptr<NetBase> PolicyValueNet::make_net() const{
 		return std::make_shared<Net>(23, numBlocks, 32, 256, true);
 	if(modelType == "L")
 		return std::make_shared<Net>(25, numBlocks, 32, 256, true);
+	if(modelType == "M") // L + komi input channel
+		return std::make_shared<Net>(26, numBlocks, 32, 256, true);
 	throw std::runtime_error("Unsupported model type: " + modelType);
 }
 

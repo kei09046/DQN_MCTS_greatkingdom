@@ -33,6 +33,8 @@ struct Config {
 
     // board
     float komi;
+    float randomKomiProb; // self-play only : chance of a game using a random komi (see rnd::sample_komi)
+    int randomKomiRange;  // self-play only : random komi is komi + d, |d| <= randomKomiRange
     std::vector<std::pair<uint8_t, uint8_t>> neutrals; 
 
     //neuralNet constants

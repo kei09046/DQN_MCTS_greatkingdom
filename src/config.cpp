@@ -107,6 +107,12 @@ Config load_config(const std::string& path) {
     c.initialLearningRate = T.at("initialLearningRate");
     if(!(c.initialLearningRate > 0.0f))
         throw std::runtime_error("initialLearningRate must be positive");
+    c.randomKomiProb = T.at("randomKomiProb");
+    if(c.randomKomiProb < 0.0f || c.randomKomiProb > 1.0f)
+        throw std::runtime_error("randomKomiProb must be in [0, 1]");
+    c.randomKomiRange = T.at("randomKomiRange");
+    if(c.randomKomiRange < 0)
+        throw std::runtime_error("randomKomiRange must be non-negative");
 
     //dirichlet noise
     auto& D = j.at("dirichlet_noise");

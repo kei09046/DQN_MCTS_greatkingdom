@@ -108,8 +108,13 @@ void label_finished_game(std::vector<TrainData>& buffer, const std::vector<Move>
 	}
 }
 
-void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp, int nGames) {
-	Game gameManager = Game();
+void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
+	const float komi = rnd::sample_komi(globalConfig.komi, globalConfig.randomKomiProb, globalConfig.randomKomiRange);
+	const std::vector<Move> neutrals = rnd::sample_neutrals();
+
+	Game gameManager(komi, neutrals);
+	player->reset(Game(komi, neutrals));
+
 	NNInput state;
 
 	std::vector<Move> sequence;
@@ -156,7 +161,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp, int 
 					std::cerr << static_cast<int>(i.first) << "," << static_cast<int>(i.second) << " ";
 				}
 				std::cerr << "\n";
-				player->reset(Game());
 				#ifdef measureTime
 				player->resetTimeStats();
 				#endif
@@ -176,7 +180,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp, int 
 			}
 			std::cout << "\n";
 			// game_manager.displayBoardGUI(true);
-			std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << "\n\n";
+			std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << " komi : " << komi << "\n\n";
 		}
 
 		if(wintype != CAPTURE)
@@ -188,7 +192,6 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp, int 
 			if(recorded.at(i))
 				insert_data(buffer.at(i), forced.at(i), only.at(i));
 
-		player->reset(Game());
 		return;
 	}
 }
@@ -266,7 +269,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 		selfPlayThreads.emplace_back([&, j] {
 			for (int i = 0; i < gameBatchNum / inferenceThreadNum && !stopFlag; ++i) {
 				selfPlayPaused[j].store(false);
-				start_self_play(&(mctsAgent[j]), isShown && (j == 0), temp, 1); // modifies state_buffer
+				start_self_play(&(mctsAgent[j]), isShown && (j == 0), temp); // modifies state_buffer
 				selfPlayPaused[j].store(true);
 				pauseCv.notify_one();
 

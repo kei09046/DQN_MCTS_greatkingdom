@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <bitset>
 #include <cassert>
+#include <cmath>
 
 
-Game::Game() : board(globalConfig.neutrals), moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE), scoreChecker(){
+Game::Game(float komi, const std::vector<Move>& neutrals) :
+ board(neutrals), komi(komi), moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE), scoreChecker(){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
@@ -274,6 +276,32 @@ std::pair<Move, int> Game::tactic_check() const{
     return {tactic, 0};
 }
 
+
+bool Game::valid_komi(float komi){
+    // Hash indexes komi by floor(komi) + boardSize in [0, 2 * boardSize).
+    return std::fabs(komi - std::floor(komi) - 0.5f) < 1e-4f && komi > -boardSize && komi < boardSize;
+}
+
+bool Game::read_setup(std::istream& in, float& komi, std::vector<Move>& neutrals){
+    float k;
+    int n;
+    if(!(in >> k >> n) || !valid_komi(k) || n < 0 || n > boardSize)
+        return false;
+
+    std::vector<Move> ns;
+    for(int i=0; i<n; ++i){
+        int r, c;
+        if(!(in >> r >> c) || r < 0 || r >= rowSize || c < 0 || c >= colSize)
+            return false;
+        const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+        if(std::find(ns.begin(), ns.end(), m) != ns.end())
+            return false;
+        ns.push_back(m);
+    }
+    komi = k;
+    neutrals = std::move(ns);
+    return true;
+}
 
 void Game::on_game_end(Color winner){
     std::cout << "game over! winner is : " << static_cast<int>(winner) << std::endl;

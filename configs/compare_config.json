@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../testmodels/",
-     "model_prefix": "L",
+     "model_prefix": "M",
      "drive_path": "../drive/MyDrive/",
      "data_path": "../data/"
   },
@@ -47,8 +47,8 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 25,
-    "numHiddenBlock": 10
+    "inputChannel": 26,
+    "numHiddenBlock": 12
   },
 
   "cache": {
@@ -71,6 +71,8 @@
     "fallbackWinrate": 0.25,
     "lrPatience": 10,
     "lrImprovementWinrate": 0.55,
-    "initialLearningRate": 0.0001
+    "initialLearningRate": 0.0001,
+    "randomKomiProb": 0.5,
+    "randomKomiRange": 3
   }
 }

@@ -445,9 +445,11 @@ void Node::add_dirichlet_noise(Evaluator* evaluator){
 
 MCTS::MCTS(Evaluator* evaluator, SearchParams params) : 
 evaluator(evaluator), transposTable(new TransTable()), params(params){
-    root = new Node(Game(), hash.base_hash(), transposTable);
+    // g could be set to other position if needed.
+    Game g = Game();
+    root = new Node(g, hash.compute_hash(g), transposTable);
     if(globalConfig.transTable){
-        transposTable->emplace(hash.base_hash(), std::make_pair(root, 1));
+        transposTable->emplace(hash.compute_hash(g), std::make_pair(root, 1));
     }
 }
 

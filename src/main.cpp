@@ -120,24 +120,6 @@ int main(int argc, char** argv) {
         float lr = (argc > 4) ? std::stof(argv[4]) : 0.0002f;
         train_on_static_data(dataFile, steps, lr);
     }
-    else if(mod == "test_hash"){
-        Hash hash;
-        HashValue h = hash.base_hash();
-        Game g = Game();
-        while(true){
-            int r, c;
-            std::cout << "Enter move (row col): ";
-            std::cin >> r >> c;
-            if(r == -1 && c == -1) break;
-            if(!g.is_legal(r, c)){
-                std::cout << "Illegal move. Try again." << std::endl;
-                continue;
-            }
-            h = hash.compute_hash_after_move(g, {r, c}, h);
-            g.make_move({r, c});
-            std::cout << "New hash: " << h << std::endl;
-        }
-    }
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     std::cout << "total time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]\n";

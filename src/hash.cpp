@@ -19,21 +19,28 @@ Hash::Hash() {
 
     // for empty square, zobrist table has 0 value.
     for (int r = 0; r < rowSize; ++r)
-        for (int c = 0; c < colSize; ++c)
+        for (int c = 0; c < colSize; ++c){
             for (int color = 0; color < 3; ++color){
                 zobristTable[r][c][color] = dist(rng);
                 //std::cerr << color << " " << r << " " << c << " " << zobristTable[r][c][color] << std::endl;
             }
+            zobristTable[r][c][3] = 0;
+        }
     zobristToPlay = dist(rng);
     //std::cerr << zobristToPlay << std::endl;
+
+    for(int i=0; i<2*boardSize; ++i){
+        komiHash[i] = dist(rng);
+    }
 }
 
-HashValue Hash::base_hash() const{
-    static HashValue h = 0;
-    if(h == 0){
-        for(const auto& neutral : globalConfig.neutrals)
-            h ^= zobristTable[neutral.first][neutral.second][2];
-    }
+HashValue Hash::base_hash(const Game& game) const{
+    HashValue h = 0;
+
+    for(const auto& neutral : globalConfig.neutrals)
+        h ^= zobristTable[neutral.first][neutral.second][2];
+    h ^= komiHash[boardSize + static_cast<int>(std::floor(game.get_komi()))];
+    
     return h;
 }
 
@@ -47,7 +54,7 @@ HashValue Hash::compute_hash(const Game& game) const{
             h ^= zobristTable[i][j][color_to_index(game.get_board({i, j}))];
         }
     }
-
+    h ^= komiHash[boardSize + static_cast<int>(std::floor(game.get_komi()))];
     return h;
 }
 

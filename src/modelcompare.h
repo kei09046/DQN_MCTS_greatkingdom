@@ -9,16 +9,19 @@
 
 class ModelCompare{
 public:
-    static float start_play(std::array<MCTS*, 2> playerList, // two models play against each other
+    static float start_play(std::array<MCTS*, 2> playerList, const Game& start, // two models play against each other from start
 		std::ostream& partRes, bool isShown = false, float temp = 0.1f);
 
-	static void play(const std::string& model, Color side, float temp, bool gpu, bool shown); // play against human
+	// play against human. Asks for the setup "<komi> <nNeutrals> [r c]..." first (empty line : config); on the human's turn,
+	// "<r> <c>" plays a move and "komi <k>" changes komi. play_web and play_human read input the same way.
+	static void play(const std::string& model, Color side, float temp, bool gpu, bool shown);
 
 	static void play_human();
 
-	static void play_gtp(const std::string& model, float temp, bool gpu); // play against human via GTP
+	// play against human via GTP. "komi <k>" works at any time, "set_neutrals [vertex]..." before the first move.
+	static void play_gtp(const std::string& model, float temp, bool gpu);
 
-	// Interactive analysis mode: reads "reset" / "play <r> <c>" / "analyze [playouts]" / "quit"
+	// Interactive analysis mode: reads "reset [<komi> <nNeutrals> [r c]...]" / "komi <k>" / "play <r> <c>" / "analyze [playouts]" / "quit"
 	// commands from stdin, letting a caller build up an arbitrary position and request a
 	// winrate / policy / visit-count breakdown for it without playing a full game.
 	static void analyze(const std::string& model, bool gpu, SearchParams params = globalConfig.search_params());
@@ -51,9 +54,9 @@ private:
 
 	static Move parse_vertex(const std::string& v);
 
-	static Color cmd_play(std::istringstream& iss, Game gameManager, MCTS& player);
+	static Color cmd_play(std::istringstream& iss, Game& gameManager, MCTS& player);
 
-	static void cmd_genmove(std::istringstream& iss, Game gameManager, MCTS& player, float temp);
+	static void cmd_genmove(std::istringstream& iss, Game& gameManager, MCTS& player, float temp);
 };
 
 #endif

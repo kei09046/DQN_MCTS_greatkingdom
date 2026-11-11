@@ -5,6 +5,7 @@
 #include <queue>
 #include <vector>
 #include <bitset>
+#include <istream>
 #include "consts.h"
 #include "board.h"
 #include "territoryhelper.h"
@@ -28,7 +29,7 @@ enum Wintype{
 
 class Game{
 public:
-    Game();
+    Game(float komi = globalConfig.komi, const std::vector<Move>& neutrals = globalConfig.neutrals);
     // copy constructor which gets called during MCTS search to generate child node.
     // do not copy transferGroups/availableMoves.
     // Game(const Game& parent);
@@ -91,7 +92,7 @@ public:
     };
 
     inline Color score_winner() const {
-        return scoreChecker.obtained_score(BLACK) - scoreChecker.obtained_score(WHITE) - globalConfig.komi > 0 ? BLACK : WHITE;
+        return scoreChecker.obtained_score(BLACK) - scoreChecker.obtained_score(WHITE) - komi > 0 ? BLACK : WHITE;
     };
 
     inline Color get_turn() const{
@@ -115,6 +116,22 @@ public:
     inline const Board& get_board_state() const{
         return board;
     }
+
+    inline const float& get_komi() const{
+        return komi;
+    }
+
+    // changes komi mid-game. An MCTS tree built for the old komi is stale : reset it with this game afterwards.
+    inline void set_komi(float newKomi){
+        komi = newKomi;
+    }
+
+    // komi has to be x.5 (no draws) and within what Hash can encode.
+    static bool valid_komi(float komi);
+
+    // reads a game setup "<komi> <nNeutrals> [r c]..." (the same layout "rules ready" prints).
+    // false (komi / neutrals untouched) on malformed input, an invalid komi, or a neutral point off the board / repeated.
+    static bool read_setup(std::istream& in, float& komi, std::vector<Move>& neutrals);
 
     inline const int get_chain_idx(int cord) const{
         return stones[cord/colSize][cord%colSize].head;
@@ -156,7 +173,9 @@ public:
         return (c == BLACK) ? WHITE : BLACK;
     }
 
-private:    
+private:
+    float komi;
+
     Color currentTurn;
     Board board;
     Move lastTwoMoves[2];

@@ -1,6 +1,17 @@
 import numpy as np
 import subprocess
 import threading
+import math
+
+
+def setup_args(komi, neutrals):
+    """The "<komi> <nNeutrals> [r c]..." game setup the C++ side reads (Game::read_setup)."""
+    return f"{komi:g} {len(neutrals)}" + "".join(f" {r} {c}" for r, c in neutrals)
+
+
+def valid_komi(komi, board_size=9):
+    """Komi the engine accepts (Game::valid_komi): x.5, so no draws, and within what its hash encodes."""
+    return abs(komi - math.floor(komi) - 0.5) < 1e-4 and -board_size ** 2 < komi < board_size ** 2
 
 
 class _RulesServer:
@@ -29,15 +40,16 @@ class _RulesServer:
                 return
         raise RuntimeError("rules server exited before it was ready")
 
-    def query(self, moves):
-        """moves: (r, c) pairs from the empty board, pass = (board_size, 0). Returns the reply's
-        fields after the id (see Analysis::rules_server)."""
+    def query(self, moves, komi, neutrals):
+        """moves: (r, c) pairs from the empty board, pass = (board_size, 0), in the game set up with
+        komi / neutrals. Returns the reply's fields after the id (see Analysis::rules_server)."""
         with self.lock:
             if self.proc.poll() is not None:
                 raise RuntimeError(f"rules server died (exit code {self.proc.poll()})")
             self._next_id += 1
             req_id = str(self._next_id)
-            self.proc.stdin.write("rules " + req_id + "".join(f" {r} {c}" for r, c in moves) + "\n")
+            self.proc.stdin.write("rules " + req_id + " setup " + setup_args(komi, neutrals)
+                                  + "".join(f" {r} {c}" for r, c in moves) + "\n")
             self.proc.stdin.flush()
             for line in self.proc.stdout:
                 parts = line.split()
@@ -52,8 +64,10 @@ class RuleManager:
     Python never re-implements them and can't disagree with what the engines play -- e.g. the
     game ends by score as soon as the last empty point is filled, exactly as in C++.
 
-    Board size, neutral points and komi (`penalty`) are read from the C++ side
-    (configs/play_config.json) when the first RuleManager is made."""
+    Board size and the default neutral points / komi (`penalty`) are read from the C++ side
+    (configs/play_config.json) when the first RuleManager is made. Each RuleManager has its own
+    setup (self.penalty, self.neutral), the defaults unless given; komi can be changed mid-game
+    (set_komi), the neutral stones only by making a new RuleManager."""
 
     Max = 2 ** 16 - 1
     boardSize = 9
@@ -72,9 +86,23 @@ class RuleManager:
                 RuleManager.penalty = cls._server.komi
             return cls._server
 
-    def __init__(self):
+    def __init__(self, komi=None, neutral=None):
+        server = self._rules()  # also loads the class-level defaults below
+        self.penalty = RuleManager.penalty if komi is None else float(komi)
+        self.neutral = list(RuleManager.neutral if neutral is None else neutral)
         self.seq = []
-        self._apply(self._rules().query([])[1:])
+        reply = server.query([], self.penalty, self.neutral)
+        if reply[0] != "ok":
+            raise ValueError(f"invalid game setup : komi {self.penalty}, neutrals {self.neutral}")
+        self._apply(reply[1:])
+
+    def set_komi(self, komi):
+        """Changes komi of this game (any position). The result of a game already over by score
+        follows the new komi."""
+        if not valid_komi(komi, self.boardSize):
+            raise ValueError(f"invalid komi {komi}")
+        self.penalty = float(komi)
+        self._apply(self._rules().query(self._wire(self.seq), self.penalty, self.neutral)[1:])
 
     def _wire(self, seq):
         return [(self.boardSize, 0) if x == -1 else (x, y) for x, y in seq]
@@ -137,7 +165,7 @@ class RuleManager:
             return self.make_move(*RuleManager.convert(x, is_pair=False))
         move = (-1, 0) if (x == -1 or y == -1) else (int(x), int(y))
         mover = self.turn
-        reply = self._rules().query(self._wire(self.seq + [move]))
+        reply = self._rules().query(self._wire(self.seq + [move]), self.penalty, self.neutral)
         if reply[0] == "illegal":
             raise ValueError(f"illegal move {move} after {len(self.seq)} moves")
         self.seq.append(move)
@@ -182,6 +210,39 @@ BUILD_DIR = os.path.join(REPO_ROOT, "build")
 MODELS_DIR = os.path.join(REPO_ROOT, "models")
 MATCHES_DIR = os.path.join(REPO_ROOT, "matches")
 PLAY_CONFIG = os.path.join(REPO_ROOT, "configs", "play_config.json")
+
+
+def random_komi_params(config_path=PLAY_CONFIG):
+    """(randomKomiProb, randomKomiRange) of the config's train section, as self-play uses them."""
+    try:
+        with open(config_path) as f:
+            train = json.load(f).get("train", {})
+    except (OSError, ValueError):
+        train = {}
+    return float(train.get("randomKomiProb", 0.5)), int(train.get("randomKomiRange", 3))
+
+
+def sample_komi(base_komi, random_prob, komi_range, rng=random):
+    """Same as rnd::sample_komi (src/random.cpp): base_komi with probability 1 - random_prob, else
+    base_komi + d, d uniform among the integers in [-komi_range, komi_range] keeping komi >= 0.5."""
+    if komi_range <= 0 or rng.random() >= random_prob:
+        return base_komi
+    lo = max(-komi_range, math.ceil(0.5 - base_komi))
+    return base_komi + rng.randint(lo, komi_range)
+
+
+def sample_neutrals(board_size, rng=random):
+    """Same as rnd::sample_neutrals (src/random.cpp): no neutral stone or one, every starting position
+    up to rotation / flip (each symmetry class of points, and "none") equally likely; the point is
+    uniform within its class."""
+    classes = {}
+    for r in range(board_size):
+        for c in range(board_size):
+            fr, fc = min(r, board_size - 1 - r), min(c, board_size - 1 - c)
+            classes.setdefault((min(fr, fc), max(fr, fc)), []).append((r, c))
+    groups = list(classes.values())
+    k = rng.randint(0, len(groups))  # == len(groups) : no neutral
+    return [] if k == len(groups) else [rng.choice(groups[k])]
 
 
 def default_search_params(config_path=PLAY_CONFIG):
@@ -586,7 +647,7 @@ class AnalysisEngine:
         for line in self.proc.stdout:
             line = line.rstrip("\n")
 
-            if line in ("play ok", "play illegal", "reset ok"):
+            if line in ("play ok", "play illegal", "reset ok", "reset invalid", "komi ok", "komi invalid"):
                 self._ack_gen += 1
                 continue
 
@@ -691,9 +752,16 @@ class AnalysisEngine:
         except (BrokenPipeError, OSError):
             pass
 
-    def send_reset(self):
+    def send_reset(self, komi=None, neutrals=None):
+        """Empty board; with komi / neutrals given, set up that way (else the config's setup)."""
         self.sent_gen += 1
-        self._send("reset")
+        self._send("reset" if komi is None else "reset " + setup_args(komi, neutrals))
+
+    def send_komi(self, komi):
+        """Changes komi of the current position. The engine rebuilds its search tree, so results
+        from before it are stale (counted as a position change)."""
+        self.sent_gen += 1
+        self._send(f"komi {komi:g}")
 
     def send_play(self, x, y):
         self.sent_gen += 1
@@ -783,14 +851,16 @@ class NNInputServer:
                 self.replies.put((parts[1], {"channels": int(parts[2]),
                                              "values": [float(x) for x in parts[3:]]}))
 
-    def request(self, moves):
+    def request(self, moves, komi, neutrals):
         """Asks for the input of the position after `moves` ((r, c) pairs from the empty
-        board, pass = (rowSize, 0)); returns the id its reply will carry."""
+        board, pass = (rowSize, 0)) in the game set up with komi / neutrals; returns the id its
+        reply will carry."""
         self._next_id += 1
         req_id = str(self._next_id)
         if self.proc.poll() is None:
             try:
-                self.proc.stdin.write("nninput " + req_id + "".join(f" {r} {c}" for r, c in moves) + "\n")
+                self.proc.stdin.write("nninput " + req_id + " setup " + setup_args(komi, neutrals)
+                                      + "".join(f" {r} {c}" for r, c in moves) + "\n")
                 self.proc.stdin.flush()
             except (BrokenPipeError, OSError):
                 pass
@@ -828,9 +898,14 @@ class MatchRunner:
     root.after() -- same reader-thread-plus-queue pattern AnalysisEngine itself uses.
     """
 
-    def __init__(self, engine_a_cfg, engine_b_cfg, n_games, build_dir=BUILD_DIR):
+    def __init__(self, engine_a_cfg, engine_b_cfg, n_games, build_dir=BUILD_DIR, komi=None, neutrals=None):
         # each cfg: {"model": str, "playouts": int, "temp": float, "fpu": float, "min_visit_ratio": float}
+        # komi / neutrals : fixed for every game, or None to draw them at random (sample_komi /
+        # sample_neutrals, like self-play) for each pair of games -- both games of a pair, one with
+        # each color assignment, use the same setup. neutrals = [] : no neutral stone.
         self.cfg = {"A": engine_a_cfg, "B": engine_b_cfg}
+        self.komi = komi
+        self.neutrals = None if neutrals is None else list(neutrals)
         self.n_games = n_games
         self.build_dir = build_dir
         self.events = queue.Queue()
@@ -888,10 +963,15 @@ class MatchRunner:
                 white = "B" if black == "A" else "A"
                 self.events.put({"type": "game_start", "index": game_idx, "black": black, "white": white})
 
+                if game_idx % 2 == 0:  # first game of a pair : its setup
+                    komi = self.komi if self.komi is not None else sample_komi(
+                        RuleManager.penalty, *random_komi_params())
+                    neutrals = self.neutrals if self.neutrals is not None else sample_neutrals(
+                        RuleManager.boardSize)
                 for eng in engines.values():
-                    eng.send_reset()
+                    eng.send_reset(komi, neutrals)
 
-                rm = RuleManager()
+                rm = RuleManager(komi, neutrals)
                 move_log = []
                 winner_color, margin, by = None, None, None
 
@@ -986,7 +1066,9 @@ class MatchRunner:
                 record = {
                     "index": game_idx, "black": black, "white": white,
                     "winner": winner, "winner_color": winner_color,
-                    "margin": margin, "by": by, "moves": move_log,
+                    "margin": margin, "by": by,
+                    "komi": rm.penalty, "neutrals": [list(n) for n in rm.neutral],
+                    "moves": move_log,
                 }
                 self.events.put({"type": "game_end", "record": record})
 
@@ -1000,7 +1082,11 @@ class Game:
     def __init__(self, margin=50):
         self.rule = RuleManager()
         self.boardSize = RuleManager.boardSize
-        self.neutral = RuleManager.neutral
+        # Game setup every new RuleManager of this board starts from (see _new_rule): komi can be
+        # changed at any position (_apply_komi), the neutral stone only on the empty board before
+        # an engine is started (_set_neutral). Clear Board keeps it; loading a game takes the game's.
+        self.setup_komi = self.rule.penalty
+        self.setup_neutral = list(self.rule.neutral)
         self.cord = [[(0, 0) for i in range(self.boardSize)] for j in range(self.boardSize)]
         self.root = Tk()
         self.root.title("Great Kingdom")
@@ -1345,6 +1431,28 @@ class Game:
         self._build_moves_tab(moves_col)
 
     def _build_position_tab(self, panel):
+        # game setup : komi (any position) and the neutral stone (empty board, before the engine starts).
+        Label(panel, text="Game setup:", anchor="w").pack(fill=X, pady=(10, 0))
+        komi_row = Frame(panel)
+        komi_row.pack(fill=X, pady=(2, 2))
+        Label(komi_row, text="Komi:").pack(side=LEFT)
+        self.komi_var = StringVar(value=f"{self.setup_komi:g}")
+        komi_entry = Entry(komi_row, textvariable=self.komi_var, width=6)
+        komi_entry.pack(side=LEFT, padx=(5, 5))
+        komi_entry.bind("<Return>", lambda e: self._apply_komi())
+        Button(komi_row, text="Set", command=self._apply_komi).pack(side=LEFT)
+        neutral_row = Frame(panel)
+        neutral_row.pack(fill=X, pady=(2, 2))
+        self.edit_neutral_var = BooleanVar(value=False)
+        Checkbutton(neutral_row, text="Place neutral stone", variable=self.edit_neutral_var,
+                    command=self._on_edit_neutral_toggle).pack(side=LEFT)
+        Button(neutral_row, text="Remove", command=lambda: self._set_neutral([])).pack(side=LEFT, padx=(5, 0))
+        Button(neutral_row, text="Default",
+               command=lambda: self._set_neutral(RuleManager.neutral)).pack(side=LEFT, padx=(5, 0))
+        self.setupInfoLabel = Label(panel, text="", fg="#555555", anchor="w", wraplength=260, justify=LEFT)
+        self.setupInfoLabel.pack(fill=X, pady=(0, 0))
+        self._update_setup_label()
+
         Label(panel, text="Engine plays:", anchor="w").pack(fill=X, pady=(10, 0))
         engine_plays_row = Frame(panel)
         engine_plays_row.pack(fill=X, pady=(2, 10))
@@ -1621,11 +1729,7 @@ class Game:
 
         self._draw_star_points()
 
-        for i in self.neutral:
-            self.canvas.create_image(self.m + i[0] * self.delta - self.stone_size / 2,
-                                     self.m + i[1] * self.delta - self.stone_size / 2,
-                        anchor=NW, image=self.stones[2], tags="neutral")
-            self.on_stone[i[0]][i[1]] = True
+        self._draw_neutrals()
 
         for i in range(self.boardSize):
             for j in range(self.boardSize):
@@ -1644,6 +1748,95 @@ class Game:
         win_w = min(self.content.winfo_reqwidth(), self.root.winfo_screenwidth() - SCREEN_RESERVE_W)
         win_h = min(self.content.winfo_reqheight(), self.root.winfo_screenheight() - SCREEN_RESERVE_H)
         self.root.geometry(f"{win_w}x{win_h}+0+0")
+
+    def _new_rule(self):
+        return RuleManager(self.setup_komi, self.setup_neutral)
+
+    def _draw_neutrals(self):
+        """(Re)draws the neutral stones of self.rule."""
+        self.canvas.delete("neutral")
+        for x, y in self.rule.neutral:
+            self.canvas.create_image(self.m + x * self.delta - self.stone_size / 2,
+                                     self.m + y * self.delta - self.stone_size / 2,
+                                     anchor=NW, image=self.stones[2], tags="neutral")
+            self.on_stone[x][y] = True
+
+    def _update_setup_label(self, message=None, error=False):
+        """The game setup line under the komi / neutral controls, or `message` instead."""
+        if message is None:
+            neutral = ", ".join(f"({x},{y})" for x, y in self.rule.neutral) or "none"
+            message = f"Komi {self.rule.penalty:g}, neutral stone: {neutral}"
+        self.setupInfoLabel.configure(text=message, fg="#C62828" if error else "#555555")
+
+    def _apply_komi(self):
+        """"Set" next to the komi field: changes komi of the game at whatever position is on the
+        board. A running engine keeps its position but rebuilds its search tree (its values were
+        for the old komi), so this position's analysis starts over (unless paused)."""
+        try:
+            komi = float(self.komi_var.get())
+        except ValueError:
+            komi = None
+        if komi is None or not valid_komi(komi, self.boardSize):
+            self._update_setup_label("Komi must end in .5 (e.g. 2.5) -- draws aren't supported.", error=True)
+            return
+        self.setup_komi = komi
+        self.rule.set_komi(komi)
+        self.komi_var.set(f"{komi:g}")
+
+        if self.analysis_mode and self.analysisEngine is not None:
+            self.analysisEngine.send_komi(komi)
+            self._clear_analysis_display()
+            self.analysis_turn_base_visits = 0
+            self.analysis_turn_requested = 0
+            self._auto_move_seq_len = -1
+            # evaluations recorded so far were for the old komi.
+            self.position_eval_log = {}
+            if not self.analysis_paused:
+                self._request_more_playouts()
+
+        # a finished free-play game shown at its last position : its score result follows the new komi.
+        if self.game_over and self.review_record is None and self.rule.status == "score":
+            winner_color, margin = self.rule.end_game()
+            text = {1: f"winner is black by {margin}", -1: f"winner is white by {margin}"}.get(winner_color, "draw")
+            self.statusLabel.configure(text=text)
+            self.game_over_text = text
+
+        self._update_setup_label()
+        self._update_moves_tab()
+
+    def _neutral_edit_blocker(self):
+        """Why the neutral stone can't be changed right now, or None."""
+        if self.review_mode:
+            return "A loaded game's neutral stone is fixed -- Clear Board first."
+        if self.rule.seq:
+            return "The neutral stone can only be changed on the empty board -- Clear Board first."
+        if self.analysis_mode:
+            return "The neutral stone can only be changed before the engine starts -- Clear Board first."
+        return None
+
+    def _on_edit_neutral_toggle(self):
+        if not self.edit_neutral_var.get():
+            self._update_setup_label()
+            return
+        problem = self._neutral_edit_blocker()
+        if problem:
+            self.edit_neutral_var.set(False)
+            self._update_setup_label(problem, error=True)
+            return
+        self._update_setup_label("Click a point to put the neutral stone there, click it again to remove it.")
+
+    def _set_neutral(self, neutral):
+        """Replaces the neutral stone(s) of the (empty) board."""
+        problem = self._neutral_edit_blocker()
+        if problem:
+            self._update_setup_label(problem, error=True)
+            return
+        self.setup_neutral = [tuple(n) for n in neutral]
+        self.rule = self._new_rule()
+        self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
+        self._draw_neutrals()
+        self._update_status()
+        self._update_setup_label()
 
     def _draw_star_points(self):
         if self.boardSize < 7:
@@ -1828,26 +2021,36 @@ class Game:
             else:
                 self._update_status()
 
-    def on_click(self, event):
-        if self.game_over or self.review_mode:
-            return
-        if self._is_engine_turn():
-            return  # the engine auto-plays this color right now; ignore board clicks
-
+    def _board_point(self, event):
+        """The board point a click landed on (close enough to the intersection), or None."""
         x_cord = int((event.x - self.m) / self.delta + 0.5)
         y_cord = int((event.y - self.m) / self.delta + 0.5)
         x_loc = self.m + x_cord * self.delta
         y_loc = self.m + y_cord * self.delta
 
         if x_cord < 0 or x_cord >= self.boardSize or y_cord < 0 or y_cord >= self.boardSize:
-            return
-
+            return None
         if not (abs(event.x - x_loc) < self.cl and abs(event.y - y_loc) < self.cl):
+            return None
+        return x_cord, y_cord
+
+    def on_click(self, event):
+        if self.edit_neutral_var.get():
+            # neutral stone placement mode : clicks move / remove the neutral stone, never play.
+            point = self._board_point(event)
+            if point is not None:
+                self._set_neutral([] if point in self.rule.neutral else [point])
             return
-        if not self._is_legal_point(x_cord, y_cord):
+        if self.game_over or self.review_mode:
+            return
+        if self._is_engine_turn():
+            return  # the engine auto-plays this color right now; ignore board clicks
+
+        point = self._board_point(event)
+        if point is None or not self._is_legal_point(*point):
             return
 
-        self._commit_move(x_cord, y_cord)
+        self._commit_move(*point)
 
     def _is_legal_point(self, x, y):
         """Whether a stone may be placed at (x, y): on the board, unoccupied, and not settled
@@ -1895,8 +2098,11 @@ class Game:
         self.analysis_paused = False
         self._auto_move_seq_len = -1
         self.analysisPauseButton.configure(text="Pause")
-        self.rule = RuleManager()
+        self.edit_neutral_var.set(False)
+        self.rule = self._new_rule()  # keeps the current komi / neutral stone
         self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
+        self._draw_neutrals()
+        self._update_setup_label()
         self.turn = 0
         self.game_over = False
         self.analysis_mode = False
@@ -1977,6 +2183,8 @@ class Game:
         if self.analysisEngine is not None:
             self.analysisEngine.close()
 
+        self.edit_neutral_var.set(False)
+        self._update_setup_label()
         self.analysisEngine = AnalysisEngine(model, build_dir=BUILD_DIR)
         self.analysis_mode = True
         self.session_used_engine = True
@@ -2010,7 +2218,7 @@ class Game:
         self.last_analysis_result = None
         self.analysis_turn_base_visits = 0
         self.analysis_turn_requested = 0
-        self.analysisEngine.send_reset()
+        self.analysisEngine.send_reset(self.rule.penalty, self.rule.neutral)
         for x, y in self.rule.seq:
             if x == -1 or y == -1:
                 self.analysisEngine.send_play(self.boardSize, 0)
@@ -2248,8 +2456,10 @@ class Game:
                                      tags=("move_overlay", "capture_ring"))
 
     def _nn_input_key(self):
-        """The board position as the move sequence the NN input server takes (pass = (boardSize, 0))."""
-        return tuple((self.boardSize, 0) if x == -1 or y == -1 else (x, y) for x, y in self.rule.seq)
+        """The board position as the NN input server takes it : (komi, neutral stones, move sequence
+        with pass = (boardSize, 0))."""
+        moves = tuple((self.boardSize, 0) if x == -1 or y == -1 else (x, y) for x, y in self.rule.seq)
+        return self.rule.penalty, tuple(self.rule.neutral), moves
 
     def _on_nn_input_toggle(self):
         if self.show_nn_input_var.get():
@@ -2286,7 +2496,8 @@ class Game:
         have = self.nn_input is not None and self.nn_input["key"] == key
         pending = self._nn_input_pending is not None and self._nn_input_pending[1] == key
         if not have and not pending:
-            self._nn_input_pending = (self.nnInputServer.request(key), key)
+            komi, neutral, moves = key
+            self._nn_input_pending = (self.nnInputServer.request(moves, komi, neutral), key)
             self._draw_nn_input_overlay()  # clears the previous position's values meanwhile
         self._nn_input_tick_id = self.root.after(150, self._nn_input_tick)
 
@@ -2838,6 +3049,34 @@ class Game:
                             "forced minimum visits.)",
               wraplength=420, justify=LEFT, fg="#555555").pack(padx=10, anchor="w")
 
+        # game setup : random (like self-play, one setup per pair of games) unless fixed here.
+        setup_frame = Frame(dialog)
+        setup_frame.pack(padx=10, pady=(8, 0), fill=X)
+        komi_row = Frame(setup_frame)
+        komi_row.pack(fill=X)
+        Label(komi_row, text="Komi:", width=8, anchor="w").pack(side=LEFT)
+        dialog.komi_mode = StringVar(value="random")
+        Radiobutton(komi_row, text="Random", variable=dialog.komi_mode, value="random").pack(side=LEFT)
+        Radiobutton(komi_row, text="Fixed:", variable=dialog.komi_mode, value="fixed").pack(side=LEFT)
+        dialog.komi_var = StringVar(value=f"{RuleManager.penalty:g}")
+        Entry(komi_row, textvariable=dialog.komi_var, width=6).pack(side=LEFT)
+        neutral_row = Frame(setup_frame)
+        neutral_row.pack(fill=X)
+        Label(neutral_row, text="Neutral:", width=8, anchor="w").pack(side=LEFT)
+        dialog.neutral_mode = StringVar(value="random")
+        Radiobutton(neutral_row, text="Random", variable=dialog.neutral_mode, value="random").pack(side=LEFT)
+        Radiobutton(neutral_row, text="None", variable=dialog.neutral_mode, value="none").pack(side=LEFT)
+        Radiobutton(neutral_row, text="At (r c):", variable=dialog.neutral_mode, value="fixed").pack(side=LEFT)
+        default_neutral = RuleManager.neutral[0] if RuleManager.neutral else (self.boardSize // 2, self.boardSize // 2)
+        dialog.neutral_var = StringVar(value=f"{default_neutral[0]} {default_neutral[1]}")
+        Entry(neutral_row, textvariable=dialog.neutral_var, width=6).pack(side=LEFT)
+        random_prob, random_range = random_komi_params()
+        Label(setup_frame, text=f"(Random is drawn like self-play, once per pair of games -- both color "
+                                f"assignments get the same setup. Komi: {RuleManager.penalty:g} with probability "
+                                f"{1 - random_prob:g}, else {RuleManager.penalty:g} ± up to {random_range}. "
+                                f"Neutral: every position up to rotation/flip, or none, equally likely.)",
+              wraplength=420, justify=LEFT, fg="#555555").pack(anchor="w")
+
         games_row = Frame(dialog)
         games_row.pack(padx=10, pady=(8, 0), fill=X)
         Label(games_row, text="Number of games:").pack(side=LEFT)
@@ -2888,6 +3127,28 @@ class Game:
             dialog.status_label.configure(text="Playouts/temperature/FPU/minVisitRatio/games must be numbers.")
             return
 
+        komi, neutrals = None, None
+        if dialog.komi_mode.get() == "fixed":
+            try:
+                komi = float(dialog.komi_var.get())
+            except ValueError:
+                komi = None
+            if komi is None or not valid_komi(komi, self.boardSize):
+                dialog.status_label.configure(text="Fixed komi must end in .5 (e.g. 2.5).")
+                return
+        if dialog.neutral_mode.get() == "none":
+            neutrals = []
+        elif dialog.neutral_mode.get() == "fixed":
+            try:
+                r, c = (int(v) for v in dialog.neutral_var.get().replace(",", " ").split())
+            except ValueError:
+                r = c = -1
+            if not (0 <= r < self.boardSize and 0 <= c < self.boardSize):
+                dialog.status_label.configure(
+                    text=f"Neutral point must be \"r c\" with both in 0..{self.boardSize - 1}.")
+                return
+            neutrals = [(r, c)]
+
         cfg_a = {"model": dialog.model_a.get(), "playouts": playouts_a, "temp": temp_a,
                  "fpu": fpu_a, "min_visit_ratio": mvr_a}
         cfg_b = {"model": dialog.model_b.get(), "playouts": playouts_b, "temp": temp_b,
@@ -2914,7 +3175,9 @@ class Game:
         dialog.stop_button.configure(state=NORMAL)
         dialog.status_label.configure(text=f"Starting match -- {n_games} game(s)...")
 
-        dialog.runner = MatchRunner(cfg_a, cfg_b, n_games, build_dir=BUILD_DIR)
+        dialog.setup = {"komi": "random" if komi is None else komi,
+                        "neutrals": "random" if neutrals is None else [list(n) for n in neutrals]}
+        dialog.runner = MatchRunner(cfg_a, cfg_b, n_games, build_dir=BUILD_DIR, komi=komi, neutrals=neutrals)
         dialog.match_done = False
         dialog.runner.start()
         self.root.after(150, self._poll_match, dialog)
@@ -2940,7 +3203,11 @@ class Game:
             loser = white if rec["winner"] == black else black
             margin_txt = f" by {rec['margin']:.1f}" if rec.get("margin") else ""
             res = f"{rec['winner']} beat {loser}{margin_txt} ({rec['by']})"
-        return f"Game {rec['index'] + 1:>3}: {black}(black) vs {white}(white) -- {res}"
+        setup = ""
+        if "komi" in rec:
+            neutral = ",".join(f"({r},{c})" for r, c in rec.get("neutrals", [])) or "none"
+            setup = f" [komi {rec['komi']:g}, neutral {neutral}]"
+        return f"Game {rec['index'] + 1:>3}: {black}(black) vs {white}(white) -- {res}{setup}"
 
     @staticmethod
     def _resolve_match_names(rec, model_a, model_b):
@@ -3043,6 +3310,7 @@ class Game:
             "engineA": dialog.cfg_a,
             "engineB": dialog.cfg_b,
             "n_games_requested": dialog.n_games,
+            "setup": dialog.setup,
             "tally": dialog.tally,
             "games": dialog.records,
         }
@@ -3152,6 +3420,11 @@ class Game:
         self.review_mode = True
         self.review_record = record
         self.review_moves = [mv["move"] for mv in record.get("moves", [])]
+        # the game's own setup (records from before komi / neutral setup existed : the defaults).
+        self.edit_neutral_var.set(False)
+        self.setup_komi = float(record.get("komi", RuleManager.penalty))
+        self.setup_neutral = [tuple(n) for n in record.get("neutrals", RuleManager.neutral)]
+        self.komi_var.set(f"{self.setup_komi:g}")
 
         self._jump_to_ply(len(self.review_moves))
 
@@ -3209,10 +3482,12 @@ class Game:
         if moves is None:
             moves = self._current_moves_coords()
         self.review_index = idx
-        self.rule = RuleManager()
+        self.rule = self._new_rule()
         self.canvas.delete("stone")
         self.canvas.delete("move_overlay")
         self.on_stone = [[False for _ in range(self.boardSize)] for _ in range(self.boardSize)]
+        self._draw_neutrals()
+        self._update_setup_label()
         self.turn = 0
         for mv in moves[:idx]:
             self._apply_review_move(mv)
@@ -3536,6 +3811,7 @@ class Game:
             "black": black, "white": white,
             "winner": winner, "winner_color": winner_color,
             "margin": margin, "by": by,
+            "komi": self.rule.penalty, "neutrals": [list(n) for n in self.rule.neutral],
             "moves": self.session_move_log,
         }
 

@@ -88,7 +88,7 @@ public:
 
 	TrainPipeline(std::string initModel, std::string testModel, bool gpu = false);
 
-	void start_self_play(MCTS* player, bool isShown = false, float temp = 0.1f, int nGames = 1); // used during training
+	void start_self_play(MCTS* player, bool isShown = false, float temp = 0.1f); // used during training
 
 	void insert_data(TrainData& data, const int& forced = 0, const bool& only = false);
 

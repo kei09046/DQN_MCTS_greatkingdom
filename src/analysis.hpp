@@ -36,18 +36,20 @@ public:
 
     // "./play nninput": a model-free REPL for the GUI's NN input overlay, which shows the raw
     // network input of whatever position is on the board with or without an engine running.
-    // Each request is self-contained -- "nninput <id> [r c]..." with the whole move sequence
-    // from the empty board (pass = "<rowSize> 0") -- and is answered with one line,
+    // Each request is self-contained -- "nninput <id> [setup <komi> <nNeutrals> [r c]...] [r c]..." with the
+    // game setup (config komi / neutrals if omitted) and the whole move sequence from the empty board
+    // (pass = "<rowSize> 0") -- and is answered with one line,
     // "nninput <id> <channels> <values...>" (PolicyValueNet::get_data, channel-major, each
     // channel inputSize values indexed r * colSize + c), or "nninput <id> error" if a move is
-    // illegal. "quit" exits.
+    // illegal or the setup is malformed. "quit" exits.
     static void nn_input_server();
 
     // "./play rules": a model-free REPL that is the GUI's (game.py RuleManager) only source of
     // move legality, game end and scoring, so Python never re-implements the rules. Prints
-    // "rules ready <rows> <cols> <komi> <nNeutrals> [r c]..." on start. Each request is
-    // self-contained -- "rules <id> [r c]..." with the whole move sequence from the empty board
-    // (pass = "<rowSize> 0") -- and is answered with one line:
+    // "rules ready <rows> <cols> <komi> <nNeutrals> [r c]..." (the default setup) on start. Each request is
+    // self-contained -- "rules <id> [setup <komi> <nNeutrals> [r c]...] [r c]..." with the game setup (default
+    // if omitted) and the whole move sequence from the empty board (pass = "<rowSize> 0") -- and is answered with one line:
+    //   "rules <id> badsetup"       -- the setup is malformed (komi not x.5, neutral off the board / repeated), or
     //   "rules <id> illegal <ply>"  -- move <ply> (0-based) is illegal or comes after the game ended, or
     //   "rules <id> ok <status> <winner> <turn> <scoreDiff> <bTerr> <wTerr> <board>"
     // status : ongoing | capture | score (Game::make_move's ending, or two passes in a row).

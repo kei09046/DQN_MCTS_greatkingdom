@@ -31,6 +31,25 @@ static BoardMaps board_maps(PolicyValueNet* net, const Game& game){
 
 // See analysis.hpp for what lives here and why it's split into its own class.
 
+// optional "setup <komi> <nNeutrals> [r c]..." right after a request's id. Without it : config komi / neutrals.
+// false on a malformed setup. iss is left at the first move either way.
+static bool read_request_setup(std::istringstream& iss, Game& game){
+    const auto pos = iss.tellg();
+    std::string tok;
+    if(!(iss >> tok) || tok != "setup"){
+        iss.clear();
+        iss.seekg(pos);
+        game = Game();
+        return true;
+    }
+    float komi;
+    std::vector<Move> neutrals;
+    if(!Game::read_setup(iss, komi, neutrals))
+        return false;
+    game = Game(komi, neutrals);
+    return true;
+}
+
 void Analysis::nn_input_server(){
     std::string line;
     while(std::getline(std::cin, line)){
@@ -43,7 +62,7 @@ void Analysis::nn_input_server(){
             continue;
 
         Game game;
-        bool legal = true;
+        bool legal = read_request_setup(iss, game);
         int r, c;
         while(legal && iss >> r >> c){
             const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
@@ -86,6 +105,10 @@ void Analysis::rules_server(){
             continue;
 
         Game game;
+        if(!read_request_setup(iss, game)){
+            std::cout << "rules " << id << " badsetup" << std::endl;
+            continue;
+        }
         Color winner = EMPTY;
         const char* status = "ongoing";
         bool prevPass = false;

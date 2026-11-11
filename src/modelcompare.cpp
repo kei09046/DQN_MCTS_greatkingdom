@@ -6,17 +6,96 @@
 #include "consts.h"
 #include "elo.h"
 #include "analysis.hpp"
+#include "random.h"
+#include <sstream>
+#include <optional>
+#include <cctype>
 
 namespace{
 	// search params of idx-th engine; global config values if not given.
 	SearchParams params_of(const std::vector<SearchParams>& params, int idx){
 		return (idx < static_cast<int>(params.size())) ? params[idx] : globalConfig.search_params();
 	}
+
+	bool blank(const std::string& line){
+		return line.find_first_not_of(" \t\r") == std::string::npos;
+	}
+
+	// asks for the game setup on stdin until a valid one (or an empty line : config komi / neutrals) is given.
+	Game prompt_setup(){
+		std::string line;
+		while(true){
+			std::cout << "game setup : <komi> <nNeutrals> [r c]... (empty line : komi " << globalConfig.komi
+				<< ", config neutrals)" << std::endl;
+			if(!std::getline(std::cin, line) || blank(line))
+				return Game();
+			std::istringstream iss(line);
+			float komi;
+			std::vector<Move> neutrals;
+			if(Game::read_setup(iss, komi, neutrals))
+				return Game(komi, neutrals);
+			std::cout << "invalid setup" << std::endl;
+		}
+	}
+
+	void print_setup(std::ostream& out, const Game& game){
+		out << "setup : komi " << game.get_komi() << " neutrals";
+		bool any = false;
+		for(int i=0; i<boardSize; ++i)
+			if(game.get_board({i / colSize, i % colSize}) == NEUTRAL){
+				out << " (" << i / colSize << "," << i % colSize << ")";
+				any = true;
+			}
+		if(!any)
+			out << " none";
+		out << std::endl;
+	}
+
+	// "komi <k>" mid-game : changes komi and rebuilds the players' trees (their values were for the old komi).
+	// Returns false (nothing changed) if k is missing or not a valid komi.
+	bool change_komi(std::istringstream& iss, Game& game, std::initializer_list<MCTS*> players){
+		float komi;
+		if(!(iss >> komi) || !Game::valid_komi(komi))
+			return false;
+		game.set_komi(komi);
+		for(MCTS* p : players)
+			p->reset(game);
+		return true;
+	}
+
+	// one line of human input : "<r> <c>" -> the move, or "komi <k>" -> handled here (nullopt).
+	std::optional<Move> read_human_input(Game& game, std::initializer_list<MCTS*> players, bool& eof){
+		std::string line;
+		if(!std::getline(std::cin, line)){
+			eof = true;
+			return std::nullopt;
+		}
+		std::istringstream iss(line);
+		std::string first;
+		iss >> first;
+		if(first == "komi"){
+			if(change_komi(iss, game, players))
+				std::cout << "komi : " << game.get_komi() << std::endl;
+			else
+				std::cout << "invalid komi (must be x.5)" << std::endl;
+			return std::nullopt;
+		}
+		std::istringstream mv(line);
+		int r, c;
+		if(!(mv >> r >> c)){
+			if(!blank(line))
+				std::cout << "invalid input : \"<r> <c>\" or \"komi <k>\"" << std::endl;
+			return std::nullopt;
+		}
+		return Move{static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+	}
 }
 
 
-float ModelCompare::start_play(std::array<MCTS*, 2> playerList, std::ostream& partRes, bool isShown, float temp) { // black wins : 1.0f, white wins : 0.0f
-	Game gameManager = Game();
+float ModelCompare::start_play(std::array<MCTS*, 2> playerList, const Game& start, std::ostream& partRes, bool isShown, float temp) { // black wins : 1.0f, white wins : 0.0f
+	Game gameManager = start;
+	playerList[0]->reset(start);
+	playerList[1]->reset(start);
 	int idx = 0;
 	Move move;
     Color res;
@@ -37,8 +116,6 @@ float ModelCompare::start_play(std::array<MCTS*, 2> playerList, std::ostream& pa
 			continue;
 		}
 		
-        playerList[0]->reset(Game());
-        playerList[1]->reset(Game());
 		//std::cerr << std::endl;
 
 		// if (is_shown) {
@@ -46,25 +123,35 @@ float ModelCompare::start_play(std::array<MCTS*, 2> playerList, std::ostream& pa
 		// 		part_res << static_cast<int>(moves.first) << static_cast<int>(moves.second) << " ";
 		// }
 
-        if(isShown)
-            partRes << static_cast<int>(res) << "\n";
+        if(isShown){
+            partRes << static_cast<int>(res) << " ";
+            print_setup(partRes, start);
+        }
         return res == BLACK ? 1.0f : 0.0f;
 	}
 }
 
 void ModelCompare::play(const std::string& model, Color side, float temp, bool gpu, bool shown) {
-	Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
+	Game gameManager = prompt_setup();
+	player.reset(gameManager);
+	print_setup(std::cout, gameManager);
+	gameManager.display_board_gui(false);
 
 	Move cord;
 	Color res;
 
 	while (true) {
 		if (side == gameManager.get_turn()) {
-			int r, c;
-			std::cin >> r >> c;
-			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+			std::cout << "your move : <r> <c>, or komi <k>" << std::endl;
+			bool eof = false;
+			const auto in = read_human_input(gameManager, {&player}, eof);
+			if(eof)
+				break;
+			if(!in)
+				continue;
+			cord = *in;
 		}
 		else {
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -123,9 +210,29 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			break;
 		}
 		else if (cmd == "reset") {
-			gameManager = Game();
-			player.reset(Game());
+			// "reset" : empty board with config komi / neutrals. "reset <komi> <nNeutrals> [r c]..." : that setup.
+			float komi;
+			std::vector<Move> neutrals;
+			std::string rest;
+			std::getline(iss, rest);
+			std::istringstream setup(rest);
+			if(blank(rest))
+				gameManager = Game();
+			else if(Game::read_setup(setup, komi, neutrals))
+				gameManager = Game(komi, neutrals);
+			else{
+				std::cout << "reset invalid" << std::endl;
+				continue;
+			}
+			player.reset(gameManager);
 			std::cout << "reset ok" << std::endl;
+		}
+		else if (cmd == "komi") {
+			// "komi <k>" : changes komi of the current position (search tree is rebuilt).
+			if(change_komi(iss, gameManager, {&player}))
+				std::cout << "komi ok" << std::endl;
+			else
+				std::cout << "komi invalid" << std::endl;
 		}
 		else if (cmd == "play") {
 			int r, c;
@@ -218,7 +325,6 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 }
 
 void ModelCompare::play_web(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
-	Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
 
@@ -226,11 +332,18 @@ void ModelCompare::play_web(const std::string& model, const Color humanColor, in
 	Color res;
 
 	std::cout << "model loaded" << std::endl;
+	Game gameManager = prompt_setup();
+	player.reset(gameManager);
+	print_setup(std::cout, gameManager);
 	while (true) {
-		if (gameManager.get_turn() == humanColor) { // human turn
-			int r, c;
-			std::cin >> r >> c;
-			cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+		if (gameManager.get_turn() == humanColor) { // human turn : "<r> <c>", or "komi <k>"
+			bool eof = false;
+			const auto in = read_human_input(gameManager, {&player}, eof);
+			if(eof)
+				break;
+			if(!in)
+				continue;
+			cord = *in;
 		}
 		else { // engine turn
 			std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -255,6 +368,7 @@ void ModelCompare::play_web(const std::string& model, const Color humanColor, in
 }
 
 void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
+    std::vector<Move> neutrals = globalConfig.neutrals;
     Game gameManager = Game();
 	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
 	MCTS player = MCTS(evaluator);
@@ -292,10 +406,45 @@ void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
         else if (cmd == "name") ok(globalConfig.modelPath + model);
         else if (cmd == "version") ok("0.1");
         else if (cmd == "list_commands")
-        ok("protocol_version\nname\nversion\nboardsize\nclear_board\nplay\ngenmove\nquit");
+        ok("protocol_version\nname\nversion\nboardsize\nclear_board\nkomi\nset_neutrals\nplay\ngenmove\nquit");
         else if (cmd == "boardsize") ok(std::to_string(boardSize));
         else if (cmd == "clear_board") {
-            gameManager = Game();
+            // keeps the current komi and neutral stones.
+            gameManager = Game(gameManager.get_komi(), neutrals);
+            player.reset(gameManager);
+            res = EMPTY;
+            ok();
+        }
+        else if (cmd == "komi") {
+            // allowed at any time; mid-game it rebuilds the search tree.
+            if(change_komi(iss, gameManager, {&player}))
+                ok();
+            else
+                err("komi must be x.5");
+        }
+        else if (cmd == "set_neutrals") {
+            // "set_neutrals [vertex]..." (none : no neutral stone). Only before the first move.
+            if(gameManager.get_move_count() != 0){
+                err("board not empty");
+                continue;
+            }
+            std::vector<Move> ns;
+            std::string v;
+            bool valid = true;
+            while(iss >> v){
+                const Move m = parse_vertex(v);
+                if(m.first >= rowSize || m.second >= colSize || std::find(ns.begin(), ns.end(), m) != ns.end()){
+                    valid = false;
+                    break;
+                }
+                ns.push_back(m);
+            }
+            if(!valid){
+                err("invalid vertex");
+                continue;
+            }
+            neutrals = ns;
+            gameManager = Game(gameManager.get_komi(), neutrals);
             player.reset(gameManager);
             ok();
         }
@@ -323,15 +472,23 @@ void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
 }
 
 void ModelCompare::play_human() {
-	Game gameManager = Game();
-	Game experiment = Game();
+	Game gameManager = prompt_setup();
+	Game experiment = gameManager;
+	print_setup(std::cout, gameManager);
 	experiment.set_policy_mask();
 	Move cord;
 	Color res;
 	while (true) {
-		int r, c;
-		std::cin >> r >> c;
-		cord = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
+		bool eof = false;
+		const auto in = read_human_input(gameManager, {}, eof);
+		if(eof)
+			break;
+		if(!in){
+			experiment.set_komi(gameManager.get_komi());
+			continue;
+		}
+		cord = *in;
+		const int r = cord.first, c = cord.second;
 
 		res = gameManager.make_move(cord).first;
 		gameManager.display_board_gui(true);
@@ -373,14 +530,14 @@ void ModelCompare::play_human() {
 std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo,
 		std::ostream& totalRes, bool isShown, float temp, int nGames) {
 
+	// each pair of games (one with each color) gets its own random komi and neutral stones, drawn like self-play's.
 	std::vector<bool> result(nGames << 1);
 	for (int i = 0; i < nGames; ++i) {
-		//player_one plays as black
-		result[i] = static_cast<bool>(ModelCompare::start_play({ playerOne, playerTwo }, totalRes, isShown, temp));
-	}
-
-	for (int i = nGames; i < (nGames << 1); ++i) {
-		result[i] = !static_cast<bool>(ModelCompare::start_play({ playerTwo, playerOne }, totalRes, isShown, temp));
+		const Game start(rnd::sample_komi(globalConfig.komi, globalConfig.randomKomiProb, globalConfig.randomKomiRange),
+			rnd::sample_neutrals());
+		// result[i] : player_one plays as black, result[nGames + i] : player_two plays as black
+		result[i] = static_cast<bool>(ModelCompare::start_play({ playerOne, playerTwo }, start, totalRes, isShown, temp));
+		result[nGames + i] = !static_cast<bool>(ModelCompare::start_play({ playerTwo, playerOne }, start, totalRes, isShown, temp));
 	}
 	return result;
 }
@@ -460,7 +617,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 }
 
 
-Color ModelCompare::cmd_play(std::istringstream& iss, Game gameManager, MCTS& player) {
+Color ModelCompare::cmd_play(std::istringstream& iss, Game& gameManager, MCTS& player) {
     char c;
     std::string v;
     iss >> c >> v;
@@ -474,7 +631,7 @@ Color ModelCompare::cmd_play(std::istringstream& iss, Game gameManager, MCTS& pl
 	return res;
 }
 
-void ModelCompare::cmd_genmove(std::istringstream& iss, Game gameManager, MCTS& player, float temp) {
+void ModelCompare::cmd_genmove(std::istringstream& iss, Game& gameManager, MCTS& player, float temp) {
     char c;
     iss >> c;
 
@@ -517,9 +674,13 @@ Move ModelCompare::parse_vertex(const std::string& v) {
 	if(v == "resign"){
 		return RESIGNMOVE;
 	}
-    char col = v[0];
+	if(v.size() < 2 || !std::isdigit(static_cast<unsigned char>(v[1])))
+		return RESIGNMOVE; // not a vertex
+	char col = std::toupper(static_cast<unsigned char>(v[0]));
 	if(col >= 'J') col--; // there is no 'I' in sabaki cord.
     int row = std::stoi(v.substr(1));
+	if(col < 'A' || row < 1)
+		return RESIGNMOVE;
 
     return {static_cast<uint8_t>(row - 1), static_cast<uint8_t>(col - 'A')};
 }
