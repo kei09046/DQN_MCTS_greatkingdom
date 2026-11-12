@@ -6,23 +6,7 @@
 
 #include <bitset>
 
-// structure needed for effective score computation
-using SegId = uint8_t;
 using GroupId = uint8_t;
-
-struct SegInfo{
-    std::bitset<boardSize> connectedSeg;    // bit t set <-> segment t is adjacent. SegIds are always < boardSize.
-    bool adjOpp;
-    std::bitset<4> adjEdge;
-};
-
-// segments of one color on one position. Built by update_segment_table(), only used inside update_topology().
-// segMap[i] : segment of empty square i (BASESEGID for filled squares and empty regions not adjacent to any candidate).
-// segInfos[s] : info of segment s. Number of segments <= number of empty squares, so ids < boardSize.
-struct SegTable{
-    std::array<SegInfo, boardSize> segInfos{};
-    std::array<SegId, boardSize> segMap;
-};
 
 // helper class which computes score gaining moves on given position.
 // Does not own the board : the board is passed on every call (Game owns it), so copying Game stays safe.
@@ -74,17 +58,6 @@ private:
     // calculates if territory is formed on given grid using BFS.
     // Also updates game state.
     uint8_t check_score(Board& board, uint8_t r, uint8_t c, Color clr);
-
-    /////////////////////////////////////////////////////////
-    // Functions needed for effective expansion.
-
-    // Faster version of checkScore but segTable should be provided.
-    // Calculate whether playing at {r, c} would give territory, without changing game state.
-    // Returns bitset with 1 if corresponding segment becomes territory.
-    std::bitset<boardSize> check_score(const Board& board, uint8_t r, uint8_t c, const SegTable& segTable) const;
-
-    // updates scoreCandidates of both colors and returns {black segTable, white segTable} built from scratch.
-    std::pair<SegTable, SegTable> update_segment_table(const Board& board);
 
     const std::bitset<boardSize>& score_candidates(Color c) const;
 

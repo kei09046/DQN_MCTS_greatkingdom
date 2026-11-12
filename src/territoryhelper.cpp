@@ -7,13 +7,11 @@
 
 namespace{
     constexpr uint8_t BASEGROUPID = 255U;
-    constexpr uint8_t BASESEGID = 255U;
 
     // masks used by bitboard shifts. Bit index = r * colSize + c.
     struct BoardMasks{
-        std::bitset<boardSize> notFirstCol; // squares with c != 0
-        std::bitset<boardSize> notLastCol;  // squares with c != colSize - 1
         std::bitset<boardSize> edge;        // squares on the board border
+        std::bitset<boardSize> sides[4];    // top row, bottom row, left column, right column
     };
 
     const BoardMasks MASKS = []{
@@ -21,15 +19,109 @@ namespace{
         for(int r=0; r<rowSize; ++r)
             for(int c=0; c<colSize; ++c){
                 const int idx = r * colSize + c;
-                m.notFirstCol[idx] = (c != 0);
-                m.notLastCol[idx] = (c != colSize - 1);
                 m.edge[idx] = (r == 0 || c == 0 || r == rowSize - 1 || c == colSize - 1);
+                m.sides[0][idx] = (r == 0);
+                m.sides[1][idx] = (r == rowSize - 1);
+                m.sides[2][idx] = (c == 0);
+                m.sides[3][idx] = (c == colSize - 1);
             }
         return m;
     }();
 
     inline Color opposite(Color c){
         return (c == BLACK) ? WHITE : BLACK;
+    }
+
+    // Territory gained by every candidate move of both colors, with one DFS over the empty squares
+    // (Hopcroft-Tarjan cut vertices). Filling x splits x's empty region into
+    //   - the DFS subtree of each child ch of x with low[ch] >= disc[x], and
+    //   - the rest of the region (region minus x minus those subtrees), if any.
+    // Each piece is territory for color k if no square of it is next to an opponent stone and it doesn't touch all 4 sides,
+    // the same rule as check_score(). Subtrees are kept as bitboards, so each test is a few ANDs.
+    // gain[k][x] : squares color k (0 : black, 1 : white) gains by playing x. Only filled for x in cand[k].
+    void compute_gains(const Board& board, const std::bitset<boardSize> (&cand)[2], std::array<std::bitset<boardSize>, boardSize> (&gain)[2]){
+        using BB = std::bitset<boardSize>;
+        const BB& empty = board.empty();
+        const BB adjOpp[2] = {board.adjacent(WHITE), board.adjacent(BLACK)};
+        const BB anyCand = cand[0] | cand[1];
+
+        auto add_piece = [&](int x, const BB& piece){
+            bool allSides = true;
+            for(const auto& side : MASKS.sides)
+                allSides = allSides && (piece & side).any();
+            if(allSides)
+                return;
+            for(int k=0; k<2; ++k)
+                if(cand[k][x] && (piece & adjOpp[k]).none())
+                    gain[k][x] |= piece;
+        };
+
+        std::array<int, boardSize> disc, low, parent;
+        std::array<uint8_t, boardSize> nextNb;      // next neighbor to visit (iterative DFS)
+        std::array<BB, boardSize> sub;              // squares of the DFS subtree
+        std::array<BB, boardSize> sep;              // union of subtrees separated from the region when the square is filled
+        std::array<int, boardSize> stack;
+        disc.fill(-1);
+        int timer = 0;
+
+        for(int root=0; root<boardSize; ++root){
+            if(!empty[root] || disc[root] >= 0)
+                continue;
+
+            int top = 0;
+            stack[top++] = root;
+            disc[root] = low[root] = timer++;
+            parent[root] = -1;
+            nextNb[root] = 0;
+            sub[root].reset();
+            sub[root].set(root);
+            sep[root].reset();
+
+            while(top > 0){
+                const int v = stack[top - 1];
+                const auto& nb = NEIGHBORS4[v];
+                if(nextNb[v] < nb.count){
+                    const int w = to_idx(nb.cells[nextNb[v]++]);
+                    if(!empty[w])
+                        continue;
+                    if(disc[w] < 0){
+                        disc[w] = low[w] = timer++;
+                        parent[w] = v;
+                        nextNb[w] = 0;
+                        sub[w].reset();
+                        sub[w].set(w);
+                        sep[w].reset();
+                        stack[top++] = w;
+                    }
+                    else if(w != parent[v])
+                        low[v] = std::min(low[v], disc[w]);
+                }
+                else{
+                    --top;
+                    const int p = parent[v];
+                    if(p < 0)
+                        continue;
+                    low[p] = std::min(low[p], low[v]);
+                    sub[p] |= sub[v];
+                    // v's subtree can only reach the rest of the region through p (always true for the root's children).
+                    if(low[v] >= disc[p]){
+                        sep[p] |= sub[v];
+                        if(anyCand[p])
+                            add_piece(p, sub[v]);
+                    }
+                }
+            }
+
+            // the piece containing x's DFS parent side.
+            const BB region = sub[root];
+            const BB regionCand = region & anyCand;
+            for(size_t x = regionCand._Find_first(); x < boardSize; x = regionCand._Find_next(x)){
+                BB rest = region & ~sep[x];
+                rest.reset(x);
+                if(rest.any())
+                    add_piece(static_cast<int>(x), rest);
+            }
+        }
     }
 }
 
@@ -101,62 +193,34 @@ void TerritoryHelper::update_move_given_score(Board& board, const Move& move){
 // Should compute groups for both colors.
 // GroupId == square index => that is a move that makes all square with same GroupId a territory.
 void TerritoryHelper::update_topology(const Board& board){
-    // update_segment_table also updates scoreCandidates.
-    const auto segTables = update_segment_table(board);
+    update_score_candidates(board, BLACK);
+    update_score_candidates(board, WHITE);
 
-    for(const Color c : {BLACK, WHITE}){
-        const SegTable& segTable = (c == BLACK) ? segTables.first : segTables.second;
-        const auto& segIds = segTable.segMap;
-        auto& groupIds = group_ids(c);
+    std::array<std::bitset<boardSize>, boardSize> gain[2];
+    compute_gains(board, scoreCandidates, gain);
 
-        // reset groupIds
+    for(int k=0; k<2; ++k){
+        const auto& cand = scoreCandidates[k];
+        auto& groupIds = this->groupIds[k];
         groupIds.fill(BASEGROUPID);
-        
-        std::bitset<boardSize> acquiredSeg;
-        std::array<std::bitset<boardSize>, boardSize> buffer;
-        // push back possible moves
-        std::vector<uint8_t> nonEmptySquaresIdx;
-        for(uint8_t i=0U; i<boardSize; ++i){
-            if(board.is_empty(i))
-                nonEmptySquaresIdx.push_back(i);
-        }
 
-        for(const auto i : nonEmptySquaresIdx){
-            // if(segIdx[i] < 0 || segIdx[i] >= 81){
-            //     for(int j=0; j<rowSize; ++j){
-            //         for(int k=0; k<colSize; ++k){
-            //             std::cerr << static_cast<int>(segIdx[j * colSize + k]);
-            //         }
-            //         std::cerr << std::endl;
-            //     }
-            // }
-
-            if(score_candidates(c).test(i) && !acquiredSeg.test(segIds[i])){
-                auto acquired = check_score(board, i/colSize, i%colSize, segTable);
-                acquiredSeg |= acquired;
-                buffer[i] = acquired;
+        // candidates in increasing order; one lying in territory gained by an earlier scoring candidate is skipped.
+        std::bitset<boardSize> acquired, scoring;
+        for(size_t i = cand._Find_first(); i < boardSize; i = cand._Find_next(i)){
+            if(!acquired[i] && gain[k][i].any()){
+                acquired |= gain[k][i];
+                scoring.set(i);
             }
         }
 
-        // squares of each segment, so acquired segments can be turned into acquired squares with bitwise OR.
-        std::array<std::bitset<boardSize>, boardSize> segSquares{};
-        for(const auto j : nonEmptySquaresIdx)
-            if(segIds[j] != BASESEGID)
-                segSquares[segIds[j]].set(j);
-
-        for(const auto i : nonEmptySquaresIdx){
-            // segIds[i] = BASEID for i in nonEmptySquares <-> not adjacent to any potential score gaining moves
-            if(segIds[i] == BASESEGID || !acquiredSeg.test(segIds[i])){
-                // if territory is gained.
-                if(!buffer[i].none()){
-                    groupIds[i] = i;
-                    std::bitset<boardSize> acquiredSquares;
-                    for(size_t t = buffer[i]._Find_first(); t < boardSize; t = buffer[i]._Find_next(t))
-                        acquiredSquares |= segSquares[t];
-                    for(size_t j = acquiredSquares._Find_first(); j < boardSize; j = acquiredSquares._Find_next(j))
-                        groupIds[j] = groupIds[i];
-                }
-            }
+        // maximal scoring moves : scoring moves not inside territory of another scoring move.
+        for(size_t i = scoring._Find_first(); i < boardSize; i = scoring._Find_next(i)){
+            if(acquired[i])
+                continue;
+            groupIds[i] = static_cast<GroupId>(i);
+            const auto& g = gain[k][i];
+            for(size_t j = g._Find_first(); j < boardSize; j = g._Find_next(j))
+                groupIds[j] = static_cast<GroupId>(i);
         }
     }
     topologyCurrent = true;
@@ -252,8 +316,8 @@ void TerritoryHelper::update_score_candidates(const Board& board, const Color cl
     // neighbor bitboards: bit p of a bitboard is set iff that neighbor of p is in own.
     // horizontal shifts need column masks to prevent wrapping across rows;
     // vertical shifts just fall off the board. Vertical shifts keep the column, so w/e masks stay valid.
-    const auto w = (own << 1) & MASKS.notFirstCol;
-    const auto e = (own >> 1) & MASKS.notLastCol;
+    const auto w = (own << 1) & ~MASKS.sides[2];    // not on the left column
+    const auto e = (own >> 1) & ~MASKS.sides[3];    // not on the right column
     const std::bitset<boardSize> nbrs[8] = {
         w, e,
         own << colSize, own >> colSize,   // up, down
@@ -319,172 +383,6 @@ uint8_t TerritoryHelper::check_score(Board& board, uint8_t r, uint8_t c, Color c
     board.mark_score(emptyCells, clr);
 
     return areaCount;
-}
-
-std::bitset<boardSize> TerritoryHelper::check_score(const Board& board, uint8_t r, uint8_t c, const SegTable& segTable) const{
-    const auto& segIdx = segTable.segMap;
-    const auto& segInfos = segTable.segInfos;
-
-    uint8_t blockedSeg = segIdx[r * colSize + c];
-    std::bitset<boardSize> globalVisitMark, terrMark;
-    globalVisitMark[blockedSeg] = true;
-
-
-    for(auto [nr, nc] : neighbors4(r, c)){
-        if(!board.is_empty(to_idx(nr, nc)))
-            continue;
-
-        std::bitset<4> meetEdgeFlags;  // 4bit integer to track edge touching
-        std::queue<uint8_t> segQ;
-        std::bitset<boardSize> localVisitMark;
-        bool isScore = true;
-
-        const auto startSeg = segIdx[nr * colSize + nc];
-        assert(blockedSeg != startSeg);
-
-        // if segment was checked by previous iterations.
-        if(globalVisitMark[startSeg])
-            continue;
-
-        segQ.push(startSeg);
-        localVisitMark[blockedSeg] = true;
-        localVisitMark[startSeg] = true;
-
-        // perform BFS on segment
-        while (!segQ.empty()) {
-            const SegInfo& sInfo = segInfos[segQ.front()];
-            segQ.pop();
-
-            // if segment is adjacent to opposite color
-            if(sInfo.adjOpp){
-                isScore = false;
-                break;
-            }
-            meetEdgeFlags |= sInfo.adjEdge;
-            if(meetEdgeFlags.all()){
-                isScore = false;
-                break;
-            }
-
-            const std::bitset<boardSize> next = sInfo.connectedSeg & ~localVisitMark;
-            if((next & globalVisitMark).any()){
-                // startSeg hasn't been visited yet a reachable segment has been visited.
-                // This indicates BFS quitted in previous iteration, which means this is not territory.
-                isScore = false;
-                break;
-            }
-            localVisitMark |= next;
-            for(size_t t = next._Find_first(); t < boardSize; t = next._Find_next(t))
-                segQ.push(static_cast<uint8_t>(t));
-        }
-
-        if(isScore){
-            // std::cerr << "Territory gained " << localVisitMark << std::endl;
-            terrMark |= localVisitMark;
-        }
-        globalVisitMark |= localVisitMark;
-    }
-
-    terrMark[blockedSeg] = false;
-    return terrMark;
-}
-
-// Returns {black segTable, white segTable}.
-std::pair<SegTable, SegTable> TerritoryHelper::update_segment_table(const Board& board){
-    std::pair<SegTable, SegTable> ret;
-
-    for(const Color clr : {BLACK, WHITE}){
-        SegTable& segTable = (clr == BLACK) ? ret.first : ret.second;
-        auto& segMap = segTable.segMap;
-        auto& segInfos = segTable.segInfos;
-        segMap.fill(BASESEGID);
-
-        // update candidates immeidately as previous candidates are no longer needed.
-        update_score_candidates(board, clr);
-        const auto& potScore = score_candidates(clr);
-
-        const BitBoard& adjToOpp = board.adjacent(opposite(clr));
-        std::vector<Move> terrCandidate;
-        uint8_t segN = 0U;
-
-        for(int i=0; i<rowSize; ++i){
-            for(int j=0; j<colSize; ++j){
-                if(potScore[i * colSize + j]){
-                    segMap[i * colSize + j] = segN;
-                    terrCandidate.push_back({i, j});
-                    std::bitset<4> adjEdge;
-                    if(i == 0) 
-                        adjEdge[0] = true;
-                    else if(i == rowSize - 1) 
-                        adjEdge[1] = true;
-                    if(j == 0) 
-                        adjEdge[2] = true;
-                    else if(j == colSize - 1) 
-                        adjEdge[3] = true;
-                    segInfos[segN++] = {BitBoard{}, adjToOpp[to_idx(i, j)], adjEdge};
-                }
-            }
-        }
-
-        for(const Move& cand : terrCandidate){
-            SegInfo& currentSeg = segInfos.at(segMap[cand.first * colSize + cand.second]);
-            for(auto [r, c] : neighbors4(cand)){
-                if(!board.is_empty(to_idx(r, c)))
-                    continue;
-
-
-                if(segMap[r * colSize + c] != 255U){
-                    currentSeg.connectedSeg.set(segMap[r * colSize + c]);
-                }
-                // if new segment is detected
-                else{
-                    // set up connection
-                    currentSeg.connectedSeg.set(segN);
-
-                    // start BFS
-                    std::queue<Move> seg;
-                    seg.push({r, c});
-                    segMap[r * colSize + c] = segN;
-                    std::bitset<boardSize> checker;
-                    checker[r * colSize + c] = true;
-
-                    while(!seg.empty()){
-                        Move m = seg.front();
-                        seg.pop();
-                        if(adjToOpp[to_idx(m)])
-                            segInfos[segN].adjOpp = true;
-                        if(m.first == 0) 
-                            segInfos[segN].adjEdge[0] = true;
-                        else if(m.first == rowSize - 1) 
-                            segInfos[segN].adjEdge[1] = true;
-                        if(m.second == 0) 
-                            segInfos[segN].adjEdge[2] = true;
-                        else if(m.second == colSize - 1) 
-                            segInfos[segN].adjEdge[3] = true;
-                        
-
-                        for(auto [nr, nc] : neighbors4(m)){
-                            if(board.is_empty(to_idx(nr, nc)) && !checker[nr * colSize + nc]){
-                                checker[nr * colSize + nc] = true;
-                                uint8_t mapVal = segMap[nr * colSize + nc];
-                                if(mapVal == 255U){
-                                    seg.push({nr, nc});
-                                    segMap[nr * colSize + nc] = segN;
-                                }
-                                else if(mapVal != segN){
-                                    segInfos[segN].connectedSeg.set(mapVal);
-                                }
-                            }
-                        }
-                    }
-                    segN++;
-                }
-            }
-        }
-
-    }
-
-    return ret;
 }
 
 const std::bitset<boardSize> &TerritoryHelper::score_candidates(Color c) const{
