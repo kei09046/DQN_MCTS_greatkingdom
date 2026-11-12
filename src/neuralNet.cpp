@@ -263,9 +263,8 @@ NNInput PolicyValueNet::get_data(const Game& game){
 	}
 
 	// channel 23 : territory building move (change : may not be legal right now(due to threat))
-	// right now : keep original version.
 	for(const auto& m : game.maximize_score(turn, 1)){
-		ret.at(23 * inputSize + m) = (ret.at(22 * inputSize + m) == 1.0f) ? 1.0f : 0.0f;
+		ret.at(23 * inputSize + m) = 1.0f;
 	}
 
 	// channel 24 : opponent's territory building move
