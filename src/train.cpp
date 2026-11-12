@@ -180,7 +180,11 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
 			}
 			std::cout << "\n";
 			// game_manager.displayBoardGUI(true);
-			std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << " komi : " << komi << "\n\n";
+			std::cout << "episode length : " << sequence.size() << " winner : " << (int)winner << " wintype : " << (int)wintype << " komi : " << komi
+			<< " neutrals : ";
+			for(const auto& n : neutrals)
+				std::cout << static_cast<int>(n.first) << "," << static_cast<int>(n.second) << " ";
+			std::cout << "\n\n";
 		}
 
 		if(wintype != CAPTURE)

@@ -1,2 +1,2 @@
 make -C ../build
-../build/play train L_10b_99840.pt none 100000 12 1 > ../results/train_result_L1.txt 2>&1  
+../build/play train none none 100000 12 1 > ../results/train_result_M1.txt 2>&1  
