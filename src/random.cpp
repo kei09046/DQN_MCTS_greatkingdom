@@ -39,15 +39,7 @@ namespace rnd {
 		return vals;
 	}
 
-	float sample_komi(float baseKomi, float randomProb, int range){
-		if(range <= 0 || pick0or1(randomProb) == 0)
-			return baseKomi;
-		const int lo = std::max(-range, static_cast<int>(std::ceil(0.5f - baseKomi)));
-		std::uniform_int_distribution<int> dist(lo, range);
-		return baseKomi + static_cast<float>(dist(gen));
-	}
-
-	std::vector<Move> sample_neutrals(){
+	const std::vector<std::vector<Move>>& neutral_point_classes(){
 		static_assert(rowSize == colSize, "symmetry classes assume a square board");
 		// canonical point of (r, c)'s class under the 8 rotations / flips : fold onto the top-left quadrant, then r <= c.
 		const auto canonical = [](int r, int c){
@@ -56,7 +48,6 @@ namespace rnd {
 			return std::make_pair(std::min(r, c), std::max(r, c));
 		};
 
-		// classes in a fixed order, plus one extra slot for "no neutral".
 		static const std::vector<std::vector<Move>> classes = [&]{
 			std::vector<std::pair<int, int>> reps;
 			std::vector<std::vector<Move>> cls;
@@ -74,12 +65,44 @@ namespace rnd {
 				}
 			return cls;
 		}();
+		return classes;
+	}
 
+	int neutral_setup_count(){
+		return static_cast<int>(neutral_point_classes().size()) + 1;
+	}
+
+	int neutral_setup_index(const std::vector<Move>& neutrals){
+		const auto& classes = neutral_point_classes();
+		if(neutrals.empty())
+			return static_cast<int>(classes.size());
+		for(int k=0; k<static_cast<int>(classes.size()); ++k)
+			if(std::find(classes[k].begin(), classes[k].end(), neutrals[0]) != classes[k].end())
+				return k;
+		return -1; // off the board
+	}
+
+	std::vector<Move> sample_neutrals(){
+		const auto& classes = neutral_point_classes();
 		std::uniform_int_distribution<int> pickClass(0, static_cast<int>(classes.size())); // == size : no neutral
 		const int k = pickClass(gen);
 		if(k == static_cast<int>(classes.size()))
 			return {};
 		std::uniform_int_distribution<int> pickPoint(0, static_cast<int>(classes[k].size()) - 1);
 		return {classes[k][pickPoint(gen)]};
+	}
+
+	float sample_fair_komi(float fairKomi, float noise, float wideProb, float wideNoise){
+		if(wideProb > 0.0f && std::bernoulli_distribution(wideProb)(gen))
+			noise = wideNoise;
+		// uniform around fairKomi, cut at 0.5 (not clamped : that would pile the cut-off mass onto 0.5).
+		const float lo = std::max(fairKomi - noise, 0.5f), hi = std::max(fairKomi + noise, lo);
+		std::uniform_real_distribution<float> draw(lo, hi);
+		const float x = (hi > lo) ? draw(gen) : lo;
+		// x.5 values on either side of x; the upper one with probability (x - lower), so the mean stays x.
+		const float lower = std::floor(x - 0.5f) + 0.5f;
+		std::bernoulli_distribution up(x - lower);
+		const float komi = up(gen) ? lower + 1.0f : lower;
+		return std::clamp(komi, 0.5f, boardSize - 0.5f);
 	}
 }

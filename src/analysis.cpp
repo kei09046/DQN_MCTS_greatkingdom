@@ -1,4 +1,6 @@
 #include "analysis.hpp"
+#include "fairkomi.h"
+#include "random.h"
 #include <iostream>
 #include <sstream>
 
@@ -165,6 +167,23 @@ void Analysis::rules_server(){
                   << static_cast<int>(game.get_turn()) << " " << game.score_diff(BLACK) << " "
                   << bTerr << " " << wTerr << " " << board << std::endl;
     }
+}
+
+void Analysis::print_fair_komi(MCTS& mcts){
+    const auto fair = estimate_fair_komi(*mcts.evaluator->model());
+    const auto& classes = rnd::neutral_point_classes();
+    std::cout << "fairkomi";
+    for(size_t k=0; k<fair.size(); ++k){
+        if(k < classes.size())
+            std::cout << " " << static_cast<int>(classes[k][0].first) << " " << static_cast<int>(classes[k][0].second);
+        else
+            std::cout << " -1 -1";
+        if(fair[k])
+            std::cout << " " << *fair[k];
+        else
+            std::cout << " -";
+    }
+    std::cout << std::endl;
 }
 
 void Analysis::print_variation(MCTS& mcts){

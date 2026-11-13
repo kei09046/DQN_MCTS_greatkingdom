@@ -67,7 +67,8 @@
     "lrPatience": 10,
     "lrImprovementWinrate": 0.55,
     "initialLearningRate": 0.0001,
-    "randomKomiProb": 0.5,
-    "randomKomiRange": 3
+    "fairKomiNoise": 1.0,
+    "wideKomiProb": 0.05,
+    "wideKomiNoise": 8.0
   }
 }
