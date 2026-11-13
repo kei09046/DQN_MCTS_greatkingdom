@@ -105,7 +105,7 @@ int Node::select_child_in_search(float fpu){
     assert(!game.get_available_moves().empty());
 
     // KataGo style fpu.
-    float fpuValue = 0.0f;
+    float fpuValue = -W/value_n();
     if(fpu >= 0.0f){
         float visitedPolicy = 0.0f;
         for(int i=0; i<edgeN.size(); ++i)
@@ -669,12 +669,6 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
             int a;
             if(cur == root && forcedFirstSearch >= 0){
                 a = forcedFirstSearch;
-                // selectChildInSearch (the ordinary path below) allocates child[a] itself,
-                // lazily, the instant before returning it -- this bypasses that entirely, so it
-                // has to do the same allocate-if-missing check here, or an unexplored index
-                // (child[a] still nullptr, since root->child is only ever pre-sized with
-                // placeholders in Node::expand(), not populated) segfaults on the dereference
-                // below.
                 if(cur->child[a] == nullptr){
                     const auto& moves = cur->game.get_available_moves();
                     cur->add_child({moves[a] / colSize, moves[a] % colSize}, a);
