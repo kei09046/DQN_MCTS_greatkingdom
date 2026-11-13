@@ -6,6 +6,7 @@
 /Makefile
 /build
 /unused
+/test
 /cmake_install.cmake
 /detect_cuda_compute_capabilities.cu
 /detect_cuda_version.cc

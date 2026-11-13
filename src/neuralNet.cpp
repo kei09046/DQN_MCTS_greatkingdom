@@ -263,7 +263,7 @@ NNInput PolicyValueNet::get_data(const Game& game){
 	}
 
 	// channel 23 : territory building move (change : may not be legal right now(due to threat))
-	// K type architecture only gets score maximizing moves among threats.
+	// L type architecture only gets score maximizing moves among threats.
 	for(const auto& m : game.maximize_score(turn, 1)){
 		ret.at(23 * inputSize + m) = ret.at(22 * inputSize + m) != 0.0f ? 1.0f : 0.0f;
 	}
