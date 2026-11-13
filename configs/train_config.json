@@ -42,8 +42,8 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 26,
-    "numHiddenBlock": 12
+    "inputChannel": 25,
+    "numHiddenBlock": 10
   },
 
   "cache": {

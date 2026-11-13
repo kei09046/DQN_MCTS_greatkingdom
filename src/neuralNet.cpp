@@ -263,19 +263,15 @@ NNInput PolicyValueNet::get_data(const Game& game){
 	}
 
 	// channel 23 : territory building move (change : may not be legal right now(due to threat))
+	// K type architecture only gets score maximizing moves among threats.
 	for(const auto& m : game.maximize_score(turn, 1)){
-		ret.at(23 * inputSize + m) = 1.0f;
+		ret.at(23 * inputSize + m) = ret.at(22 * inputSize + m) != 0.0f ? 1.0f : 0.0f;
 	}
 
 	// channel 24 : opponent's territory building move
 	for(const auto& m : game.maximize_score(oppturn, 1)){
 		ret.at(24 * inputSize + m) = 1.0f;
 	}
-
-	// channel 25 : komi from the side to move's perspective (komi is added to white's score).
-	const float komi = (turn == WHITE) ? game.get_komi() : -game.get_komi();
-	for(int i=0; i<inputSize; ++i)
-		ret.at(25*inputSize + i) = komi / boardSize;
 
     return {ret};
 }
