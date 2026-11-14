@@ -64,7 +64,7 @@
     "windowFraction": 0.25,
     "valueQMix": 0.5,
     "fallbackWinrate": 0.25,
-    "lrPatience": 10,
+    "lrPatience": 50,
     "lrImprovementWinrate": 0.55,
     "initialLearningRate": 0.0001,
     "randomKomiProb": 0.5,
