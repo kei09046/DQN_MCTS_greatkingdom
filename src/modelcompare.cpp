@@ -299,6 +299,9 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			Move m = player.select_move(temp);
 			std::cout << "selected " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 		}
+		else if (cmd == "fairkomi") {
+			analysis.print_fair_komi(player);
+		}
 		else if (cmd == "pause") {
 			// The in-progress "analyze" loop (if any) already stopped itself to read this
 			// line; nothing further to do here besides acknowledging it.
@@ -527,14 +530,15 @@ void ModelCompare::play_human() {
 	return;
 }
 
-std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo,
+std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo, const FairKomiTable& fairKomi,
 		std::ostream& totalRes, bool isShown, float temp, int nGames) {
 
-	// each pair of games (one with each color) gets its own random komi and neutral stones, drawn like self-play's.
+	// each pair of games (one with each color) gets its own random setup, drawn like self-play's.
 	std::vector<bool> result(nGames << 1);
 	for (int i = 0; i < nGames; ++i) {
-		const Game start(rnd::sample_komi(globalConfig.komi, globalConfig.randomKomiProb, globalConfig.randomKomiRange),
-			rnd::sample_neutrals());
+		const std::vector<Move> neutrals = rnd::sample_neutrals();
+		const Game start(rnd::sample_fair_komi(fairKomi.at(rnd::neutral_setup_index(neutrals)), globalConfig.fairKomiNoise),
+			neutrals);
 		// result[i] : player_one plays as black, result[nGames + i] : player_two plays as black
 		result[i] = static_cast<bool>(ModelCompare::start_play({ playerOne, playerTwo }, start, totalRes, isShown, temp));
 		result[nGames + i] = !static_cast<bool>(ModelCompare::start_play({ playerTwo, playerOne }, start, totalRes, isShown, temp));
@@ -553,11 +557,18 @@ float ModelCompare::policy_evaluate(const std::string& modOne, const std::string
 		oppoPlayers.push_back(new MCTS(et, params_of(params, 1)));
 	}
 
+	// fair komi : the mean of both models' estimates, so neither model alone decides how setups are balanced.
+	const FairKomiTable fairKomi = combine_fair_komi({estimate_fair_komi(*eo->model()), estimate_fair_komi(*et->model())},
+		globalConfig.komi);
+	totalRes << "fair komi : ";
+	print_fair_komi(totalRes, fairKomi);
+	totalRes << std::endl;
+
 	std::vector<std::thread> evaluateThreads;
 	std::atomic<int> totalWin = 0;
 	for(int i=0; i<nThread; ++i){
 		evaluateThreads.emplace_back([&, i]{
-			std::vector<bool> b = play_match(basePlayers[i], oppoPlayers[i], totalRes, (i == 0) && isShown, temp, nGames / nThread);
+			std::vector<bool> b = play_match(basePlayers[i], oppoPlayers[i], fairKomi, totalRes, (i == 0) && isShown, temp, nGames / nThread);
 			totalWin += std::count(b.begin(), b.end(), true);
 		}
 		);
@@ -587,12 +598,21 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 		players[i] = new MCTS(evaluators[i], params_of(params, i));
 	}
 
+	// one fair komi table for every pairing (the mean of all models' estimates), so all games share one setup distribution.
+	std::vector<std::vector<std::optional<float>>> estimates;
+	for(auto* e : evaluators)
+		estimates.push_back(estimate_fair_komi(*e->model()));
+	const FairKomiTable fairKomi = combine_fair_komi(estimates, globalConfig.komi);
+	totalRes << "fair komi : ";
+	print_fair_komi(totalRes, fairKomi);
+	totalRes << std::endl;
+
 	bool loadFromFile = false;
 	EloCalculator eloCalculator(globalConfig.modelPath + "ratings.txt", modelList, loadFromFile);
 
 	for(int i=1; i<N; ++i){
 		for(int j=0; j<N-i; ++j){
-			std::vector<bool> b = play_match(players[j], players[j+i], totalRes, isShown, temp, nGames);
+			std::vector<bool> b = play_match(players[j], players[j+i], fairKomi, totalRes, isShown, temp, nGames);
 			eloCalculator.update_ratings(j, j+i, b);
 			
 			int winCnt = std::count(b.begin(), b.end(), true);

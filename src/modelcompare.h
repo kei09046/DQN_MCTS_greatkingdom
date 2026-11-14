@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include "PMCTS.h"
+#include "fairkomi.h"
 
 class ModelCompare{
 public:
@@ -28,7 +29,9 @@ public:
 
 	static void play_web(const std::string& model, const Color humanColor, int playout, float temp, bool gpu); // play against human/itself on web
 
-	static std::vector<bool> play_match(MCTS* playerOne, MCTS* playerTwo, // return result of the match 1 : win for player_one, 0 : win for player two
+	// return result of the match 1 : win for player_one, 0 : win for player two. Each pair of games (one per color
+	// assignment) gets random neutral stones and a komi around that setup's fair komi (fairKomi, rnd::sample_fair_komi).
+	static std::vector<bool> play_match(MCTS* playerOne, MCTS* playerTwo, const FairKomiTable& fairKomi,
 		std::ostream& totalRes, bool isShown = false, float temp = 1.0f, int nGames = 100);
 
 	// params[i] : search params (fpu, minVisitRatio) of i-th engine. Engines without an entry use the global config values.

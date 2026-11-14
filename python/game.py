@@ -212,23 +212,45 @@ MATCHES_DIR = os.path.join(REPO_ROOT, "matches")
 PLAY_CONFIG = os.path.join(REPO_ROOT, "configs", "play_config.json")
 
 
-def random_komi_params(config_path=PLAY_CONFIG):
-    """(randomKomiProb, randomKomiRange) of the config's train section, as self-play uses them."""
+def fair_komi_noise(config_path=PLAY_CONFIG):
+    """train.fairKomiNoise of the config : how far komi is spread around a setup's fair komi."""
     try:
         with open(config_path) as f:
-            train = json.load(f).get("train", {})
+            return float(json.load(f).get("train", {}).get("fairKomiNoise", 1.0))
     except (OSError, ValueError):
-        train = {}
-    return float(train.get("randomKomiProb", 0.5)), int(train.get("randomKomiRange", 3))
+        return 1.0
 
 
-def sample_komi(base_komi, random_prob, komi_range, rng=random):
-    """Same as rnd::sample_komi (src/random.cpp): base_komi with probability 1 - random_prob, else
-    base_komi + d, d uniform among the integers in [-komi_range, komi_range] keeping komi >= 0.5."""
-    if komi_range <= 0 or rng.random() >= random_prob:
-        return base_komi
-    lo = max(-komi_range, math.ceil(0.5 - base_komi))
-    return base_komi + rng.randint(lo, komi_range)
+def neutral_setup_key(neutrals, board_size):
+    """A neutral setup up to rotation / flip : the canonical point of its class, or None for no neutral
+    stone (same classes as rnd::neutral_point_classes in src/random.cpp)."""
+    if not neutrals:
+        return None
+    r, c = neutrals[0]
+    r, c = min(r, board_size - 1 - r), min(c, board_size - 1 - c)
+    return min(r, c), max(r, c)
+
+
+def combine_fair_komi(tables, fallback):
+    """Same as combine_fair_komi (src/fairkomi.cpp) : per setup key, the mean of the tables that have an
+    estimate (AnalysisEngine.request_fair_komi), else fallback. Returns a dict key -> komi."""
+    keys = set().union(*tables) if tables else set()
+    out = {}
+    for key in keys:
+        vals = [t[key] for t in tables if t.get(key) is not None]
+        out[key] = sum(vals) / len(vals) if vals else fallback
+    return out
+
+
+def sample_fair_komi(fair_komi, noise, rng=random):
+    """Same as rnd::sample_fair_komi (src/random.cpp, without its rare wide draws, which only self-play uses) :
+    uniform in [fair_komi - noise, fair_komi + noise] cut below at 0.5, rounded to one of the two nearest x.5
+    values at random so the mean stays that of the uniform draw."""
+    lo = max(fair_komi - noise, 0.5)
+    hi = max(fair_komi + noise, lo)
+    x = rng.uniform(lo, hi)
+    lower = math.floor(x - 0.5) + 0.5
+    return max(0.5, lower + 1.0 if rng.random() < x - lower else lower)
 
 
 def sample_neutrals(board_size, rng=random):
@@ -616,6 +638,8 @@ class AnalysisEngine:
         self.playouts = queue.Queue()
         # selections: (r, c) replies to request_select, in request order.
         self.selections = queue.Queue()
+        # replies to request_fair_komi : {setup key (neutral_setup_key) : fair komi or None}.
+        self.fair_komis = queue.Queue()
         # Position generations, so a caller can tell which position a streamed result/playout
         # line describes. The engine answers commands strictly in order, but results already
         # printed (or still in the pipe) when a "play" is sent describe the position *before*
@@ -670,6 +694,16 @@ class AnalysisEngine:
             m = _SELECTED_RE.match(line)
             if m:
                 self.selections.put((int(m.group(1)), int(m.group(2))))
+                continue
+
+            if line.startswith("fairkomi"):
+                parts = line.split()[1:]
+                table = {}
+                for i in range(0, len(parts) - 2, 3):
+                    r, c, k = int(parts[i]), int(parts[i + 1]), parts[i + 2]
+                    key = None if r < 0 else neutral_setup_key([(r, c)], RuleManager.boardSize)
+                    table[key] = None if k == "-" else float(k)
+                self.fair_komis.put(table)
                 continue
 
             if line == "analysis begin":
@@ -793,6 +827,21 @@ class AnalysisEngine:
                     return None
         return None
 
+    def request_fair_komi(self, stop_event=None, poll_interval=0.05, timeout=120):
+        """The engine model's fair komi of every neutral setup ("fairkomi", Analysis::print_fair_komi) as
+        {neutral_setup_key : komi or None (no estimate)}; None on timeout/stop. Only while not searching."""
+        self._send("fairkomi")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                return None
+            try:
+                return self.fair_komis.get(timeout=poll_interval)
+            except queue.Empty:
+                if not self.is_alive():
+                    return None
+        return None
+
     def send_pause(self):
         self._send("pause")
 
@@ -900,9 +949,10 @@ class MatchRunner:
 
     def __init__(self, engine_a_cfg, engine_b_cfg, n_games, build_dir=BUILD_DIR, komi=None, neutrals=None):
         # each cfg: {"model": str, "playouts": int, "temp": float, "fpu": float, "min_visit_ratio": float}
-        # komi / neutrals : fixed for every game, or None to draw them at random (sample_komi /
-        # sample_neutrals, like self-play) for each pair of games -- both games of a pair, one with
-        # each color assignment, use the same setup. neutrals = [] : no neutral stone.
+        # komi / neutrals : fixed for every game, or None to draw them at random for each pair of games,
+        # like self-play and ModelCompare::play_match -- neutrals by sample_neutrals, komi around the
+        # setup's fair komi (both engines' estimates averaged, sample_fair_komi). Both games of a pair, one
+        # with each color assignment, use the same setup. neutrals = [] : no neutral stone.
         self.cfg = {"A": engine_a_cfg, "B": engine_b_cfg}
         self.komi = komi
         self.neutrals = None if neutrals is None else list(neutrals)
@@ -952,6 +1002,15 @@ class MatchRunner:
                                                search_params={"fpu": cfg["fpu"],
                                                               "min_visit_ratio": cfg["min_visit_ratio"]})
 
+            fair_komi = None
+            if self.komi is None:
+                tables = [engines[side].request_fair_komi(self._stop) for side in ("A", "B")]
+                if self._stop.is_set():
+                    return
+                fair_komi = combine_fair_komi([t for t in tables if t], RuleManager.penalty)
+                self.events.put({"type": "fair_komi", "table": fair_komi})
+            noise = fair_komi_noise()
+
             for game_idx in range(self.n_games):
                 if self._stop.is_set():
                     break
@@ -964,10 +1023,13 @@ class MatchRunner:
                 self.events.put({"type": "game_start", "index": game_idx, "black": black, "white": white})
 
                 if game_idx % 2 == 0:  # first game of a pair : its setup
-                    komi = self.komi if self.komi is not None else sample_komi(
-                        RuleManager.penalty, *random_komi_params())
                     neutrals = self.neutrals if self.neutrals is not None else sample_neutrals(
                         RuleManager.boardSize)
+                    if self.komi is not None:
+                        komi = self.komi
+                    else:
+                        fair = fair_komi.get(neutral_setup_key(neutrals, RuleManager.boardSize), RuleManager.penalty)
+                        komi = sample_fair_komi(fair, noise)
                 for eng in engines.values():
                     eng.send_reset(komi, neutrals)
 
@@ -3070,11 +3132,10 @@ class Game:
         default_neutral = RuleManager.neutral[0] if RuleManager.neutral else (self.boardSize // 2, self.boardSize // 2)
         dialog.neutral_var = StringVar(value=f"{default_neutral[0]} {default_neutral[1]}")
         Entry(neutral_row, textvariable=dialog.neutral_var, width=6).pack(side=LEFT)
-        random_prob, random_range = random_komi_params()
         Label(setup_frame, text=f"(Random is drawn like self-play, once per pair of games -- both color "
-                                f"assignments get the same setup. Komi: {RuleManager.penalty:g} with probability "
-                                f"{1 - random_prob:g}, else {RuleManager.penalty:g} ± up to {random_range}. "
-                                f"Neutral: every position up to rotation/flip, or none, equally likely.)",
+                                f"assignments get the same setup. Neutral: every position up to rotation/flip, "
+                                f"or none, equally likely. Komi: the setup's fair komi (where both engines' "
+                                f"value of the empty board is even, averaged) ± up to {fair_komi_noise():g}.)",
               wraplength=420, justify=LEFT, fg="#555555").pack(anchor="w")
 
         games_row = Frame(dialog)
@@ -3175,8 +3236,9 @@ class Game:
         dialog.stop_button.configure(state=NORMAL)
         dialog.status_label.configure(text=f"Starting match -- {n_games} game(s)...")
 
-        dialog.setup = {"komi": "random" if komi is None else komi,
+        dialog.setup = {"komi": "fair" if komi is None else komi,
                         "neutrals": "random" if neutrals is None else [list(n) for n in neutrals]}
+        dialog.fair_komi = None
         dialog.runner = MatchRunner(cfg_a, cfg_b, n_games, build_dir=BUILD_DIR, komi=komi, neutrals=neutrals)
         dialog.match_done = False
         dialog.runner.start()
@@ -3278,7 +3340,13 @@ class Game:
             except queue.Empty:
                 break
 
-            if event["type"] == "game_start":
+            if event["type"] == "fair_komi":
+                table = event["table"]
+                dialog.fair_komi = {("none" if k is None else f"{k[0]},{k[1]}"): v for k, v in table.items()}
+                text = " ".join(f"{'none' if k is None else f'({k[0]},{k[1]})'}={v:.1f}"
+                                for k, v in sorted(table.items(), key=lambda kv: (kv[0] is None, kv[0] or (0, 0))))
+                dialog.status_label.configure(text=f"Fair komi : {text}")
+            elif event["type"] == "game_start":
                 dialog.status_label.configure(
                     text=f"Game {event['index'] + 1}/{dialog.n_games} running "
                          f"({event['black']} black, {event['white']} white)...")
@@ -3311,6 +3379,7 @@ class Game:
             "engineB": dialog.cfg_b,
             "n_games_requested": dialog.n_games,
             "setup": dialog.setup,
+            "fair_komi": getattr(dialog, "fair_komi", None),
             "tally": dialog.tally,
             "games": dialog.records,
         }

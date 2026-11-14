@@ -31,6 +31,11 @@ public:
     // accumulated).
     void print_analysis(MCTS& mcts);
 
+    // "fairkomi" : one line "fairkomi <r> <c> <komi> ..." with the engine model's fair komi of every neutral setup
+    // (estimate_fair_komi), each setup by its first point, "-1 -1" for no neutral stone, komi "-" where the model
+    // has no estimate. Only while no search is running (the REPL is single threaded).
+    void print_fair_komi(MCTS& mcts);
+
     // One-line-per-ply dump of the current principal variation.
     void print_variation(MCTS& mcts);
 

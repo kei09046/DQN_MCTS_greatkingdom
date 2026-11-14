@@ -108,9 +108,24 @@ void label_finished_game(std::vector<TrainData>& buffer, const std::vector<Move>
 	}
 }
 
+void TrainPipeline::update_fair_komi(){
+	FairKomiTable table = combine_fair_komi({estimate_fair_komi(inferenceModel)}, globalConfig.komi);
+	std::cout << "fair komi : ";
+	print_fair_komi(std::cout, table);
+	std::cout << std::endl;
+
+	std::lock_guard<std::mutex> lock(fairKomiMutex);
+	fairKomi = std::move(table);
+}
+
 void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
-	const float komi = rnd::sample_komi(globalConfig.komi, globalConfig.randomKomiProb, globalConfig.randomKomiRange);
 	const std::vector<Move> neutrals = rnd::sample_neutrals();
+	float fair;
+	{
+		std::lock_guard<std::mutex> lock(fairKomiMutex);
+		fair = fairKomi.at(rnd::neutral_setup_index(neutrals));
+	}
+	const float komi = rnd::sample_fair_komi(fair, globalConfig.fairKomiNoise, globalConfig.wideKomiProb, globalConfig.wideKomiNoise);
 
 	Game gameManager(komi, neutrals);
 	player->reset(Game(komi, neutrals));
@@ -262,6 +277,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 	mctsAgent.reserve(inferenceThreadNum);
 
 	auto evaluator = new Evaluator(&inferenceModel);
+	update_fair_komi();
 	for(int i=0; i<inferenceThreadNum; ++i){
 		mctsAgent.emplace_back(evaluator);
 		selfPlayPaused[i] = false;
@@ -407,6 +423,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 
 					// critical section
 					evaluator->update_model(&trainModel); // synchronize train_model and inference_model
+					update_fair_komi(); // every self-play thread is paused here
 					
 					pauseFlag.store(false); // restart train thread
 					trainCv.notify_one(); // notify train thread

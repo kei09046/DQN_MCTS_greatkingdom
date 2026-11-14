@@ -8,6 +8,7 @@
 #include "replaybuffer.h"
 #include "consts.h"
 #include "modelcompare.h"
+#include "fairkomi.h"
 #include <string>
 #include <utility>
 #include <random>
@@ -75,6 +76,14 @@ private:
 	std::vector<float> trainLosses[9];
 	
 	std::string currentBestModelFile;
+
+	// fair komi of each neutral setup (rnd::neutral_setup_index), estimated by the self-play model : the komi at which
+	// its value of the empty board is even. Self-play draws komi around it (rnd::sample_fair_komi).
+	FairKomiTable fairKomi;
+	std::mutex fairKomiMutex;
+
+	// recomputes fairKomi with inferenceModel. Call only while no self-play game is being evaluated.
+	void update_fair_komi();
 
 	void pin_threads_to_core(std::thread& th, int coreId);
 
