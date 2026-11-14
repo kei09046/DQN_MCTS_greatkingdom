@@ -495,9 +495,9 @@ _ANALYSIS_MOVE_RE = re.compile(
 # this moves as search deepens -- the scoreExp/initQ pair's counterpart to winrate/scoreSearch.
 _ANALYSIS_SCORESEARCH_RE = re.compile(r"^scoreSearch\s*:\s*" + _FLOAT)
 # "scoreExp : <float>" -- the score head's raw scalar output the first time this position was
-# evaluated (mirrors initQ, but for the score head): net (Black - White) territory/capture
-# margin, from the perspective of whoever is to move (same turn-relative convention as
-# winrate/scoreMap), without komi applied (see the PolicyValueOutput comment in src/consts.h).
+# evaluated (mirrors initQ, but for the score head): territory/capture margin without komi,
+# from the perspective of whoever is to move (the engine negates the raw head output, which is
+# trained on the lead of the player who just moved -- same convention as scoreSearch/winrate).
 _ANALYSIS_SCOREEXP_RE = re.compile(r"^scoreExp\s*:\s*" + _FLOAT)
 # "scoreMap : v0 v1 ... v80" -- row-major (r*9+c) per-point territory prediction, tanh output
 # in [-1, 1]: -1 = certain Black-owned point, +1 = certain White-owned point (see

@@ -377,7 +377,7 @@ void Analysis::print_analysis(MCTS& mcts){
     // scoreExp / scoreMap / captureMap are NN outputs for the *current* root position, not per-child
     // search stats. scoreExp comes from the evaluator (a cache hit, since root was already evaluated
     // by the very first playout); the cache doesn't keep the maps, so boardMaps runs its own pass.
-    // scoreExp: the score head's raw scalar output -- net (Black - White) territory/capture
+    // scoreExp: the score head's raw scalar output -- net (Black - White) territory
     // margin, from whoever is to move at root's perspective (turn-relative, same convention as
     // winrate/scoreMap below), without komi applied (see NodeInfo in evaluator.h and the
     // training label in train.cpp, `-scoreDiff(startingTurn)`).
@@ -386,7 +386,7 @@ void Analysis::print_analysis(MCTS& mcts){
     {
         auto buf = std::make_shared<NNResultBuf>();
         mcts.evaluator->evaluate(buf, &root->game, root->hashValue);
-        std::cout << "scoreExp : " << buf->result->S << std::endl;
+        std::cout << "scoreExp : " << -buf->result->S << std::endl;
 
         const BoardMaps maps = board_maps(mcts.evaluator->model(), root->game);
         std::cout << "scoreMap :";
