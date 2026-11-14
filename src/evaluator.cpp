@@ -30,7 +30,11 @@ void Evaluator::handler_work() {
         batchInput.clear();
         for(const auto& in : batchInputs)
             batchInput.insert(batchInput.end(), in->begin(), in->end());
-        std::vector<PolicyValueOutput> rawOutputs = net->batch_evaluate(batchInput, static_cast<int>(batchInputs.size()), &pinned);
+        std::vector<PolicyValueOutput> rawOutputs;
+        {
+            std::lock_guard<std::mutex> netLk(netMutex);
+            rawOutputs = net->batch_evaluate(batchInput, static_cast<int>(batchInputs.size()), &pinned);
+        }
         std::vector<NodeInfo> outputs;
         outputs.reserve(rawOutputs.size());
         
@@ -177,14 +181,17 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
 }
 
 Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
+    net->capture_graphs();
     create_handler_threads();
 }
 Evaluator::Evaluator(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu)
     : net(new PolicyValueNet(modelFile, modelType, numBlocks, useGpu)), stop(false){
+    net->capture_graphs();
     create_handler_threads();
 }
 Evaluator::Evaluator(const std::string& modelFile, bool useGpu)
     : net(new PolicyValueNet(modelFile, useGpu)), stop(false){
+    net->capture_graphs();
     create_handler_threads();
 }
 Evaluator::~Evaluator() {
@@ -225,6 +232,7 @@ bool Evaluator::async_evaluate(std::shared_ptr<NNResultBuf> buf, const Game* gam
 }
 
 void Evaluator::update_model(PolicyValueNet* updatedNet) {
+    std::lock_guard<std::mutex> netLk(netMutex);
     torch::NoGradGuard noGrad;
 	auto srcState = updatedNet->policyValueNet->named_parameters();
 	auto dstState = net->policyValueNet->named_parameters();
@@ -241,5 +249,6 @@ void Evaluator::update_model(PolicyValueNet* updatedNet) {
 		dstBuf[item.key()].copy_(item.value());
 	}
     net->fuse_batch_norm(); // the folded weights were computed from the old weights
+    net->capture_graphs(); // the graphs read the old fused weights
     cache.clear();
 }

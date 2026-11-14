@@ -1,11 +1,32 @@
 #include "neuralNet.h"
 #include "consts.h"
 #include <cmath>
+#include <cstring>
+#include <algorithm>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <iostream>
 #include <stdexcept>
 #include <cctype>
 #include <filesystem>
 #include <regex>
+
+
+namespace{
+	// every output of a position side by side in one row : policy, value, score, score map, capture map.
+	constexpr int pOff = 0, vOff = outputSize, sOff = vOff + 1, smOff = sOff + 1, cmOff = smOff + boardSize;
+	constexpr int outWidth = cmOff + boardSize;
+
+	// the five heads of a batch of B merged into one [B, outWidth] tensor, so they come back in a single copy.
+	torch::Tensor merge_outputs(const NNOutput& r, int B){
+		return torch::cat({std::get<0>(r).view({B, outputSize}), std::get<1>(r).view({B, 1}), std::get<2>(r).view({B, 1}),
+			std::get<3>(r).view({B, boardSize}), std::get<4>(r).view({B, boardSize})}, 1);
+	}
+
+	// batch sizes with a recorded CUDA graph. A batch replays the smallest one that fits (the extra rows are ignored);
+	// a bigger batch runs the net op by op.
+	constexpr int graphBatchSizes[] = {1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 128};
+}
 
 // For 9*9 board.
 Net::Net(int channelSize, int blockSize, int headChannels, int valueHidden, bool captureHead): channelSize(channelSize), headChannels(headChannels),
@@ -328,6 +349,43 @@ std::string PolicyValueNet::model_prefix() const{
 	return modelType + "_" + std::to_string(numBlocks) + "b_";
 }
 
+void PolicyValueNet::capture_graphs(){
+	graphs.clear();
+	if(!useGpu)
+		return;
+
+	torch::NoGradGuard noGrad;
+	const auto options = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+	try{
+		// the side stream below doesn't wait for the default stream on its own : finish e.g. the weight update first.
+		torch::cuda::synchronize();
+		// capture isn't allowed on the default stream. ThreadLocal mode : CUDA calls of other threads don't break it.
+		at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
+		at::cuda::CUDAStreamGuard guard(stream);
+		const auto pool = at::cuda::graph_pool_handle(); // one memory pool for all graphs : only one replays at a time
+
+		for(const int B : graphBatchSizes){
+			GraphBucket g;
+			g.batchSize = B;
+			g.in = torch::zeros({B, globalConfig.inputChannel, rowSize, colSize}, options);
+			// warm-up outside the capture : cuDNN benchmark mode times its algorithms here, which a capture can't contain.
+			for(int i = 0; i < 2; ++i)
+				merge_outputs(policyValueNet->forward(g.in), B);
+			stream.synchronize();
+
+			g.graph = std::make_unique<at::cuda::CUDAGraph>();
+			g.graph->capture_begin(pool, cudaStreamCaptureModeThreadLocal);
+			g.out = merge_outputs(policyValueNet->forward(g.in), B);
+			g.graph->capture_end();
+			graphs.push_back(std::move(g));
+		}
+		stream.synchronize();
+	}catch(const c10::Error& e){
+		std::cerr << "CUDA graph capture failed, evaluating without graphs : " << e.what_without_backtrace() << std::endl;
+		graphs.clear();
+	}
+}
+
 std::vector<PolicyValueOutput>
 PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pinned){
 	const int B = batchSize;
@@ -335,16 +393,8 @@ PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pin
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
-	// every output of a position side by side in one row : policy, value, score, score map, capture map.
-	constexpr int pOff = 0, vOff = outputSize, sOff = vOff + 1, smOff = sOff + 1, cmOff = smOff + boardSize;
-	constexpr int outWidth = cmOff + boardSize;
-
 	const auto options = torch::TensorOptions().dtype(torch::kFloat32);
 	const torch::Tensor cpuIn = torch::from_blob(input.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options);
-	const auto merge = [B](const NNOutput& r){
-		return torch::cat({std::get<0>(r).view({B, outputSize}), std::get<1>(r).view({B, 1}), std::get<2>(r).view({B, 1}),
-			std::get<3>(r).view({B, boardSize}), std::get<4>(r).view({B, boardSize})}, 1);
-	};
 
 	torch::NoGradGuard noGrad;
 	torch::Tensor out; // [B, outWidth] on the CPU
@@ -354,15 +404,25 @@ PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pin
 			pinned->out = torch::empty({B, outWidth}, options.pinned_memory(true));
 		}
 		torch::Tensor in = pinned->in.narrow(0, 0, B);
-		in.copy_(cpuIn);
-		const NNOutput r = policyValueNet->forward(in.to(device, /*non_blocking=*/true));
+		// plain memcpy : a torch copy_ this size runs on the OpenMP pool, whose idle workers then spin between batches.
+		std::memcpy(in.data_ptr<float>(), input.data(), input.size() * sizeof(float));
 		out = pinned->out.narrow(0, 0, B);
-		out.copy_(merge(r)); // blocking : waits for the forward pass, so pinned->in is free again for the next batch
+
+		const auto g = std::find_if(graphs.begin(), graphs.end(), [B](const GraphBucket& gb){ return gb.batchSize >= B; });
+		if(g != graphs.end()){
+			// one launch for the whole forward pass. Rows past B keep an older batch's positions; each row is
+			// evaluated independently, so they don't affect the first B.
+			g->in.narrow(0, 0, B).copy_(in, /*non_blocking=*/true);
+			g->graph->replay();
+			out.copy_(g->out.narrow(0, 0, B)); // blocking : g->in and pinned->in are free again for the next batch
+		}
+		else
+			out.copy_(merge_outputs(policyValueNet->forward(in.to(device, /*non_blocking=*/true)), B)); // blocking, as above
 	}
 	else if(useGpu)
-		out = merge(policyValueNet->forward(cpuIn.to(device))).to(torch::kCPU);
+		out = merge_outputs(policyValueNet->forward(cpuIn.to(device)), B).to(torch::kCPU);
 	else
-		out = merge(policyValueNet->forward(cpuIn)).contiguous();
+		out = merge_outputs(policyValueNet->forward(cpuIn), B).contiguous();
 
 	const float* row = out.data_ptr<float>();
 	for(int b = 0; b < B; ++b, row += outWidth) {
@@ -658,6 +718,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	// BatchNorm uses batch statistics (and updates its running statistics) only while training. The weights change from
 	// here on, so the folded inference weights (if any) are dropped.
 	policyValueNet->unfuse();
+	graphs.clear(); // they read the fused weights
 	policyValueNet->train(update);
 	torch::AutoGradMode gradMode(update);
 	const int passes = update ? globalConfig.epochs : 1;
@@ -762,6 +823,7 @@ void PolicyValueNet::load_model(const std::string& modelFile){
 	// inference mode: BatchNorm normalizes with its running statistics, so an evaluation doesn't depend on the rest of the batch.
 	policyValueNet->eval();
 	policyValueNet->fuse();
+	graphs.clear(); // recorded with the old net
 
 	// learning rate would be modified by train.cpp later.
 	optimizer = std::make_unique<torch::optim::Adam>(policyValueNet->parameters(), 
@@ -804,6 +866,7 @@ void PolicyValueNet::load_weights(const std::string& modelFile){
 
 	policyValueNet->eval();
 	policyValueNet->fuse();
+	graphs.clear(); // recorded with the old fused weights
 	std::cout << "Model weights loaded: " << modelFile << std::endl;
 }
 

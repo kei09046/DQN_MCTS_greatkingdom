@@ -44,6 +44,7 @@ private:
     std::queue<EvalRequest> q;
     std::atomic<bool> stop;
     PinnedBuffers pinned; // used only by the handler thread
+    std::mutex netMutex; // held while the handler evaluates and while update_model changes the net
 
     // cache lookup; on a miss, builds the input in the calling thread and queues the request.
     bool request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash);

@@ -2,6 +2,8 @@
 #define NEURALNET_H
 
 #include <torch/torch.h>
+#include <ATen/cuda/CUDAGraph.h>
+#include <memory>
 #include <optional>
 #include <string>
 #include "gamerules.h"
@@ -231,6 +233,14 @@ private:
 	// untrained network of this->model_type.
 	std::shared_ptr<NetBase> make_net() const;
 
+	// the fused forward pass recorded as a CUDA graph for one batch size (see capture_graphs).
+	struct GraphBucket{
+		int batchSize;
+		std::unique_ptr<at::cuda::CUDAGraph> graph;
+		torch::Tensor in, out; // the graph's fixed input [batchSize, ...] and merged output [batchSize, outWidth] on the GPU
+	};
+	std::vector<GraphBucket> graphs; // ascending batchSize. Empty : batch_evaluate runs the net op by op.
+
 public:
 	static constexpr float capturePosWeight = 5.0f; // BCE weight of captured points in the capture map loss
 
@@ -255,7 +265,8 @@ public:
 	static NNInput get_data(const std::vector<const Game*>& gameBatch);
 
 	// input : batchSize positions from getData, back to back (batchSize * inputChannel * inputSize floats).
-	// pinned : reused for the host <-> GPU transfer; without it the transfer goes through pageable memory.
+	// pinned : reused for the host <-> GPU transfer; without it the transfer goes through pageable memory and the
+	// recorded graphs (capture_graphs) aren't used.
 	std::vector<PolicyValueOutput> batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pinned = nullptr);
 
 	//std::vector<PolicyValueOutput> backupEvaluate(const std::vector<const Game*>& gameBatch); // run when batchEvaluate fails twice in a row. Checks gameBatch info as well.
@@ -264,7 +275,15 @@ public:
 	PolicyValueOutput evaluate(NNInput& input);
 
 	// folds BatchNorm into the convolutions for inference (NetBase::fuse). Call after the weights change; train() undoes it.
-	void fuse_batch_norm() { policyValueNet->fuse(); }
+	// Graphs stay valid only while the fused weights don't change : this drops them, call capture_graphs again after.
+	void fuse_batch_norm() { policyValueNet->fuse(); graphs.clear(); }
+
+	// Records the fused forward pass as one CUDA graph per batch size, so that batch_evaluate with pinned buffers
+	// launches a single graph instead of every kernel. GPU only. Needs the net fused, and must not run while another
+	// thread evaluates with this net. Takes a few seconds (cuDNN times every batch size). Anything that changes the fused
+	// weights (fuse_batch_norm, train, load_weights) drops the graphs; batch_evaluate then runs op by op.
+	// If the capture fails, a warning is printed and evaluation continues without graphs.
+	void capture_graphs();
 
 	// void train_step(std::array<float, inputChannel * batchSize * inputSize>& state_batch, std::array<float, batchSize * outputSize>& nextmove_batch,
 	// 	std::array<float, batchSize>& result_batch, float lr);
