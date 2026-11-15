@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <iostream>
 #include <stdexcept>
 #include <cctype>
@@ -359,8 +360,14 @@ void PolicyValueNet::capture_graphs(){
 	try{
 		// the side stream below doesn't wait for the default stream on its own : finish e.g. the weight update first.
 		torch::cuda::synchronize();
+		// Each capture gets a new private memory pool, and the allocator returns a destroyed graph's pool only here or
+		// when an allocation fails. On WSL a full GPU spills into system memory instead of failing, so without this
+		// every recapture (each model sync and comparison) kept ~120 MB until training slowed to a crawl.
+		c10::cuda::CUDACachingAllocator::emptyCache();
 		// capture isn't allowed on the default stream. ThreadLocal mode : CUDA calls of other threads don't break it.
-		at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
+		// Always the same stream : the libraries keep a workspace (~9 MB) for every stream they run on, never freed.
+		// (Captures never run at once : at construction, or in update_model while self-play is paused.)
+		static at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
 		at::cuda::CUDAStreamGuard guard(stream);
 		const auto pool = at::cuda::graph_pool_handle(); // one memory pool for all graphs : only one replays at a time
 
