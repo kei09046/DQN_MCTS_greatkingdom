@@ -24,24 +24,41 @@ def parse_log(path):
     """Returns (saves, comparisons). One save block per 'train_iter' line, in log order."""
     lines = Path(path).read_text(errors="replace").splitlines()
     saves, comparisons = [], []
-    cur, last_win_count, games_saved = None, None, None
+    cur, last_win_count, games_saved, train_iter, last_iter, base_iter = None, None, 0, 0, 0, 0
 
     for i, line in enumerate(lines):
         if m := re.match(r"model properly saved (\d+)", line):
-            games_saved = int(m.group(1))
+            # games_saved = int(m.group(1))
+            pass
+
         elif m := re.match(r"train_iter : (\d+)", line):
-            cur = {"train_iter": int(m.group(1)), "games": games_saved}
+            if last_iter <= int(m.group(1)):
+                train_iter = base_iter + int(m.group(1))
+            else:
+                base_iter = train_iter
+                train_iter += int(m.group(1))
+
+            last_iter = int(m.group(1))
+            cur = {"train_iter": train_iter}
             saves.append(cur)
+
         elif cur is None:
             continue
+
         elif m := re.match(r"games played : ([\d.]+)", line):
             cur["segments"] = float(m.group(1))
+            games_saved += int(m.group(1))
+            cur["games"] = games_saved
+
         elif m := re.match(r"capture ratio : ([\d.eE+-]+)", line):
             cur["capture_ratio"] = float(m.group(1))
+
         elif m := re.match(r"average game length : ([\d.eE+-]+)", line):
             cur["segment_length"] = float(m.group(1))
+
         elif m := re.match(r"replay buffer : (\d+) stored, sampling window (\d+), (\d+) positions added", line):
             cur["stored"], cur["window"], cur["added"] = map(int, m.groups())
+
         elif line.startswith("train losses"):
             for row, name in LOSS_ROWS.items():
                 if i + 1 + row < len(lines):
@@ -50,11 +67,14 @@ def parse_log(path):
                     except ValueError:
                         values = []
                     cur[name] = mean(values)
+
         elif m := re.match(r"win count : (\d+)", line):
             last_win_count = int(m.group(1))
+
         elif m := re.match(r"model (\S+) vs (\S+) winrate ([\d.eE+-]+)", line):
             comparisons.append({"model": m.group(1), "opponent": m.group(2), "winrate": float(m.group(3)),
                                 "wins": last_win_count, "games": games_saved, "fallback": False})
+            
         elif line.startswith("model fallback") and comparisons:
             comparisons[-1]["fallback"] = True
 
@@ -65,7 +85,7 @@ def add_derived(saves, batch, steps):
     """samples trained per new position, and KL = policy loss - target entropy."""
     prev_iter, prev_added = 0, 0
     for s in saves:
-        positions = s["added"] - prev_added if "added" in s else s.get("segments", 0) * s.get("segment_length", 0)
+        positions = (s["added"] - prev_added) if "added" in s else s.get("segments", 0) * s.get("segment_length", 0)
         trained = (s["train_iter"] - prev_iter) * batch * steps
         s["samples_per_position"] = trained / positions if positions else None
         prev_iter, prev_added = s["train_iter"], s.get("added", prev_added)
