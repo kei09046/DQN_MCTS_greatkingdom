@@ -180,17 +180,17 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
     return {expLogit, winP, utility, scoreEXP};
 }
 
-Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false){
+Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false), netOwned(false){
     net->capture_graphs();
     create_handler_threads();
 }
 Evaluator::Evaluator(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu)
-    : net(new PolicyValueNet(modelFile, modelType, numBlocks, useGpu)), stop(false){
+    : net(new PolicyValueNet(modelFile, modelType, numBlocks, useGpu)), stop(false), netOwned(true){
     net->capture_graphs();
     create_handler_threads();
 }
 Evaluator::Evaluator(const std::string& modelFile, bool useGpu)
-    : net(new PolicyValueNet(modelFile, useGpu)), stop(false){
+    : net(new PolicyValueNet(modelFile, useGpu)), stop(false), netOwned(true){
     net->capture_graphs();
     create_handler_threads();
 }
@@ -200,7 +200,10 @@ Evaluator::~Evaluator() {
         stop = true;
     } 
     qcv.notify_all(); 
-    handler.join(); 
+    handler.join();
+    // after every evaluation is done, delete net if needed.
+    if(netOwned)
+        delete net; 
 }
 
 bool Evaluator::request(const std::shared_ptr<NNResultBuf>& buf, const Game* game, HashValue hash){ // called by multiple threads. Cache must be thread-safe.

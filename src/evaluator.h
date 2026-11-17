@@ -37,6 +37,7 @@ struct EvalRequest {
 class Evaluator{
 private:
     PolicyValueNet* net;
+    const bool netOwned; // if set true, net should be deleted on destructor.
     EvalCache cache;
     std::thread handler;
     std::mutex qmutex;

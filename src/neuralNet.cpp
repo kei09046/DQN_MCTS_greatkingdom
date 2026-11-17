@@ -294,7 +294,7 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		ret.at(24 * inputSize + m) = 1.0f;
 	}
 
-	// channel 25 : komi from the side to move's perspective (komi is added to white's score).
+	// channel 25 : komi from the side to move's perspective.
 	const float komi = (turn == WHITE) ? game.get_komi() : -game.get_komi();
 	for(int i=0; i<inputSize; ++i)
 		ret.at(25*inputSize + i) = komi / boardSize;
@@ -360,13 +360,7 @@ void PolicyValueNet::capture_graphs(){
 	try{
 		// the side stream below doesn't wait for the default stream on its own : finish e.g. the weight update first.
 		torch::cuda::synchronize();
-		// Each capture gets a new private memory pool, and the allocator returns a destroyed graph's pool only here or
-		// when an allocation fails. On WSL a full GPU spills into system memory instead of failing, so without this
-		// every recapture (each model sync and comparison) kept ~120 MB until training slowed to a crawl.
 		c10::cuda::CUDACachingAllocator::emptyCache();
-		// capture isn't allowed on the default stream. ThreadLocal mode : CUDA calls of other threads don't break it.
-		// Always the same stream : the libraries keep a workspace (~9 MB) for every stream they run on, never freed.
-		// (Captures never run at once : at construction, or in update_model while self-play is paused.)
 		static at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
 		at::cuda::CUDAStreamGuard guard(stream);
 		const auto pool = at::cuda::graph_pool_handle(); // one memory pool for all graphs : only one replays at a time
@@ -706,9 +700,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 	sd *= smask;
 	auto smap = map * smMask;
-	// capture map target : the map holds the capture map for games ending by capture. For games ending by score it holds
-	// the occupancy map (OCCUPYHEAD), and the capture target is all zero : nothing was captured.
-	auto cmap = map * (~smMask) * capMask;
+	auto cmap = map * capMask;
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	torch::nn::HuberLoss huberLoss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
@@ -778,7 +770,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 		cmLoss += captureLoss.item<float>();
 
 		if(update){
-			// a single non-finite loss or gradient would write NaN into every weight: skip the step instead.
+			// if NaN/Inf detected : skip the step instead.
 			if(!std::isfinite(loss.item<float>())){
 				std::cerr << "non-finite loss: optimizer step skipped" << std::endl;
 				continue;
