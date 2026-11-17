@@ -482,8 +482,11 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	auto capActiveElements = capMask.sum().item<float>() * outputRow * outputCol + 1e-8f;
 
 	sd *= smask;
+	// for score map, all games that didn't ended in score (smMask = false) should be excluded from training target.
 	auto smap = map * smMask;
-	auto cmap = map * capMask;
+	// for capture map, all games that ended in score should give 0 map target. 
+	// Games with capMask = false would be excluded.
+	auto cmap = map * (~smMask);
 
 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
 	torch::nn::HuberLoss huberLoss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
