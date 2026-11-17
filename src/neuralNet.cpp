@@ -318,8 +318,7 @@ NNInput PolicyValueNet::get_data(const std::vector<const Game*>& gameBatch){
 PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu):
  useGpu(useGpu), device(useGpu ? torch::kCUDA : torch::kCPU), modelType(modelType), numBlocks(numBlocks)
 {
-	// cuDNN times its convolution algorithms the first time it sees an input shape and keeps the fastest one.
-	// (Each new batch size pays that once.)
+	// enable cuDNN benchmark mode.
 	if(useGpu)
 		at::globalContext().setBenchmarkCuDNN(true);
 	load_model(modelFile);
@@ -358,7 +357,6 @@ void PolicyValueNet::capture_graphs(){
 	torch::NoGradGuard noGrad;
 	const auto options = torch::TensorOptions().dtype(torch::kFloat32).device(device);
 	try{
-		// the side stream below doesn't wait for the default stream on its own : finish e.g. the weight update first.
 		torch::cuda::synchronize();
 		c10::cuda::CUDACachingAllocator::emptyCache();
 		static at::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
@@ -433,225 +431,10 @@ PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pin
 	return outputs;
 }
 
-// std::vector<PolicyValueOutput>
-// PolicyValueNet::backupEvaluate(const std::vector<const Game*>& gameBatch){
-// 	const int B = gameBatch.size();
-// 	std::vector<PolicyValueOutput> outputs;
-// 	outputs.reserve(B);
-
-// 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
-// 	std::vector<float> batchData = getData(gameBatch);
-
-// 	assert(batchData.size() == B * globalConfig.inputChannel * rowSize * colSize);
-
-// 	int cnt = 0;
-// 	for(int game_id = 0; game_id < B; ++game_id){
-// 		std::cerr << "game : " << game_id << std::endl;
-// 		for(int channel = 0; channel < globalConfig.inputChannel; ++channel){
-// 			std::cerr << "channel " << channel << std::endl;
-// 			for(int row = 0; row < rowSize; ++row){
-// 				for(int col = 0; col < colSize; ++col){
-// 					std::cerr << batchData[cnt++] << " ";
-// 				}
-// 				std::cerr << std::endl;
-// 			}
-// 		}
-// 		std::cerr << std::endl;
-// 	}
-
-// 	for(int b = 0; b < B; ++b) {
-// 		std::vector<float> policy(0.0f, outputSize);
-// 		std::vector<float> scMap(0.0f, boardSize);
-// 		std::vector<float> capMap(0.0f, boardSize);
-// 		outputs.emplace_back(std::move(policy), 0.0f, 0.0f, std::move(scMap), std::move(capMap));
-// 	}
-// 	return outputs;
-// }
-
 PolicyValueOutput PolicyValueNet::evaluate(NNInput& input){
 	return std::move(batch_evaluate(input, 1).front());
 }
 
-// std::tuple<float, float, float> PolicyValueNet::trainCap(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 
-// 	std::vector<float>& result_batch, std::vector<float>& capture_batch, float lr){
-// 	// check first element of batch
-// 	// std::cerr << "capture training" << std::endl;
-// 	// for(int i=0; i<2; ++i){
-// 	// 	for(int j=0; j<rowSize; ++j){
-// 	// 		for(int k=0; k<colSize; ++k){
-// 	// 			std::cerr << state_batch[i * boardSize + j * colSize + k];
-// 	// 		}
-// 	// 		std::cerr << std::endl;
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	// for(int i=0; i<rowSize; ++i){
-// 	// 	for(int j=0; j<colSize; ++j){
-// 	// 		std::cerr << nextmove_batch[i * colSize + j];
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	// std::cerr << result_batch[0] << std::endl;
-
-// 	// for(int i=0; i<rowSize; ++i){
-// 	// 	for(int j=0; j<colSize; ++j){
-// 	// 		std::cerr << capture_batch[i * colSize + j];
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	int B = result_batch.size();
-//     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-
-// 	auto sb = torch::from_blob(state_batch.data(),
-//     {B, globalConfig.inputChannel, inputRow, inputCol},
-//     options).to(device);
-
-// 	auto mp = torch::from_blob(nextmove_batch.data(),
-// 		{B, outputSize},
-// 		options).to(device);
-
-// 	auto wb = torch::from_blob(result_batch.data(),
-// 		{B, 1},
-// 		options).to(device);
-
-// 	auto cb = torch::from_blob(capture_batch.data(),
-// 		{B, 1, outputRow, outputCol},
-// 		options).to(device);
-
-// 	// auto cap_chanceb = torch::ones({B, 1}, options).to(device);
-
-
-// 	float pLoss = 0.0f, vLoss = 0.0f, cLoss = 0.0f, cpLoss = 0.0f;
-// 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
-// 	for(int i=0; i<globalConfig.epochs; ++i){
-// 		optimizer->zero_grad();
-
-// 		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb); 
-
-// 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
-// 		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
-
-// 		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
-
-// 		float pos_weight = 1.0f;
-// 		torch::Tensor loss_tensor = -(cb * torch::log(r5 + 1e-9) * pos_weight + (1 - cb) * torch::log(1 - r5 + 1e-9));
-// 		torch::Tensor capture_loss = loss_tensor.mean();
-
-// 		// torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
-
-
-// 		torch::Tensor loss = value_loss + policy_loss + capture_loss;
-// 		pLoss += policy_loss.item().to<float>();
-// 		vLoss += value_loss.item().to<float>();
-// 		cLoss += capture_loss.item().to<float>();
-// 		// cpLoss += cap_prob_loss.item().to<float>();
-// 		// std::cout << "loss epoch " << i << " " << value_loss.item() << " " << policy_loss.item() << std::endl;
-// 		loss.backward();
-// 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
-// 		optimizer->step();
-// 	}
-
-// 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, cLoss / globalConfig.epochs};
-// }
-
-// std::tuple<float, float, float, float> PolicyValueNet::trainSc(std::vector<float>& state_batch, std::vector<float>& nextmove_batch, 
-// 	std::vector<float>& result_batch, std::vector<float>& score_batch, std::vector<float>& scoremap_batch, float lr) {
-// 	// check first element of batch
-// 	// std::cerr << "score training" << std::endl;
-// 	// for(int i=0; i<2; ++i){
-// 	// 	for(int j=0; j<rowSize; ++j){
-// 	// 		for(int k=0; k<colSize; ++k){
-// 	// 			std::cerr << state_batch[i * boardSize + j * colSize + k];
-// 	// 		}
-// 	// 		std::cerr << std::endl;
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	// for(int i=0; i<rowSize; ++i){
-// 	// 	for(int j=0; j<colSize; ++j){
-// 	// 		std::cerr << nextmove_batch[i * colSize + j];
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	// std::cerr << result_batch[0] << " " << score_batch[0] << std::endl;
-
-// 	// for(int i=0; i<rowSize; ++i){
-// 	// 	for(int j=0; j<colSize; ++j){
-// 	// 		std::cerr << scoremap_batch[i * colSize + j];
-// 	// 	}
-// 	// 	std::cerr << std::endl;
-// 	// }
-// 	// std::cerr << std::endl;
-
-// 	int B = result_batch.size();
-//     auto options = torch::TensorOptions().dtype(torch::kFloat32);
-
-// 	auto sb = torch::from_blob(state_batch.data(),
-//     {B, globalConfig.inputChannel, inputRow, inputCol},
-//     options).to(device);
-
-// 	auto mp = torch::from_blob(nextmove_batch.data(),
-// 		{B, outputSize},
-// 		options).to(device);
-
-// 	auto wb = torch::from_blob(result_batch.data(),
-// 		{B, 1},
-// 		options).to(device);
-
-// 	auto sd = torch::from_blob(score_batch.data(),
-// 		{B, 1},
-// 		options).to(device);
-
-// 	auto smap = torch::from_blob(scoremap_batch.data(),
-// 		{B, 1, outputRow, outputCol},
-// 		options).to(device);
-
-// 	// auto cap_chanceb = torch::zeros({B, 1}, options).to(device);
-
-
-// 	static_cast<torch::optim::AdamOptions&>(optimizer->param_groups()[0].options()).lr(lr);
-// 	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cpLoss = 0.0f;
-// 	torch::nn::HuberLoss huber_loss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kMean));
-
-// 	for(int i=0; i<globalConfig.epochs; ++i){
-// 		optimizer->zero_grad();
-
-// 		auto [r1, r2, r3, r4, r5] = policy_value_net->forward(sb); 
-
-// 		torch::Tensor log_move_probs = torch::log_softmax(r1, 1);
-// 		torch::Tensor policy_loss = -torch::mean(torch::sum(mp * log_move_probs, 1));
-
-// 		torch::Tensor value_loss = torch::nn::functional::mse_loss(r2, wb);
-
-// 		torch::Tensor score_loss = huber_loss(r3, sd);
-
-// 		torch::Tensor score_map_loss = torch::nn::functional::mse_loss(r4, smap);
-
-// 		// torch::Tensor cap_prob_loss = torch::nn::functional::mse_loss(r6, cap_chanceb);
-
-// 		torch::Tensor loss = value_loss + policy_loss + score_loss + score_map_loss;
-// 		pLoss += policy_loss.item().to<float>();
-// 		vLoss += value_loss.item().to<float>();
-// 		sLoss += score_loss.item().to<float>();
-// 		smLoss += score_map_loss.item().to<float>();
-// 		// cpLoss += cap_prob_loss.item().to<float>();
-// 		loss.backward();
-// 		torch::nn::utils::clip_grad_norm_(policy_value_net->parameters(), 1.0);
-// 		optimizer->step();
-// 	}
-
-// 	return {pLoss / globalConfig.epochs, vLoss / globalConfig.epochs, sLoss / globalConfig.epochs, smLoss / globalConfig.epochs};
-// }
 
 std::tuple<float, float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& stateBatch,
 	 std::vector<float>& nextmoveBatch, std::vector<float>& resultBatch, std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch,
@@ -706,7 +489,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	torch::nn::HuberLoss huberLoss(torch::nn::HuberLossOptions().delta(5.0).reduction(torch::kSum));
 	float pLoss = 0.0f, vLoss = 0.0f, sLoss = 0.0f, smLoss = 0.0f, cmLoss = 0.0f, vzLoss = 0.0f;
 
-	// entropy of the policy targets: the lowest policy loss reachable on this batch. policy loss - entropy = KL(target || net).
+	// policy loss = KL(target || net) + entropy
 	float pEntropy;
 	{
 		torch::NoGradGuard noGrad;
@@ -763,7 +546,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 		pLoss += policyLoss.item<float>();
 		vLoss += valueLoss.item<float>();
-		// diagnostic only: same positions, measured against the game result z instead of the (possibly mixed) target.
+		// diagnostic only. May delete this without any effect to training.
 		vzLoss += ((r2.detach() - zb).pow(2) * vmask.to(torch::kFloat32)).sum().item<float>() / valueActiveElements;
 		sLoss += scoreLoss.item<float>();
 		smLoss += scoreMapLoss.item<float>();
@@ -784,7 +567,6 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 			optimizer->step();
 		}
 	}
-	//cntr++;
 	policyValueNet->eval();
 
 	return {pLoss / passes, vLoss / passes, sLoss / passes, cmLoss / passes, smLoss / passes, pEntropy, vzLoss / passes};
@@ -824,11 +606,9 @@ void PolicyValueNet::load_model(const std::string& modelFile){
 	policyValueNet->fuse();
 	graphs.clear(); // recorded with the old net
 
-	// learning rate would be modified by train.cpp later.
+	// learning rate would be modified by train.cpp later. Only set other factors.
 	optimizer = std::make_unique<torch::optim::Adam>(policyValueNet->parameters(), 
-	torch::optim::AdamOptions(0.0002f)
-	.betas({0.9, 0.999})
-	.weight_decay(l2Const));
+	torch::optim::AdamOptions().betas({0.9, 0.999}).weight_decay(l2Const));
 
 	std::cout << "Model loaded: " << modelFile << " (type " << modelType << ", " << numBlocks << " blocks)" << std::endl;
 }
