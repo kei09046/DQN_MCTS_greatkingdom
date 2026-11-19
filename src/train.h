@@ -77,8 +77,6 @@ private:
 	
 	std::string currentBestModelFile;
 
-	// fair komi of each neutral setup (rnd::neutral_setup_index), estimated by the self-play model : the komi at which
-	// its value of the empty board is even. Self-play draws komi around it (rnd::sample_fair_komi).
 	FairKomiTable fairKomi;
 	std::mutex fairKomiMutex;
 
@@ -95,7 +93,7 @@ public:
 	std::vector<float>* stateBatch, *nextmoveBatch, *resultBatch, *outcomeBatch, *scoreBatch, *mapBatch;
 	std::vector<Trainhead>* typeBatch;
 
-	TrainPipeline(std::string initModel, std::string testModel, bool gpu = false);
+	TrainPipeline(std::string initModel, std::string testModel, bool gpu = false, std::optional<float> learningRateOverride = std::nullopt);
 
 	void start_self_play(MCTS* player, bool isShown = false, float temp = 0.1f); // used during training
 

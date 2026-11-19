@@ -1,7 +1,7 @@
 #include "train.h"
 
 TrainPipeline::TrainPipeline(std::string initModel,
-	std::string testModel, bool gpu) : trainModel(globalConfig.modelPath + initModel, gpu), inferenceModel(globalConfig.modelPath + initModel, gpu),
+	std::string testModel, bool gpu, std::optional<float> learningRateOverride) : trainModel(globalConfig.modelPath + initModel, gpu), inferenceModel(globalConfig.modelPath + initModel, gpu),
 	currentBestModelFile(testModel), gpu(gpu), captureRatio(0.5f),
 	replayBuffer(globalConfig.capacity, globalConfig.trainStartPoint, globalConfig.windowFraction){
 	stateBatch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
@@ -31,6 +31,11 @@ TrainPipeline::TrainPipeline(std::string initModel,
 	}
 	else
 		std::cout << "no optimizer state " << optFile << ", starting with a fresh optimizer" << std::endl;
+
+	if(learningRateOverride){
+		learningRate = *learningRateOverride;
+	}
+	trainModel.set_learning_rate(learningRate);
 	std::cout << "learning rate : " << learningRate << std::endl;
 
 	totalGameLength = 0;

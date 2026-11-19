@@ -25,16 +25,21 @@ int main(int argc, char** argv) {
     
     if(mod == "train"){
         globalConfig = load_config("../configs/train_config.json");
-        // ./play train <model> <data file> <games> <threads> <is_shown>
-        // model "none" starts from an untrained network. The optimizer state model_path/<model>.opt is loaded if it exists.
-        // data file : replay buffer snapshot (e.g. J53760.bin) to start from; "none" starts with an empty buffer.
+        // ./play train <model> <data file> <games> <threads> <is_shown> [learning rate]
+        // if learning rate is not given, config file's default learning rate or optimizer's learning rate would be used.
         std::string modelFile = argv[2];
         std::string dataFile = argv[3];
         int gameNum = std::stoi(argv[4]);
         int numThread = std::stoi(argv[5]);
         bool isShown = static_cast<bool>(std::stoi(argv[6]));
 
-        TrainPipeline line(modelFile, modelFile, true); // use gpu
+        std::optional<float> lr;
+        if(argc > 7){
+            lr = std::stof(argv[7]);
+            if(!(*lr > 0.0f))
+                throw std::runtime_error("learning rate must be positive");
+        }
+        TrainPipeline line(modelFile, modelFile, true, lr); // use gpu
         if(dataFile != "none")
             line.load_replay_buffer(resolve_data_file(dataFile));
         line.run(gameNum, numThread, isShown, globalConfig.temp); // game_batch_num, train_thread_num, is_shown, 1/temp
