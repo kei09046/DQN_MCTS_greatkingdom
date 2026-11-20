@@ -26,6 +26,7 @@ They come from on-train comparisons (on_train_compare_config, temp 0.5): use the
 import argparse
 import math
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -38,6 +39,7 @@ FALLBACK_RE = re.compile(r"^model fallback!")
 GAMES_RE = re.compile(r"_(\d+)B?\.pt$")
 
 ELO = 400.0 / math.log(10.0)  # natural-log strength -> Elo
+REPO_ROOT = Path(__file__).resolve().parent.parent  # the directory holding CMakeLists.txt
 
 
 def canonical(name):
@@ -196,6 +198,9 @@ def main():
                     help="random-walk prior : expected Elo change between consecutive checkpoints. 'auto' (default) "
                          "picks the value the results support best; 0 disables the prior (raw match fit, overrates)")
     ap.add_argument("--table", type=Path, default=None, help="write every node's fitted rating to this TSV file")
+    ap.add_argument("--copy-from", type=Path, default=REPO_ROOT / "models",
+                    help="copy the selected models found in this directory to the repository root (default: models/)")
+    ap.add_argument("--no-copy", action="store_true", help="only print the selection, copy nothing")
     args = ap.parse_args()
 
     matches, promoted, lineage = parse_logs(args.logs, args.games)
@@ -241,6 +246,27 @@ def main():
         prev = n
     print(f"{len(selected)} selected")
     print(" ".join(on_disk_name(n) for n in selected))
+
+    if not args.no_copy:
+        copy_models([on_disk_name(n) for n in selected], args.copy_from, REPO_ROOT)
+
+
+def copy_models(files, src_dir, dst_dir):
+    """Copies files that exist in src_dir to dst_dir. Files already there with the same size are skipped."""
+    copied, skipped, missing = [], [], []
+    for f in files:
+        src, dst = src_dir / f, dst_dir / f
+        if not src.exists():
+            missing.append(f)
+        elif dst.exists() and dst.stat().st_size == src.stat().st_size:
+            skipped.append(f)
+        else:
+            shutil.copy2(src, dst)
+            copied.append(f)
+    print(f"copy {src_dir} -> {dst_dir} : {len(copied)} copied, {len(skipped)} already there, {len(missing)} missing",
+          file=sys.stderr)
+    if missing:
+        print("missing : " + " ".join(missing), file=sys.stderr)
 
 
 if __name__ == "__main__":
