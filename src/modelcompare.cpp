@@ -634,10 +634,21 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 		}
 	}
 
+	const int totalBatches = N * (N - 1) / 2 * (nGames / gameBatch);
+	int doneBatches = 0;
+
 	for(int b=0; b < nGames / gameBatch; ++b){
 		for(int i=0; i < N; ++i){
 			for(int j=i+1; j<N; ++j){
+				const auto batchBegin = std::chrono::steady_clock::now();
+
 				const float wr = policy_evaluate(players[i], players[j], komiTable[i][j], std::cout, false, temp, gameBatch);
+
+				const auto batchMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - batchBegin).count();
+				std::cout << "batch " << ++doneBatches << "/" << totalBatches << " (" << modelList[i] << " vs " << modelList[j]
+					<< ") : " << batchMs << " ms" << std::endl;
+					
 				const float wc = wr * (gameBatch << 1);
 				eloCalculator.update_ratings(i, j, gameBatch << 1, wc);
 
