@@ -1,10 +1,52 @@
 #include "elo.h"
+#include <cctype>
 
-EloCalculator::EloCalculator(const std::string& modelPath, const std::vector<std::string>& modelNames, bool loadFromFile, bool adjustK): 
+namespace {
+    // "natural" order : digit runs compare by numeric value, everything else character by character.
+    // e.g. M_12b_15360.pt < M_12b_60480B.pt < M_12b_111360B.pt
+    bool natural_less(const std::string& a, const std::string& b){
+        size_t i = 0, j = 0;
+        while(i < a.size() && j < b.size()){
+            if(std::isdigit(static_cast<unsigned char>(a[i])) && std::isdigit(static_cast<unsigned char>(b[j]))){
+                size_t ie = i, je = j;
+                while(ie < a.size() && std::isdigit(static_cast<unsigned char>(a[ie]))) ++ie;
+                while(je < b.size() && std::isdigit(static_cast<unsigned char>(b[je]))) ++je;
+
+                // compare numerically without overflow : skip leading zeros, then longer run is bigger.
+                size_t ia = i, jb = j;
+                while(ia + 1 < ie && a[ia] == '0') ++ia;
+                while(jb + 1 < je && b[jb] == '0') ++jb;
+                if(ie - ia != je - jb)
+                    return ie - ia < je - jb;
+                const int c = a.compare(ia, ie - ia, b, jb, je - jb);
+                if(c != 0)
+                    return c < 0;
+                i = ie;
+                j = je;
+            }
+            else{
+                if(a[i] != b[j])
+                    return a[i] < b[j];
+                ++i;
+                ++j;
+            }
+        }
+        return (a.size() - i) < (b.size() - j);
+    }
+
+    std::string first_token(const std::string& line){
+        std::istringstream iss(line);
+        std::string name;
+        iss >> name;
+        return name;
+    }
+}
+
+EloCalculator::EloCalculator(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames, bool adjustK): 
 modelNames(modelNames), adjustK(adjustK)
 {
-    if(!loadFromFile){
-        for(auto& name : modelNames){
+    if(!ratingPath.has_value()){
+        for(int i=0; i<modelNames.size(); ++i){
             ratings.push_back(globalConfig.initRating);
             gameCounts.push_back(0);
         }
@@ -16,7 +58,7 @@ modelNames(modelNames), adjustK(adjustK)
         loadedModels[name] = {globalConfig.initRating, 0};
     }
 
-    std::ifstream file(modelPath);
+    std::ifstream file(ratingPath.value());
     if(file){
         std::string name;
         float rating;
@@ -35,16 +77,14 @@ modelNames(modelNames), adjustK(adjustK)
     }
 }
 
-void EloCalculator::update_ratings(int playerA, int playerB, const std::vector<bool>& result) { // result : true -> player_a win, false -> player_b win
+// game-by-game elo update.
+// result : true -> player_a win, false -> player_b win
+void EloCalculator::update_ratings(int playerA, int playerB, const std::vector<bool>& result) {
     float ratingA = ratings[playerA];
     float ratingB = ratings[playerB];
 
-    // tried to decrease rating variance as model plays more games, but this seems to be inappropriate.
-    // float a_K = globalConfig.initK / (1.0f + game_counts[player_a] / 30.0f);
-    // float b_K = globalConfig.initK / (1.0f + game_counts[player_b] / 30.0f);
-
-    float aK = globalConfig.initK;
-    float bK = globalConfig.initK;
+    const float aK = globalConfig.initK;
+    const float bK = globalConfig.initK;
 
     for (bool win : result) {
         float ea = 1.0f / (1.0f + pow(10.0f, (ratingB - ratingA) / 400.0f));
@@ -55,6 +95,22 @@ void EloCalculator::update_ratings(int playerA, int playerB, const std::vector<b
     }
     gameCounts[playerA] += result.size();
     gameCounts[playerB] += result.size();
+}
+
+// batched elo update.
+void EloCalculator::update_ratings(int playerA, int playerB, int nGames, float aWins) {
+    float ratingA = ratings[playerA];
+    float ratingB = ratings[playerB];
+
+    const float aK = globalConfig.initK;
+    const float bK = globalConfig.initK;
+    const float ea = 1.0f / (1.0f + pow(10.0f, (ratingB - ratingA) / 400.0f));
+
+    ratings[playerA] += aK * (aWins - nGames * ea);
+    ratings[playerB] += bK * ((nGames - aWins) - nGames * (1.0f - ea));
+
+    gameCounts[playerA] += nGames;
+    gameCounts[playerB] += nGames;
 }
 
 std::vector<float> EloCalculator::get_ratings(bool adjust){
@@ -70,11 +126,13 @@ std::vector<float> EloCalculator::get_ratings(bool adjust){
     return ratings;
 }
 
-void EloCalculator::save_rating(const std::string& modelPath, const std::vector<std::string>& modelNames) {
-    // TODO : update the file
+void EloCalculator::save_rating(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames) {
+    if(!ratingPath.has_value())
+        return;
+
     std::unordered_map<std::string, std::pair<float, int>> updatedRatings;
     std::unordered_map<std::string, bool> updated;
-    std::ifstream file(modelPath);
+    std::ifstream file(ratingPath.value());
     std::vector<std::string> lines;
     
 
@@ -109,10 +167,16 @@ void EloCalculator::save_rating(const std::string& modelPath, const std::vector<
         }
     }
 
-    std::ofstream fout(modelPath, std::ios::trunc);
+    // models are listed in natural order of their names (smaller numbers first).
+    std::stable_sort(lines.begin(), lines.end(), [](const std::string& x, const std::string& y){
+        return natural_less(first_token(x), first_token(y));
+    });
+
+    std::ofstream fout(ratingPath.value(), std::ios::trunc);
     for(const auto& line : lines){
         fout << line << "\n";
     }
+    fout.close();
 }
 
 std::vector<float> EloCalculator::calculate_rating(const std::vector<std::vector<float>> winrate){

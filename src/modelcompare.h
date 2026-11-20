@@ -5,6 +5,8 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <optional>
+
 #include "PMCTS.h"
 #include "fairkomi.h"
 
@@ -36,11 +38,15 @@ public:
 
 	// params[i] : search params (fpu, minVisitRatio) of i-th engine. Engines without an entry use the global config values.
 	static float policy_evaluate(const std::string& modOne, const std::string& modTwo, 
-		std::ostream& totalRes, std::ostream& partRes, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 96, int nThread=16,
+		std::ostream& totalRes, std::ostream& partRes, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 96, int nThread = 8,
 		const std::vector<SearchParams>& params = {});
 
+	// compares two already-built engines. returns playersOne's win rate.
+	static float policy_evaluate(const std::vector<MCTS*>& playersOne, const std::vector<MCTS*>& playersTwo,
+		const FairKomiTable& fairKomi, std::ostream& totalRes, bool isShown = false, float temp = 1.0f, int nGames = 96);
+
 	static std::vector<float> policy_evaluate(std::vector<std::string> modelList, // return list of elo
-		std::ostream& totalRes, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 100,
+		std::ostream& totalRes, const std::optional<std::string>& eloFilePath, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 100, int nThread = 8,
 		const std::vector<SearchParams>& params = {});
 
 	

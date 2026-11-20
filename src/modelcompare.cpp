@@ -2,14 +2,17 @@
 #include <atomic>
 #include <poll.h>
 #include <cstdio>
+#include <sstream>
+#include <optional>
+#include <cctype>
+#include <iomanip>
+#include <stdexcept>
+
 #include "modelcompare.h"
 #include "consts.h"
 #include "elo.h"
 #include "analysis.hpp"
 #include "random.h"
-#include <sstream>
-#include <optional>
-#include <cctype>
 
 namespace{
 	// search params of idx-th engine; global config values if not given.
@@ -564,11 +567,30 @@ float ModelCompare::policy_evaluate(const std::string& modOne, const std::string
 	print_fair_komi(totalRes, fairKomi);
 	totalRes << std::endl;
 
+	const float winRate = policy_evaluate(basePlayers, oppoPlayers, fairKomi, totalRes, isShown, temp, nGames);
+
+	for(int i=0; i<nThread; ++i){
+		delete basePlayers[i];
+		delete oppoPlayers[i];
+	}
+	delete eo;
+	delete et;
+	return winRate;
+}
+
+float ModelCompare::policy_evaluate(const std::vector<MCTS*>& playersOne, const std::vector<MCTS*>& playersTwo,
+	const FairKomiTable& fairKomi, std::ostream& totalRes, bool isShown, float temp, int nGames) {
+	if(playersOne.size() != playersTwo.size() || playersOne.empty())
+		throw std::runtime_error("policy_evaluate : both sides need the same, nonzero number of per-thread players");
+
+	const int nThread = playersOne.size();
+	const int gamesPerThread = nGames / nThread;
+
 	std::vector<std::thread> evaluateThreads;
 	std::atomic<int> totalWin = 0;
 	for(int i=0; i<nThread; ++i){
 		evaluateThreads.emplace_back([&, i]{
-			std::vector<bool> b = play_match(basePlayers[i], oppoPlayers[i], fairKomi, totalRes, (i == 0) && isShown, temp, nGames / nThread);
+			std::vector<bool> b = play_match(playersOne[i], playersTwo[i], fairKomi, totalRes, (i == 0) && isShown, temp, gamesPerThread);
 			totalWin += std::count(b.begin(), b.end(), true);
 		}
 		);
@@ -577,61 +599,73 @@ float ModelCompare::policy_evaluate(const std::string& modOne, const std::string
 		th.join();
 	}
 
-	for(int i=0; i<nThread; ++i){
-		delete basePlayers[i];
-		delete oppoPlayers[i];
-	}
-	delete eo;
-	delete et;
 	totalRes << "win count : " << totalWin << std::endl;
 	return totalWin / static_cast<float>(nGames << 1);
 }
 
 std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelList,
-	std::ostream& totalRes, bool isShown, bool gpu, float temp, int nGames, const std::vector<SearchParams>& params) {
-	int N = modelList.size();
-	std::vector<MCTS*> players(N);
-	std::vector<Evaluator*> evaluators(N);
+	std::ostream& totalRes, const std::optional<std::string>& eloFilePath, bool isShown, bool gpu, float temp, int nGames, int nThread,
+	const std::vector<SearchParams>& params) {
+	EloCalculator eloCalculator(eloFilePath, modelList, /*adjustK=*/ false);
 
-	for (int i = 0; i < N; ++i) {
-		evaluators[i] = new Evaluator(globalConfig.modelPath + modelList[i], gpu);
-		players[i] = new MCTS(evaluators[i], params_of(params, i));
+	const int N = modelList.size();
+	const int gameBatch = nThread * 2;
+
+	if(nGames % gameBatch != 0){
+		std::cout << "warning! comparison games should be multiple of gameBatch(which is " << gameBatch << ")." << std::endl;
+		nGames = (nGames < gameBatch) ? gameBatch : nGames / gameBatch * gameBatch;
 	}
 
-	// one fair komi table for every pairing (the mean of all models' estimates), so all games share one setup distribution.
-	std::vector<std::vector<std::optional<float>>> estimates;
-	for(auto* e : evaluators)
-		estimates.push_back(estimate_fair_komi(*e->model()));
-	const FairKomiTable fairKomi = combine_fair_komi(estimates, globalConfig.komi);
-	totalRes << "fair komi : ";
-	print_fair_komi(totalRes, fairKomi);
-	totalRes << std::endl;
+	std::vector<Evaluator*> evaluators(N);
+	std::vector<std::vector<MCTS*>> players(N, std::vector<MCTS*>(nThread));
+	for(int i=0; i<N; ++i){
+		evaluators[i] = new Evaluator(globalConfig.modelPath + modelList[i], gpu);
+		for(int th=0; th<nThread; ++th)
+			players[i][th] = new MCTS(evaluators[i], params_of(params, i));
+	}
 
-	bool loadFromFile = false;
-	EloCalculator eloCalculator(globalConfig.modelPath + "ratings.txt", modelList, loadFromFile);
+	std::vector<std::vector<float>> resultTable(N, std::vector<float>(N, 0.0f));
+	std::vector<std::vector<FairKomiTable>> komiTable(N, std::vector<FairKomiTable>(N));
 
-	for(int i=1; i<N; ++i){
-		for(int j=0; j<N-i; ++j){
-			std::vector<bool> b = play_match(players[j], players[j+i], fairKomi, totalRes, isShown, temp, nGames);
-			eloCalculator.update_ratings(j, j+i, b);
-			
-			int winCnt = std::count(b.begin(), b.end(), true);
-			totalRes << "Model " << modelList[j] << " VS Model " << modelList[j+i] << " : " 
-				<< winCnt << "/" << (nGames << 1) << " (" << (winCnt * 100.0f / (nGames << 1)) << "%)" << std::endl;
+	for(int i = 0; i < N; ++i){
+		for(int j = i + 1; j < N; ++j){
+			komiTable[i][j] = combine_fair_komi({estimate_fair_komi(*evaluators[i]->model()), estimate_fair_komi(*evaluators[j]->model())}, 
+			globalConfig.komi);
 		}
 	}
 
-	if(loadFromFile){
-		eloCalculator.save_rating(globalConfig.modelPath + "ratings.txt", modelList);
+	for(int b=0; b < nGames / gameBatch; ++b){
+		for(int i=0; i < N; ++i){
+			for(int j=i+1; j<N; ++j){
+				const float wr = policy_evaluate(players[i], players[j], komiTable[i][j], std::cout, false, temp, gameBatch);
+				const float wc = wr * (gameBatch << 1);
+				eloCalculator.update_ratings(i, j, gameBatch << 1, wc);
+
+				resultTable[i][j] += wc;
+				resultTable[j][i] += (gameBatch << 1) - wc;
+			}
+		}
 	}
+
+	for(int i = 0; i < N; ++i){
+		for(int j = 0; j < N; ++j){
+			totalRes << std::fixed << std::setprecision(3) << resultTable[i][j] / (nGames << 1) << " ";
+		}
+		totalRes << "\n";
+	}
+
+
+	eloCalculator.save_rating(eloFilePath, modelList);
+
 	std::vector<float> ratings = eloCalculator.get_ratings(/*adjust=*/false);
 	for(int i=0; i<N; ++i){
 		totalRes << modelList[i] << " Elo Rating : " << ratings[i] << std::endl;
 	}
 
 	for(int i=0; i<N; ++i){
+		for(auto* p : players[i])
+			delete p;
 		delete evaluators[i];
-		delete players[i];
 	}
 	return ratings;
 }

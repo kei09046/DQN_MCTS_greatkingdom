@@ -12,13 +12,15 @@
 
 class EloCalculator {
 public:
-    EloCalculator(const std::string& modelPath, const std::vector<std::string>& modelNames, bool loadFromFile=true, bool adjustK=false);
+    EloCalculator(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames, bool adjustK=false);
 
     void update_ratings(int playerA, int playerB, const std::vector<bool>& result);
 
+    void update_ratings(int playerA, int playerB, int nGames, float aWins);
+
     std::vector<float> get_ratings(bool adjust=false); // adjust = true 면 최소 레이팅 0으로 고정
 
-    void save_rating(const std::string& modelPath, const std::vector<std::string>& modelNames);
+    void save_rating(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames);
 
     std::vector<float> calculate_rating(const std::vector<std::vector<float>> winrate);
 

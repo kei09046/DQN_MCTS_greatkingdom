@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
         ModelCompare::play_gtp(modelFile, 10.0f, true);
     }
     else if(mod == "evaluate_two"){
-        globalConfig = load_config("../configs/compare_config.json");
+        globalConfig = load_config("../configs/off_train_compare_config.json");
         std::string target = argv[2];
         std::string compare = argv[3];
         float temp = std::stof(argv[4]); // < 1.0f
@@ -103,18 +103,44 @@ int main(int argc, char** argv) {
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){
-        globalConfig = load_config("../configs/compare_config.json");
-        int nModels = argc - 4;
+        globalConfig = load_config("../configs/off_train_compare_config.json");
+        // ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> <ratingPath | none> <resultPath>
+        // ratingPath "none" : ratings start from init_rating and are not saved.
+        int nModels = argc - 7;
+        if(nModels < 2){
+            std::cerr << "usage : ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> "
+                         "<ratingPath | none> <resultPath>" << std::endl;
+            return 1;
+        }
         std::vector<std::string> modelList(nModels);
         for(int i=0; i<nModels; ++i)
             modelList[i] = argv[2 + i];
 
-        int nGames = std::stoi(argv[2 + nModels]);
-        float temp = std::stof(argv[3 + nModels]); // < 1.0f
+        float temp = std::stof(argv[2 + nModels]); // < 1.0f
+        int nGames = std::stoi(argv[3 + nModels]);
+        int nThreads = std::stoi(argv[4 + nModels]);
+        const std::string ratingArg = argv[5 + nModels];
+        const std::optional<std::string> ratingPath = (ratingArg == "none") ? std::nullopt : std::optional<std::string>(ratingArg);
+        const std::string resultPath = argv[6 + nModels];
+
+        std::cout << "models : " << std::endl;
+        for(const auto& modelName : modelList)
+            std::cout << modelName << " ";
+        std::cout << "\n";
+
+        std::cout << "nGames(per color) " << nGames << " nThreads " << nThreads << std::endl;
+
         std::vector<SearchParams> params;
         for(int i=0; i<nModels; ++i)
             params.push_back(globalConfig.engine_params(i));
-        ModelCompare::policy_evaluate(modelList, std::cout, false, true, temp, nGames, params);
+
+        std::ofstream outFile(resultPath);
+        if (!outFile.is_open()) {
+            std::cerr << "Failed to open file.\n";
+            return 1;
+        }
+        ModelCompare::policy_evaluate(modelList, outFile, ratingPath, false, true, temp, nGames, nThreads, params);
+        outFile.close();
     }
     else if(mod == "test"){
         // ./play test <data file> [steps] [learning rate] : train an untrained network on a saved replay buffer.

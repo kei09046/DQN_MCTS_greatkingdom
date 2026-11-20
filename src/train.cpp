@@ -360,7 +360,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 					}
 					
 					if((gamesPlayed + saveCnt) % globalConfig.checkFreq == 0){
-						globalConfig = load_config("../configs/compare_config.json");
+						globalConfig = load_config("../configs/on_train_compare_config.json");
 
 						modelName = trainModel.model_prefix() + std::to_string(gamesPlayed + saveCnt) + ".pt";
 

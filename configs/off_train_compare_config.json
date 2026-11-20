@@ -1,0 +1,76 @@
+{
+  "features": {
+    "transTable": true,
+    "dirichletNoise": false,
+    "googleDrive": false,
+    "FPU": 0.15,
+    "detailedStat": false
+  },
+
+  "path": {
+     "model_path": "../testmodels/",
+     "model_prefix": "M",
+     "drive_path": "../drive/MyDrive/",
+     "data_path": "../data/"
+  },
+
+  "rating": {
+      "init_K": 32.0,
+      "init_rating": 0.0
+  },
+
+  "board": {
+    "komi": 2.5,
+    "neutrals": [[4, 4]]
+  },
+
+  "dirichlet_noise": {
+    "epsilon": 0.2,
+    "alpha": 0.15
+  },
+
+  "mcts": {
+    "mode": "playout",
+    "time": 10,
+    "nPlayout": 800,
+    "cPuct": 1.5,
+    "temp": 1.0,
+    "minVisitRatio": 0.0,
+    "fullSearchProb": 1.0,
+    "fastPlayout": 300
+  },
+
+  "engines": [],
+
+  "nn": {
+    "batchSize": 512,
+    "inputChannel": 26,
+    "numHiddenBlock": 12
+  },
+
+  "cache": {
+    "log_tableSize": 20,
+    "log_mutexPoolSize": 10 
+  },
+
+  "train": {
+    "epochs": 1,
+    "check_freq": 960,
+    "compare_game_cnt": 96,
+    "compare_thread_num": 12,
+    "search_thread_num": 4,
+    "train_wait_time": 50000,
+    "synchronize_freq": 96,
+    "capacity": 10000,
+    "trainStartPoint": 20000,
+    "windowFraction": 0.25,
+    "valueQMix": 0.5,
+    "fallbackWinrate": 0.25,
+    "lrPatience": 50,
+    "lrImprovementWinrate": 0.55,
+    "initialLearningRate": 0.0001,
+    "fairKomiNoise": 1.0,
+    "wideKomiProb": 0.05,
+    "wideKomiNoise": 8.0
+  }
+}
