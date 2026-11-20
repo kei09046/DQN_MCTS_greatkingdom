@@ -1,6 +1,7 @@
 """Plot losses, self-play statistics and Elo over time from a training log (stdout of `play train ...`).
 
-usage: python plot_training.py train_result_J.txt [-o out.png] [--show] [--batch 512] [--steps 2]
+usage: python plot_training.py train_result_J.txt [-o out.png] [--show] [--batch 512] [--steps 2] [--komi-window 20]
+Fair komi per neutral stone location goes to a second image, <out>_komi.png.
 """
 import argparse
 import math
@@ -75,6 +76,11 @@ def parse_log(path):
             comparisons.append({"model": m.group(1), "opponent": m.group(2), "winrate": float(m.group(3)),
                                 "wins": last_win_count, "games": games_saved, "fallback": False})
             
+        elif line.startswith("fair komi : "):
+            # printed by self-play after each save and by each comparison (before its games). The self-play one comes
+            # last in a save block, so overwriting keeps it.
+            cur["fair_komi"] = dict(re.findall(r"(\(\d,\d\)|none)=([\d.eE+-]+)", line))
+
         elif line.startswith("model fallback") and comparisons:
             comparisons[-1]["fallback"] = True
 
@@ -135,7 +141,49 @@ def series(ax, saves, key, color, label=None):
         ax.plot(x, y, color=color, linewidth=2, marker="o", markersize=3, label=label)
 
 
-def plot(saves, ratings, out, show):
+def rolling_mean(values, window):
+    """Mean of the last `window` values (fewer at the start)."""
+    out, total = [], 0.0
+    for i, v in enumerate(values):
+        total += v
+        if i >= window:
+            total -= values[i - window]
+        out.append(total / min(i + 1, window))
+    return out
+
+
+def plot_fair_komi(saves, out, window):
+    """Small multiples, one panel per neutral-stone setup ((0,0) ... (4,4) : symmetry class of its point, or none),
+    on a shared y-axis so panels compare directly. Each save's estimate swings by about +-1.5 : raw values are drawn
+    faint, the line is a rolling mean over `window` saves. Returns False if the log has no fair komi."""
+    rows = [s for s in saves if s.get("fair_komi")]
+    if not rows:
+        return False
+    x = [s["games"] for s in rows]
+    keys = list(rows[-1]["fair_komi"])  # log order : (0,0) ... (4,4), none
+    fig, axes = plt.subplots(4, 4, figsize=(16, 11), sharex=True, sharey=True)
+    for a, k in zip(axes.flat, keys):
+        raw = [float(s["fair_komi"].get(k, "nan")) for s in rows]
+        mean_line = rolling_mean(raw, window)
+        a.plot(x, raw, color=BLUE, alpha=0.18, linewidth=0.8)
+        a.plot(x, mean_line, color=BLUE, linewidth=2)
+        label = "no neutral stone" if k == "none" else f"neutral {k}"
+        style(a, f"{label}   now {mean_line[-1]:.2f}", "komi" if a in axes[:, 0] else "")
+        a.set_xlim(left=0)
+    for a in axes.flat[len(keys):]:
+        a.set_visible(False)
+    for a in axes[-1]:
+        a.set_xlabel("self-play games", fontsize=8, color=MUTED)
+    smooth = f" : line = mean of last {window} saves, faint = each save" if window > 1 else ""
+    fig.suptitle("Fair komi per neutral stone location" + smooth, x=0.01, ha="left", fontsize=11, color=INK)
+    fig.tight_layout()
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    print(f"saved {out}")
+    return True
+
+
+def plot(saves, ratings, out, show, komi_window):
     fig, axes = plt.subplots(3, 4, figsize=(19, 11))
     ax = axes.flat
 
@@ -202,6 +250,7 @@ def plot(saves, ratings, out, show):
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     print(f"saved {out}")
+    plot_fair_komi(saves, str(Path(out).with_name(Path(out).stem + "_komi" + Path(out).suffix)), komi_window)
     if show:
         plt.show()
 
@@ -226,6 +275,7 @@ def main():
     parser.add_argument("--show", action="store_true", help="also open a window")
     parser.add_argument("--batch", type=int, default=512, help="batch size")
     parser.add_argument("--steps", type=int, default=2, help="optimizer steps per train_iter")
+    parser.add_argument("--komi-window", type=int, default=20, help="saves averaged per fair komi point (1 = raw)")
     parser.add_argument("--games", type=int, default=96, help="games per comparison if the log doesn't say")
     args = parser.parse_args()
 
@@ -233,7 +283,7 @@ def main():
     add_derived(saves, args.batch, args.steps)
     ratings = elo_chain(comparisons, args.games)
     print_table(saves, ratings)
-    plot(saves, ratings, args.out or str(Path(args.log).with_suffix(".png")), args.show)
+    plot(saves, ratings, args.out or str(Path(args.log).with_suffix(".png")), args.show, args.komi_window)
 
 
 if __name__ == "__main__":
