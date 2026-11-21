@@ -604,10 +604,8 @@ float ModelCompare::policy_evaluate(const std::vector<MCTS*>& playersOne, const 
 }
 
 std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelList,
-	std::ostream& totalRes, const std::optional<std::string>& eloFilePath, bool isShown, bool gpu, float temp, int nGames, int nThread,
-	const std::vector<SearchParams>& params) {
-	EloCalculator eloCalculator(eloFilePath, modelList, /*adjustK=*/ false);
-
+	std::ostream& totalRes, const std::optional<std::string>& eloFilePath, const std::vector<int>& skips, bool isShown, bool gpu,
+	float temp, int nGames, int nThread, const std::vector<SearchParams>& params) {
 	const int N = modelList.size();
 	const int gameBatch = nThread * 2;
 
@@ -616,61 +614,98 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 		nGames = (nGames < gameBatch) ? gameBatch : nGames / gameBatch * gameBatch;
 	}
 
+	// models in training order (natural order of names); each keeps its own search params.
+	std::vector<int> order(N);
+	for(int i=0; i<N; ++i) order[i] = i;
+	std::stable_sort(order.begin(), order.end(), [&](int a, int b){ return natural_less(modelList[a], modelList[b]); });
+	std::vector<std::string> models;
+	std::vector<SearchParams> modelParams;
+	for(int i : order){
+		models.push_back(modelList[i]);
+		modelParams.push_back(params_of(params, i));
+	}
+
+	// pairs to play : (i, i + d) for every skip d. no skips : full round-robin.
+	std::vector<std::pair<int, int>> pairList;
+	for(int i=0; i<N; ++i){
+		for(int j=i+1; j<N; ++j){
+			if(skips.empty() || std::find(skips.begin(), skips.end(), j - i) != skips.end())
+				pairList.emplace_back(i, j);
+		}
+	}
+
+	// results of earlier runs are kept : this run's games are added to them, and ratings are fitted from all of them.
+	const std::optional<std::string> pairPath = eloFilePath.has_value() ?
+		std::optional<std::string>(eloFilePath.value() + ".pairs") : std::nullopt;
+	PairResults pairResults(pairPath);
+
 	std::vector<Evaluator*> evaluators(N);
 	std::vector<std::vector<MCTS*>> players(N, std::vector<MCTS*>(nThread));
 	for(int i=0; i<N; ++i){
-		evaluators[i] = new Evaluator(globalConfig.modelPath + modelList[i], gpu);
+		evaluators[i] = new Evaluator(globalConfig.modelPath + models[i], gpu);
 		for(int th=0; th<nThread; ++th)
-			players[i][th] = new MCTS(evaluators[i], params_of(params, i));
+			players[i][th] = new MCTS(evaluators[i], modelParams[i]);
 	}
 
-	std::vector<std::vector<float>> resultTable(N, std::vector<float>(N, 0.0f));
-	std::vector<std::vector<FairKomiTable>> komiTable(N, std::vector<FairKomiTable>(N));
+	// fair komi of a pair : from those two models only, so a weak engine elsewhere doesn't distort it.
+	std::vector<std::vector<std::optional<float>>> komiEstimates;
+	for(auto* e : evaluators)
+		komiEstimates.push_back(estimate_fair_komi(*e->model()));
+	std::vector<FairKomiTable> komiTable;
+	for(const auto& [i, j] : pairList)
+		komiTable.push_back(combine_fair_komi({komiEstimates[i], komiEstimates[j]}, globalConfig.komi));
 
-	for(int i = 0; i < N; ++i){
-		for(int j = i + 1; j < N; ++j){
-			komiTable[i][j] = combine_fair_komi({estimate_fair_komi(*evaluators[i]->model()), estimate_fair_komi(*evaluators[j]->model())}, 
-			globalConfig.komi);
-		}
-	}
+	std::cout << pairList.size() << " pairs (of " << N * (N - 1) / 2 << " in a round-robin)" << std::endl;
 
-	const int totalBatches = N * (N - 1) / 2 * (nGames / gameBatch);
+	std::vector<std::vector<int>> winTable(N, std::vector<int>(N, 0));
+	const int totalBatches = pairList.size() * (nGames / gameBatch);
 	int doneBatches = 0;
 
 	for(int b=0; b < nGames / gameBatch; ++b){
-		for(int i=0; i < N; ++i){
-			for(int j=i+1; j<N; ++j){
-				const auto batchBegin = std::chrono::steady_clock::now();
+		for(size_t p=0; p<pairList.size(); ++p){
+			const auto [i, j] = pairList[p];
+			const auto batchBegin = std::chrono::steady_clock::now();
 
-				const float wr = policy_evaluate(players[i], players[j], komiTable[i][j], std::cout, false, temp, gameBatch);
+			const float wr = policy_evaluate(players[i], players[j], komiTable[p], std::cout, false, temp, gameBatch);
 
-				const auto batchMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-					std::chrono::steady_clock::now() - batchBegin).count();
-				std::cout << "batch " << ++doneBatches << "/" << totalBatches << " (" << modelList[i] << " vs " << modelList[j]
-					<< ") : " << batchMs << " ms" << std::endl;
-					
-				const float wc = wr * (gameBatch << 1);
-				eloCalculator.update_ratings(i, j, gameBatch << 1, wc);
+			const auto batchMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - batchBegin).count();
+			std::cout << "batch " << ++doneBatches << "/" << totalBatches << " (" << models[i] << " vs " << models[j]
+				<< ") : " << batchMs << " ms" << std::endl;
 
-				resultTable[i][j] += wc;
-				resultTable[j][i] += (gameBatch << 1) - wc;
-			}
+			const int wins = std::lround(wr * (gameBatch << 1));
+			pairResults.add(models[i], models[j], wins, gameBatch << 1);
+			winTable[i][j] += wins;
+			winTable[j][i] += (gameBatch << 1) - wins;
 		}
+		pairResults.save(); // after every round, so an interrupted run keeps what it played
 	}
 
+	// this run's win rates (row vs column), "-" for pairs not played.
 	for(int i = 0; i < N; ++i){
 		for(int j = 0; j < N; ++j){
-			totalRes << std::fixed << std::setprecision(3) << resultTable[i][j] / (nGames << 1) << " ";
+			if(winTable[i][j] + winTable[j][i] == 0)
+				totalRes << "  -   ";
+			else
+				totalRes << std::fixed << std::setprecision(3) << winTable[i][j] / static_cast<float>(nGames << 1) << " ";
 		}
 		totalRes << "\n";
 	}
 
+	// ratings : Bradley-Terry fit over every stored pair (this run's and earlier runs'), saved to the rating file.
+	const auto fitted = pairResults.fit();
+	std::vector<std::string> fittedNames;
+	for(const auto& [name, rec] : fitted)
+		fittedNames.push_back(name);
+	EloCalculator eloCalculator(std::nullopt, fittedNames);
+	for(size_t k=0; k<fittedNames.size(); ++k)
+		eloCalculator.set_rating(k, fitted.at(fittedNames[k]).first, fitted.at(fittedNames[k]).second);
+	eloCalculator.save_rating(eloFilePath, fittedNames);
 
-	eloCalculator.save_rating(eloFilePath, modelList);
-
-	std::vector<float> ratings = eloCalculator.get_ratings(/*adjust=*/false);
+	std::vector<float> ratings(N);
 	for(int i=0; i<N; ++i){
-		totalRes << modelList[i] << " Elo Rating : " << ratings[i] << std::endl;
+		ratings[i] = fitted.at(models[i]).first;
+		totalRes << models[i] << " Elo Rating : " << ratings[i] << std::endl;
 	}
 
 	for(int i=0; i<N; ++i){
@@ -678,7 +713,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 			delete p;
 		delete evaluators[i];
 	}
-	return ratings;
+	return ratings; // in training order
 }
 
 
