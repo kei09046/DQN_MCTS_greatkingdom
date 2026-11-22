@@ -45,8 +45,12 @@ public:
 	static float policy_evaluate(const std::vector<MCTS*>& playersOne, const std::vector<MCTS*>& playersTwo,
 		const FairKomiTable& fairKomi, std::ostream& totalRes, bool isShown = false, float temp = 1.0f, int nGames = 96);
 
-	static std::vector<float> policy_evaluate(std::vector<std::string> modelList, // return list of elo
-		std::ostream& totalRes, const std::optional<std::string>& eloFilePath, bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 100, int nThread = 8,
+	// models are put in training order (natural order of names) and model i plays model i + d for every d in skips
+	// (empty skips : full round-robin). Results are added to <eloFilePath>.pairs, ratings are fitted from every stored
+	// pair (Bradley-Terry) and written to eloFilePath. Returns the ratings in training order.
+	static std::vector<float> policy_evaluate(std::vector<std::string> modelList,
+		std::ostream& totalRes, const std::optional<std::string>& eloFilePath, const std::vector<int>& skips = {},
+		bool isShown = false, bool gpu = true, float temp = 1.0f, int nGames = 100, int nThread = 8,
 		const std::vector<SearchParams>& params = {});
 
 	

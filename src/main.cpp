@@ -8,6 +8,8 @@
 #include <string>
 #include <algorithm>
 #include <filesystem>
+#include <sstream>
+#include <fstream>
 
 Config globalConfig;
 
@@ -104,12 +106,15 @@ int main(int argc, char** argv) {
     }
     else if(mod == "evaluate_multi"){
         globalConfig = load_config("../configs/off_train_compare_config.json");
-        // ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> <ratingPath | none> <resultPath>
-        // ratingPath "none" : ratings start from init_rating and are not saved.
-        int nModels = argc - 7;
+        // ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> <skips> <ratingPath | none> <resultPath>
+        // models are sorted into training order; model i plays model i + d for each d in skips ("1,2,4"), or every
+        // other model ("all"). Results are added to <ratingPath>.pairs and ratings, fitted from every stored pair,
+        // go to ratingPath. ratingPath "none" : nothing is loaded or saved.
+        const char* usage = "usage : ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> "
+                            "<skips : e.g. 1,2,4 | all> <ratingPath | none> <resultPath>";
+        int nModels = argc - 8;
         if(nModels < 2){
-            std::cerr << "usage : ./play evaluate_multi <model1> <model2> [model3 ...] <temp> <nGames> <nThreads> "
-                         "<ratingPath | none> <resultPath>" << std::endl;
+            std::cerr << usage << std::endl;
             return 1;
         }
         std::vector<std::string> modelList(nModels);
@@ -119,16 +124,29 @@ int main(int argc, char** argv) {
         float temp = std::stof(argv[2 + nModels]); // < 1.0f
         int nGames = std::stoi(argv[3 + nModels]);
         int nThreads = std::stoi(argv[4 + nModels]);
-        const std::string ratingArg = argv[5 + nModels];
+        const std::string skipArg = argv[5 + nModels];
+        const std::string ratingArg = argv[6 + nModels];
         const std::optional<std::string> ratingPath = (ratingArg == "none") ? std::nullopt : std::optional<std::string>(ratingArg);
-        const std::string resultPath = argv[6 + nModels];
+        const std::string resultPath = argv[7 + nModels];
+
+        std::vector<int> skips; // empty : round-robin
+        if(skipArg != "all"){
+            std::stringstream ss(skipArg);
+            std::string tok;
+            while(std::getline(ss, tok, ','))
+                skips.push_back(std::stoi(tok));
+            if(skips.empty() || std::any_of(skips.begin(), skips.end(), [](int d){ return d < 1; })){
+                std::cerr << "skips must be positive integers separated by ',' or \"all\"\n" << usage << std::endl;
+                return 1;
+            }
+        }
 
         std::cout << "models : " << std::endl;
         for(const auto& modelName : modelList)
             std::cout << modelName << " ";
         std::cout << "\n";
 
-        std::cout << "nGames(per color) " << nGames << " nThreads " << nThreads << std::endl;
+        std::cout << "nGames(per color) " << nGames << " nThreads " << nThreads << " skips " << skipArg << std::endl;
 
         std::vector<SearchParams> params;
         for(int i=0; i<nModels; ++i)
@@ -139,7 +157,7 @@ int main(int argc, char** argv) {
             std::cerr << "Failed to open file.\n";
             return 1;
         }
-        ModelCompare::policy_evaluate(modelList, outFile, ratingPath, false, true, temp, nGames, nThreads, params);
+        ModelCompare::policy_evaluate(modelList, outFile, ratingPath, skips, false, true, temp, nGames, nThreads, params);
         outFile.close();
     }
     else if(mod == "test"){
