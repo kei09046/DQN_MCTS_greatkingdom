@@ -636,7 +636,7 @@ class AnalysisEngine:
         # itself (see printPlayoutDebugLine in src/analysis.cpp), so building up the growing list a
         # debug session looks at is entirely on the Python/GUI side; see Game.playout_log.
         self.playouts = queue.Queue()
-        # selections: (r, c) replies to request_select, in request order.
+        # selections: {"gen": int, "move": (r, c)} replies to request_select, in request order.
         self.selections = queue.Queue()
         # replies to request_fair_komi : {setup key (neutral_setup_key) : fair komi or None}.
         self.fair_komis = queue.Queue()
@@ -674,6 +674,8 @@ class AnalysisEngine:
             if line in ("play ok", "play illegal", "reset ok", "reset invalid", "komi ok", "komi invalid"):
                 self._ack_gen += 1
                 continue
+            if line in ("playouts ok", "playouts invalid"):
+                continue
 
             # Checked unconditionally, before the in_block gate below -- unlike every other
             # line here, a "playout ..." line isn't part of any analysis snapshot and can show
@@ -693,7 +695,7 @@ class AnalysisEngine:
 
             m = _SELECTED_RE.match(line)
             if m:
-                self.selections.put((int(m.group(1)), int(m.group(2))))
+                self.selections.put({"gen": self._ack_gen, "move": (int(m.group(1)), int(m.group(2)))})
                 continue
 
             if line.startswith("fairkomi"):
@@ -805,14 +807,27 @@ class AnalysisEngine:
         """Whether a result/playout dict describes the position as of the last reset/play sent."""
         return item.get("gen") == self.sent_gen
 
+    def send_playouts(self, n):
+        """Tells the engine the per-move playout setting ("playouts <n>"), so "select" prunes
+        rarely-visited moves with minVisitRatio * n, like a real n-playout move would."""
+        self._send(f"playouts {int(n)}")
+
     def request_analysis(self, playouts=None):
         self._send("analyze" if playouts is None else f"analyze {playouts}")
 
-    def request_select(self, temp):
+    def request_select(self, temp=None):
         """Asks the engine to pick a move from its current search result (Node::selectMove,
         the same rule MCTS::getMove uses), without searching further or playing it. The reply
-        arrives through get_selection."""
-        self._send(f"select {temp}")
+        arrives through get_selection / poll_selection. temp None = the engine's config temp
+        (play_config.json's mcts.temp)."""
+        self._send("select" if temp is None else f"select {temp}")
+
+    def poll_selection(self):
+        """Non-blocking: the next {"gen", "move"} reply to request_select, or None if none yet."""
+        try:
+            return self.selections.get_nowait()
+        except queue.Empty:
+            return None
 
     def get_selection(self, stop_event=None, poll_interval=0.05, timeout=60):
         """Blocks until the reply to request_select arrives; None on timeout/stop."""
@@ -821,7 +836,7 @@ class AnalysisEngine:
             if stop_event is not None and stop_event.is_set():
                 return None
             try:
-                return self.selections.get(timeout=poll_interval)
+                return self.selections.get(timeout=poll_interval)["move"]
             except queue.Empty:
                 if not self.is_alive():
                     return None
@@ -1001,6 +1016,7 @@ class MatchRunner:
                 engines[side] = AnalysisEngine(cfg["model"], build_dir=self.build_dir,
                                                search_params={"fpu": cfg["fpu"],
                                                               "min_visit_ratio": cfg["min_visit_ratio"]})
+                engines[side].send_playouts(cfg["playouts"])
 
             fair_komi = None
             if self.komi is None:
@@ -2311,6 +2327,7 @@ class Game:
         if extra is None:
             extra = self._get_analysis_limit()
         self.analysis_turn_requested = extra
+        self.analysisEngine.send_playouts(extra)
         self.analysisEngine.request_analysis(self.analysis_turn_base_visits + extra)
 
     def apply_analysis_limit(self):
@@ -2441,7 +2458,7 @@ class Game:
                 r = int(self.stone_size * 0.42)
                 font_size = max(7, int(self.stone_size * 0.16))
                 for mv in moves:
-                    if get_share(mv) < 0.01:  # hide anything under 1% probability/visit share -- mostly noise
+                    if get_share(mv) < 0.03:  # hide anything under 3% probability/visit share -- mostly noise
                         continue
                     val = get_val(mv)
                     x, y = mv["move"]
@@ -3026,12 +3043,13 @@ class Game:
         self.root.after(250, self._auto_play_move)
 
     def _auto_play_move(self):
-        """Commits the engine's chosen move: the current candidate with the most search
-        visits, same top-of-the-list move already shown in the candidate panel (a forced
-        win/loss position has exactly one candidate -- the proven winning/best-delaying
-        move surfaced by Analysis::printAnalysis, so the same "most visits" pick applies there
-        too). Re-checks everything since this runs after an after() delay, by which time the
-        checkbox could have been unticked or the position could have moved on already.
+        """Commits the engine's chosen move, picked by the engine itself ("select", i.e.
+        Node::select_move with play_config.json's mcts.temp) -- so with temp 1.0 the move is
+        sampled proportionally to visit counts rather than always the most-visited one, and a
+        proven position plays its proven move. Re-checks everything since this runs after an
+        after() delay, by which time the checkbox could have been unticked or the position
+        could have moved on already. The reply is awaited without blocking Tk (see
+        _await_auto_selection).
         """
         if self.game_over or not self.analysis_mode or not self._is_engine_turn():
             return
@@ -3047,7 +3065,27 @@ class Game:
         # before search ever expanded root -- see Analysis::printAnalysis), and is still the move.
         if best["visits"] <= 0 and not result.get("forced"):
             return
-        x, y = best["move"]
+        engine = self.analysisEngine
+        while engine.poll_selection() is not None:  # drop any leftover, unconsumed reply
+            pass
+        engine.request_select()
+        self._await_auto_selection(engine, len(self.rule.seq), time.monotonic() + 30)
+
+    def _await_auto_selection(self, engine, seq_len, deadline):
+        """Polls (via after()) for the reply to _auto_play_move's "select" and commits it, if
+        the position, engine and engine-plays settings are all still the same."""
+        if engine is not self.analysisEngine or len(self.rule.seq) != seq_len:
+            return
+        if self.game_over or not self.analysis_mode or not self._is_engine_turn():
+            return
+        reply = engine.poll_selection()
+        if reply is None:
+            if time.monotonic() < deadline and engine.is_alive():
+                self.root.after(20, lambda: self._await_auto_selection(engine, seq_len, deadline))
+            return
+        if not engine.is_current(reply) or reply["move"] == RESIGN_MOVE:
+            return
+        x, y = reply["move"]
         # Last line of defense: never commit an engine move the local rules reject (the same
         # check on_click applies to human moves); a pass is always legal.
         if (x, y) != (self.boardSize, 0) and not self._is_legal_point(x, y):

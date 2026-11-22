@@ -35,7 +35,7 @@
     "nPlayout": 4000,
     "cPuct": 1.5,
     "temp": 1.0,
-    "minVisitRatio": 0.005,
+    "minVisitRatio": 0.01,
     "fullSearchProb": 1.0,
     "fastPlayout": 300
   },

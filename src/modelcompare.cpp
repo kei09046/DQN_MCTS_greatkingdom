@@ -302,6 +302,20 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			Move m = player.select_move(temp);
 			std::cout << "selected " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 		}
+		else if (cmd == "playouts") {
+			// "playouts <n>" -- the caller's per-move playout setting. Sets this (analyze-only)
+			// process's nPlayout, so "select" (MCTS::select_move) prunes with
+			// minVisitRatio * <n> instead of play_config.json's nPlayout, as MCTS::get_move would
+			// for a search of <n> playouts. Also the default target of a bare "analyze".
+			int n;
+			if (iss >> n && n > 0) {
+				globalConfig.nPlayout = n;
+				std::cout << "playouts ok" << std::endl;
+			}
+			else {
+				std::cout << "playouts invalid" << std::endl;
+			}
+		}
 		else if (cmd == "fairkomi") {
 			analysis.print_fair_komi(player);
 		}
