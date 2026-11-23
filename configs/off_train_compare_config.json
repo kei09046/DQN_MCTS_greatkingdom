@@ -9,7 +9,7 @@
 
   "path": {
      "model_path": "../testmodels/",
-     "model_prefix": "M",
+     "model_prefix": "MnS",
      "drive_path": "../drive/MyDrive/",
      "data_path": "../data/"
   },
