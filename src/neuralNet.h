@@ -127,6 +127,7 @@ private:
 
 
 // model file name <type>_<blocks>b_<tag>.pt, e.g. K_10b_13440.pt (tag : games played, optionally + "B" for a best model).
+// <type> is a capital letter (architecture) optionally followed by letters / digits, e.g. MnS_12b_13440.pt.
 // Old names <type><games>.pt (e.g. K13440.pt) are read as 10 blocks. Anything else (e.g. "none") : an untrained network
 // of the config's model_prefix and numHiddenBlock.
 struct ModelName {

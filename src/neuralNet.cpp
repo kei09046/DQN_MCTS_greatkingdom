@@ -330,7 +330,9 @@ PolicyValueNet(modelFile, parse_model_name(modelFile).type, parse_model_name(mod
 
 ModelName PolicyValueNet::parse_model_name(const std::string& modelFile){
 	const std::string name = std::filesystem::path(modelFile).filename().string();
-	static const std::regex current("([A-Z])_(\\d+)b_(.*)\\.pt"), old("([A-Z])(\\d+)B?\\.pt");
+	// type : a capital letter (the architecture, see make_net) optionally followed by letters / digits naming the run,
+	// e.g. "MnS". It can't contain '_', which separates the fields.
+	static const std::regex current("([A-Z][A-Za-z0-9]*)_(\\d+)b_(.*)\\.pt"), old("([A-Z])(\\d+)B?\\.pt");
 	std::smatch m;
 	if(std::regex_match(name, m, current)){
 		std::smatch g;
@@ -587,6 +589,7 @@ void PolicyValueNet::save_model(const std::string& modelFile) const
 }
 
 std::shared_ptr<NetBase> PolicyValueNet::make_net() const{
+	// the architecture is the type's first letter; the rest only names the run (e.g. MnS : an M network).
 	if(modelType[0] == 'J') //  23 channel model
 		return std::make_shared<Net>(23, numBlocks);
 	if(modelType[0] == 'K') // J + capture map head
