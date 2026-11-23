@@ -545,7 +545,9 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		torch::Tensor loss = policyLoss + valueLoss + scoreLoss * 0.25f + scoreMapLoss * 0.25f + captureLoss * 0.25f;
+		// ablation.captureMap off : the capture loss is still computed and logged, but trains nothing.
+		const float captureWeight = ablation.captureMap ? 0.25f : 0.0f;
+		torch::Tensor loss = policyLoss + valueLoss + scoreLoss * 0.25f + scoreMapLoss * 0.25f + captureLoss * captureWeight;
 
 		pLoss += policyLoss.item<float>();
 		vLoss += valueLoss.item<float>();

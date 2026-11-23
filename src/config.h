@@ -103,6 +103,17 @@ struct Config {
 };
 extern Config globalConfig;
 
+// ablation switches, set once from the command line (./play train ... -Nprune -Ntransfer -NcaptureMap).
+// Kept out of Config because training reloads globalConfig from the json files mid-run.
+// All true = the full method.
+struct Ablation {
+    bool prune = true;      // search only maximal scoring moves (set_policy_mask). false : every legal move is searched.
+    bool transfer = true;   // a kept move's prior logit is the max over the logits of the squares it would claim
+                            // (transfer_logit). false : each move keeps its own logit. Requires prune.
+    bool captureMap = true; // train the capture map head. false : its loss weight is 0 (the head still exists, untrained).
+};
+inline Ablation ablation; // inline : also defined for tools that link gamerules.cpp without config.cpp / main.cpp.
+
 Config load_config(const std::string& path);
 
 #endif

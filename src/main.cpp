@@ -27,17 +27,47 @@ int main(int argc, char** argv) {
     
     if(mod == "train"){
         globalConfig = load_config("../configs/train_config.json");
-        // ./play train <model> <data file> <games> <threads> <is_shown> [learning rate]
+        // ./play train <model> <data file> <games> <threads> <is_shown> [learning rate] [-Nprune] [-Ntransfer] [-NcaptureMap]
         // if learning rate is not given, config file's default learning rate or optimizer's learning rate would be used.
-        std::string modelFile = argv[2];
-        std::string dataFile = argv[3];
-        int gameNum = std::stoi(argv[4]);
-        int numThread = std::stoi(argv[5]);
-        bool isShown = static_cast<bool>(std::stoi(argv[6]));
+        // ablation flags (any position after the mode) switch off one component of the method :
+        //   -Nprune      search every legal move instead of only maximal scoring moves (implies -Ntransfer)
+        //   -Ntransfer   keep each move's own prior logit instead of the max over the squares it claims
+        //   -NcaptureMap train without the capture map loss
+        std::vector<std::string> args;
+        for(int i=2; i<argc; ++i){
+            const std::string a = argv[i];
+            if(a == "-Nprune")
+                ablation.prune = false;
+            else if(a == "-Ntransfer")
+                ablation.transfer = false;
+            else if(a == "-NcaptureMap")
+                ablation.captureMap = false;
+            else if(!a.empty() && a[0] == '-')
+                throw std::runtime_error("unknown train option " + a + " (expected -Nprune, -Ntransfer or -NcaptureMap)");
+            else
+                args.push_back(a);
+        }
+        if(args.size() < 5 || args.size() > 6){
+            std::cerr << "usage : ./play train <model> <data file> <games> <threads> <is_shown> [learning rate] "
+                         "[-Nprune] [-Ntransfer] [-NcaptureMap]" << std::endl;
+            return 1;
+        }
+        if(!ablation.prune && ablation.transfer){
+            std::cout << "-Nprune : logit transfer is defined over the pruned move list only, so it is off too." << std::endl;
+            ablation.transfer = false;
+        }
+        std::cout << "ablation : prune " << ablation.prune << " transfer " << ablation.transfer
+                  << " captureMap " << ablation.captureMap << std::endl;
+
+        std::string modelFile = args[0];
+        std::string dataFile = args[1];
+        int gameNum = std::stoi(args[2]);
+        int numThread = std::stoi(args[3]);
+        bool isShown = static_cast<bool>(std::stoi(args[4]));
 
         std::optional<float> lr;
-        if(argc > 7){
-            lr = std::stof(argv[7]);
+        if(args.size() > 5){
+            lr = std::stof(args[5]);
             if(!(*lr > 0.0f))
                 throw std::runtime_error("learning rate must be positive");
         }

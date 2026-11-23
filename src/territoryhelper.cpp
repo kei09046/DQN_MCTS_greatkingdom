@@ -1,6 +1,5 @@
 #include "territoryhelper.h"
 
-#include <queue>
 #include <cassert>
 #include <limits>
 #include <algorithm>
@@ -12,6 +11,8 @@ namespace{
     struct BoardMasks{
         std::bitset<boardSize> edge;        // squares on the board border
         std::bitset<boardSize> sides[4];    // top row, bottom row, left column, right column
+        std::bitset<boardSize> n4[boardSize];   // orthogonal neighbors of each square
+        std::bitset<boardSize> n8[boardSize];   // orthogonal + diagonal neighbors of each square
     };
 
     const BoardMasks MASKS = []{
@@ -24,9 +25,25 @@ namespace{
                 m.sides[1][idx] = (r == rowSize - 1);
                 m.sides[2][idx] = (c == 0);
                 m.sides[3][idx] = (c == colSize - 1);
+                for(int dr=-1; dr<=1; ++dr)
+                    for(int dc=-1; dc<=1; ++dc){
+                        const int nr = r + dr, nc = c + dc;
+                        if((dr == 0 && dc == 0) || nr < 0 || nr >= rowSize || nc < 0 || nc >= colSize)
+                            continue;
+                        m.n8[idx].set(nr * colSize + nc);
+                        if(dr == 0 || dc == 0)
+                            m.n4[idx].set(nr * colSize + nc);
+                    }
             }
         return m;
     }();
+
+    // b plus its orthogonal neighbors. Horizontal shifts are masked so they don't wrap across rows;
+    // vertical shifts fall off the board.
+    inline std::bitset<boardSize> dilate(const std::bitset<boardSize>& b){
+        return b | (b << colSize) | (b >> colSize)
+                 | ((b << 1) & ~MASKS.sides[2]) | ((b >> 1) & ~MASKS.sides[3]);
+    }
 
     inline Color opposite(Color c){
         return (c == BLACK) ? WHITE : BLACK;
@@ -131,25 +148,55 @@ TerritoryHelper::TerritoryHelper() : obtainedScore{0.0f, 0.0f}, topologyCurrent(
 }
 
 // slow version works without update_topology. Should be used on non-branching game, resetted game etc.
+// Exact for any move : each empty region next to the new stone is flood-filled with bitboard shifts and becomes
+// territory if no square of it is next to an opponent stone and it doesn't touch all 4 sides (same rule as compute_gains).
 void TerritoryHelper::update_move(Board& board, const Move& m){
     topologyCurrent = false;
     if(m == PASSMOVE)
         return;
 
-    Color toCheck = board.at(m);
-    assert(toCheck == BLACK || toCheck == WHITE);
-    int idx = (toCheck == BLACK) ? 0 : 1;
+    const int mIdx = to_idx(m);
+    const Color clr = board.at(mIdx);
+    assert(clr == BLACK || clr == WHITE);
 
-    const BitBoard& own = board.own(toCheck);
-    int cnt = 0;
-    for(auto [nr, nc] : neighbors8(m.first, m.second))
-        cnt += own[to_idx(nr, nc)] ? 1 : 0;
-
-    if(cnt < (MASKS.edge[to_idx(m.first, m.second)] ? 1 : 2))
+    // a stone can only close a region if it touches own stones / neutrals (or the edge) on both sides of it.
+    if(static_cast<int>((board.own(clr) & MASKS.n8[mIdx]).count()) < (MASKS.edge[mIdx] ? 1 : 2))
         return;
 
-    for (auto [tr, tc] : neighbors4(m.first, m.second))
-        obtainedScore[idx] += static_cast<float>(check_score(board, tr, tc, toCheck));
+    const BitBoard adjOpp = board.adjacent(opposite(clr));
+    BitBoard seeds = MASKS.n4[mIdx] & board.empty();
+    int gained = 0;
+
+    while(seeds.any()){
+        const BitBoard empty = board.empty();
+        BitBoard region;
+        region.set(seeds._Find_first());
+        bool open = false;
+        while(true){
+            if((region & adjOpp).any()){ // stop early : the region can't be territory.
+                open = true;
+                break;
+            }
+            const BitBoard next = dilate(region) & empty;
+            if(next == region)
+                break;
+            region = next;
+        }
+        // an open region may be only partly filled; other seeds in it fail the same way.
+        seeds &= ~region;
+        if(open)
+            continue;
+
+        bool allSides = true;
+        for(const auto& side : MASKS.sides)
+            allSides = allSides && (region & side).any();
+        if(allSides)
+            continue;
+
+        board.mark_score(region, clr);
+        gained += static_cast<int>(region.count());
+    }
+    obtainedScore[(clr == BLACK) ? 0 : 1] += static_cast<float>(gained);
 }
 
 // fast version, update_topology call should be preceded which reuses previous turn's state.
@@ -333,56 +380,6 @@ void TerritoryHelper::update_score_candidates(const Board& board, const Color cl
     }
 
     score_candidates(clr) = board.empty() & ((MASKS.edge & ones) | (~MASKS.edge & twos));
-}
-
-uint8_t TerritoryHelper::check_score(Board& board, uint8_t r, uint8_t c, Color clr) {
-    if (!board.is_empty(to_idx(r, c)))
-        return 0U;
-
-    const BitBoard& adjToOppositeSide = board.adjacent(opposite(clr));
-    uint8_t meetEdgeFlags = 0;  // 4bit integer to track edge touching
-    std::queue<Move> q;
-    BitBoard emptyCells;
-    uint8_t areaCount = 0;
-
-    q.emplace(r, c);
-    std::bitset<boardSize> marker;
-    marker[r * colSize + c] = true;
-
-    while (!q.empty()) {
-        auto [tr, tc] = q.front();
-        q.pop();
-
-        const int tIdx = to_idx(tr, tc);
-        if (board.is_empty(tIdx)) { // if cell is empty
-            if (adjToOppositeSide[tIdx]) { // if place is adjacent to opponent stone
-                return 0; 
-            }
-            meetEdgeFlags |= (tr == 0);          // Top edge
-            meetEdgeFlags |= (tr == rowSize - 1) << 1; // Bottom edge
-            meetEdgeFlags |= (tc == 0) << 2;          // Left edge
-            meetEdgeFlags |= (tc == colSize - 1) << 3; // Right edge
-
-            areaCount++;
-            emptyCells.set(tIdx);
-
-            for (auto [nr, nc] : neighbors4(tr, tc)) {
-                if (!marker[nr * colSize + nc]) {
-                    q.emplace(nr, nc);
-                    marker[nr * colSize + nc] = true;
-                }
-            }
-        }
-        // else neutral; nothing to be done
-    }
-
-    if (meetEdgeFlags == 0b1111)  // All edges are touched
-        return 0U;
-
-    // Mark valid territory
-    board.mark_score(emptyCells, clr);
-
-    return areaCount;
 }
 
 const std::bitset<boardSize> &TerritoryHelper::score_candidates(Color c) const{

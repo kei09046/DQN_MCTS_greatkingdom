@@ -55,10 +55,6 @@ private:
 
     void update_score(Board& board, uint8_t r, uint8_t c, const Color played);
 
-    // calculates if territory is formed on given grid using BFS.
-    // Also updates game state.
-    uint8_t check_score(Board& board, uint8_t r, uint8_t c, Color clr);
-
     const std::bitset<boardSize>& score_candidates(Color c) const;
 
     std::bitset<boardSize>& score_candidates(Color c);

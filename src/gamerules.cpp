@@ -114,7 +114,12 @@ Color Game::make_move_given_score(const Move& move){
         return clr;
 
     // after place_stone (color is read from board) and capture check, same order as make_move.
-    scoreChecker.update_move_given_score(board, move);
+    // The fast update only credits territory to maximal scoring moves, which is all pruned search plays.
+    // Without pruning a non-maximal move may also score, so use the exact (slow) update.
+    if(ablation.prune)
+        scoreChecker.update_move_given_score(board, move);
+    else
+        scoreChecker.update_move(board, move);
 
     switch_turn();
     moveCount++;
@@ -198,14 +203,26 @@ void Game::set_policy_mask(){
         threat = tactic;
         if(threat != RESIGNMOVE){
             auto best = scoreChecker.maximize_score(board, currentTurn, threat);
+            // no pruning : both the defending point itself and the maximal scoring move that claims it.
+            const int threatIdx = threat.first * colSize + threat.second;
+            if(!ablation.prune && best != threatIdx)
+                possibleMoves.push_back(threatIdx);
             possibleMoves.push_back(best);
             return;
         }
 
         else{
-            auto optimals = scoreChecker.maximize_score(board, currentTurn, 0U);
-            for(const auto& m : optimals)
-                possibleMoves.push_back(m);
+            if(ablation.prune){
+                auto optimals = scoreChecker.maximize_score(board, currentTurn, 0U);
+                for(const auto& m : optimals)
+                    possibleMoves.push_back(m);
+            }
+            else{
+                // no pruning : every empty square. Tactics above and the pass rule below still apply.
+                for(int i=0; i<boardSize; ++i)
+                    if(board.is_empty(i))
+                        possibleMoves.push_back(i);
+            }
 
             if(score_winner() == currentTurn)
                 possibleMoves.push_back(PASSMOVE.first * colSize + PASSMOVE.second);
@@ -226,7 +243,14 @@ int Game::maximize_score(Color c, const Move& cord) const{
 }
 
 std::vector<float> Game::transfer_logit(const std::vector<float>& logits) const{
-    return scoreChecker.transfer_logit(logits, possibleMoves, currentTurn);
+    // the transfer is defined over the pruned move list only (ablation.transfer requires ablation.prune).
+    if(ablation.transfer && ablation.prune)
+        return scoreChecker.transfer_logit(logits, possibleMoves, currentTurn);
+
+    std::vector<float> own(possibleMoves.size());
+    for(size_t i=0; i<possibleMoves.size(); ++i)
+        own[i] = logits.at(possibleMoves[i]);
+    return own;
 }
 
 std::pair<Move, int> Game::tactic_check() const{
