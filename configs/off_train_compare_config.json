@@ -8,7 +8,7 @@
 
   "path": {
      "model_path": "../testmodels/",
-     "model_prefix": "MnS",
+     "model_prefix": "MnT",
      "drive_path": "../drive/MyDrive/",
      "data_path": "../data/"
   },
