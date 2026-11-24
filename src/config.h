@@ -3,116 +3,123 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <utility>
 
+// Configuration, split by consumer. load_config reads a json file into a Config, and each object is handed (and keeps)
+// only the part it reads : MCTS a SearchConfig, Evaluator a CacheConfig, EloCalculator a RatingConfig, and so on.
+// Nothing here is global.
 
-// search options that can differ between engines (e.g. two engines in evaluate_two / evaluate_multi).
-struct SearchParams {
-    float fpu; // < 0 : unvisited children are valued 0. >= 0 : parent value - fpu * sqrt(policy mass of visited children).
+// starting position of a game : "board" in the json.
+struct BoardConfig {
+    float komi;
+    std::vector<std::pair<uint8_t, uint8_t>> neutrals;
+};
+
+// how a Game lists the moves search considers (Game::set_policy_mask) and gives them priors (Game::transfer_logit).
+// Not read from the json files : the defaults are the full method; ./play train -Nprune / -Ntransfer and an engine's
+// "prune" / "transfer" in "engines" switch them off (ablation).
+struct RuleConfig {
+    bool prune = true;    // search only maximal scoring moves. false : every legal move is searched.
+    bool transfer = true; // a kept move's prior logit is the max over the logits of the squares it would claim.
+                          // false : each move keeps its own logit. Only applies with prune.
+};
+
+// one search engine (MCTS) : "mcts", "features", "dirichlet_noise" and train.search_thread_num in the json.
+struct SearchConfig {
+    std::string mode; // "playout" or "time"
+    int time;         // seconds per move in time mode
+    int nPlayout;
+    int fastPlayout;  // playouts of a fast search (playout cap randomization, see TrainConfig::fullSearchProb)
+    float cPuct;
+    float temp;       // move selection temperature
+    float fpu;        // < 0 : unvisited children are valued 0. >= 0 : parent value - fpu * sqrt(policy mass of visited children).
     float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
+    bool transTable;
+    bool dirichletNoise;
+    float alpha;      // dirichlet noise parameter
+    float eps;        // dirichlet noise weight
+    int searchThreadNum; // leaves evaluated at once by one search
+    RuleConfig rules;
 
     // forced visits per root child for a search of nPlayout playouts. 0 if minVisitRatio <= 0.
-    int min_visits(int nPlayout) const {
+    int min_visits(int playouts) const {
         if (minVisitRatio <= 0.0f) return 0;
-        return static_cast<int>(nPlayout * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
+        return static_cast<int>(playouts * minVisitRatio + 1e-4f); // epsilon guards float error, e.g. 400 * 0.005f
     }
 };
 
-struct Config {
-    // features
-    bool transTable;
-    bool dirichletNoise;
-    bool googleDrive;
-    bool detailedStat;
-    float fpu;
+// evaluation cache of an Evaluator : "cache" in the json (stored as log2 sizes there).
+struct CacheConfig {
+    int tableSize;
+    int mutexPoolSize;
+};
 
-    //path
-    std::string modelPath;
-    std::string modelPrefix;
-    std::string drivePath;
-    std::string dataPath; // replay buffer snapshots
+// network built when a model file name doesn't say its type / size (e.g. "none" : an untrained network).
+struct NetConfig {
+    std::string modelPrefix; // path.model_prefix
+    int numHiddenBlock;      // nn.numHiddenBlock
+};
 
-    // board
-    float komi;
+// one optimizer step of PolicyValueNet::train.
+struct TrainStepConfig {
+    int epochs;                 // passes over each batch
+    bool captureMapLoss = true; // false (./play train -NcaptureMap) : the capture map loss has weight 0.
+};
+
+// self-play training (TrainPipeline) : "train" in the json.
+struct TrainConfig {
+    int batchSize;
+    TrainStepConfig step;
+    int checkFreq;
+    int compareGameCnt;   // number of games played to compare models
+    int compareThreadNum; // should divide compareGameCnt / 2
+    int trainWaitTime;    // decides train / inference thread balance
+    int synchronizeFreq;
+    int capacity;
+    int trainStartPoint;  // the train thread starts once the replay buffer holds this many positions. >= batchSize.
+    float valueQMix;      // value target = (1 - l) * game result + l * root value after search, l = valueQMix * (n - i) / n at move i of n.
+    float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
+    float fallbackWinrate;      // a checkpoint winning less than this against the current best is replaced by the best model's weights.
+    int lrPatience;             // comparisons in a row without a clear improvement before the learning rate is halved.
+    float lrImprovementWinrate; // win rate against the current best that counts as a clear improvement.
+    float initialLearningRate;  // used unless the optimizer state of the starting model is loaded.
+    // playout cap randomization : each move gets a full search (recorded for training) with probability fullSearchProb,
+    // otherwise a fast search (SearchConfig::fastPlayout, not recorded). 1 = every move is a full search.
+    float fullSearchProb;
     float fairKomiNoise;  // self-play / model comparison : komi is the setup's fair komi (fairkomi.h) +- up to this
     float wideKomiProb;   // self-play only : chance of a game with komi fair +- up to wideKomiNoise instead
     float wideKomiNoise;
-    std::vector<std::pair<uint8_t, uint8_t>> neutrals; 
+};
 
-    //neuralNet constants
-    int batchSize;
-    int inputChannel;
-    int numHiddenBlock; // residual blocks of a new (untrained) network. A loaded model takes its block count from its file name.
+struct PathConfig {
+    std::string modelPath;
+    std::string drivePath;
+    std::string dataPath; // replay buffer snapshots
+    bool googleDrive;     // also save models to drivePath
+};
 
-    //dirichlet noise
-    float alpha; // dirichlet noise parameter
-    float eps;   // dirichlet noise weight
-
-    // mcts
-    std::string mode; // either time or playout.
-    int time;
-    int nPlayout;
-    float cPuct;
-    float temp;
-    float minVisitRatio; // each root child is forced at least nPlayout * minVisitRatio visits. <= 0 disables it.
-    // playout cap randomization (self-play only) : each move gets a full search (nPlayout, recorded for training) with
-    // probability fullSearchProb, otherwise a fast search (fastPlayout, not recorded). 1 = every move is a full search.
-    float fullSearchProb;
-    int fastPlayout;
-
-    // per-engine overrides of fpu / minVisitRatio, read from "engines" in the config. Index = engine order.
-    std::vector<SearchParams> engines;
-
-    SearchParams search_params() const {
-        return {fpu, minVisitRatio};
-    }
-
-    // search params for engine idx; falls back to the global values if no override is given.
-    SearchParams engine_params(int idx) const {
-        return (idx < static_cast<int>(engines.size())) ? engines[idx] : search_params();
-    }
-
-    int min_visits(int nPlayout) const {
-        return search_params().min_visits(nPlayout);
-    }
-
-    //cache
-    int tableSize;
-    int mutexPoolSize; // shardCount * capPerShard -> maximum cache size
-
-    //rating
+struct RatingConfig {
     float initK;
     float initRating;
-
-    //train
-    int playBatchSize;
-    int epochs;
-    int checkFreq;
-    int compareGameCnt; // number of games played to compare models
-    int compareThreadNum; // should divide compare_game_cnt / 2
-    int searchThreadNum; // if apv-MCTS : # of PMCTS threads if not : # of simultaneous evaluation for one thread
-    int trainWaitTime; // decide train/inference thread balance.
-    int synchronizeFreq; // 96
-    int capacity;
-    int trainStartPoint; // the train thread starts once the replay buffer holds this many positions. >= batchSize.
-    float valueQMix; // value target = (1 - l) * game result + l * root value after search, l = valueQMix * (n - i) / n at move i of n. 0 = game result only.
-    float windowFraction; // training samples from the newest max(trainStartPoint, windowFraction * positions added) positions, up to capacity.
-    float fallbackWinrate; // a checkpoint winning less than this against the current best is replaced by the best model's weights.
-    int lrPatience; // comparisons in a row without a clear improvement before the learning rate is halved.
-    float lrImprovementWinrate; // win rate against the current best that counts as a clear improvement (resets the lrPatience counter).
-    float initialLearningRate; // used unless the optimizer state of the starting model is loaded.
 };
-extern Config globalConfig;
 
-// ablation switches, set once from the command line (./play train ... -Nprune -Ntransfer -NcaptureMap).
-// Kept out of Config because training reloads globalConfig from the json files mid-run.
-// All true = the full method.
-struct Ablation {
-    bool prune = true;      // search only maximal scoring moves (set_policy_mask). false : every legal move is searched.
-    bool transfer = true;   // a kept move's prior logit is the max over the logits of the squares it would claim
-                            // (transfer_logit). false : each move keeps its own logit. Requires prune.
-    bool captureMap = true; // train the capture map head. false : its loss weight is 0 (the head still exists, untrained).
+// everything in one json file.
+struct Config {
+    PathConfig paths;
+    BoardConfig board;
+    NetConfig net;
+    SearchConfig search;
+    CacheConfig cache;
+    TrainConfig train;
+    RatingConfig rating;
+    // per-engine overrides of fpu / minVisitRatio / prune / transfer ("engines" in the json), applied to search.
+    std::vector<SearchConfig> engines;
+
+    // search config of engine idx (evaluate_two / evaluate_multi); search if the json gives no override for it.
+    const SearchConfig& engine(int idx) const {
+        return (idx < static_cast<int>(engines.size())) ? engines[idx] : search;
+    }
 };
-inline Ablation ablation; // inline : also defined for tools that link gamerules.cpp without config.cpp / main.cpp.
 
 Config load_config(const std::string& path);
 

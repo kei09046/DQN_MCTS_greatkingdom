@@ -5,6 +5,7 @@
 #include <mutex>
 #include <memory>
 #include "consts.h"
+#include "config.h"
 
 template<typename T>
 class Cache {
@@ -14,6 +15,7 @@ private:
         std::shared_ptr<T> ptr = nullptr;
     };
 
+    int tableSize;
     int tableMask;
 
     Entry* table;
@@ -29,9 +31,13 @@ private:
     }
 
 public:
-    Cache() : mutexPool(globalConfig.mutexPoolSize), tableMask(globalConfig.tableSize - 1), mutexPoolMask(globalConfig.mutexPoolSize - 1){
-        table = new Entry[globalConfig.tableSize];
+    explicit Cache(const CacheConfig& cfg) : tableSize(cfg.tableSize), tableMask(cfg.tableSize - 1),
+        mutexPoolMask(cfg.mutexPoolSize - 1), mutexPool(cfg.mutexPoolSize){
+        table = new Entry[tableSize];
     }
+
+    Cache(const Cache&) = delete;
+    Cache& operator=(const Cache&) = delete;
 
     ~Cache() {
         delete[] table;
@@ -69,7 +75,7 @@ public:
     }
 
     void clear() {
-        for(int i = 0; i < globalConfig.tableSize; i++) {
+        for(int i = 0; i < tableSize; i++) {
             std::mutex& m = mutex_of(i);
             std::lock_guard<std::mutex> lock(m);
             if(table[i].ptr != nullptr){

@@ -34,16 +34,6 @@ Hash::Hash() {
     }
 }
 
-HashValue Hash::base_hash(const Game& game) const{
-    HashValue h = 0;
-
-    for(const auto& neutral : globalConfig.neutrals)
-        h ^= zobristTable[neutral.first][neutral.second][2];
-    h ^= komiHash[boardSize + static_cast<int>(std::floor(game.get_komi()))];
-    
-    return h;
-}
-
 HashValue Hash::compute_hash(const Game& game) const{
     HashValue h = 0;
 

@@ -10,8 +10,8 @@
 #include <cmath>
 
 
-Game::Game(float komi, const std::vector<Move>& neutrals) :
- board(neutrals), komi(komi), moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE), scoreChecker(){
+Game::Game(float komi, const std::vector<Move>& neutrals, RuleConfig rules) :
+ board(neutrals), komi(komi), rules(rules), moveCount(0), possibleMoves(), threat(RESIGNMOVE), winmove(RESIGNMOVE), scoreChecker(){
     uint8_t temp = 0;
     for(int i=0; i<rowSize; ++i)
         for(int j=0; j<colSize; ++j){
@@ -116,7 +116,7 @@ Color Game::make_move_given_score(const Move& move){
     // after place_stone (color is read from board) and capture check, same order as make_move.
     // The fast update only credits territory to maximal scoring moves, which is all pruned search plays.
     // Without pruning a non-maximal move may also score, so use the exact (slow) update.
-    if(ablation.prune)
+    if(rules.prune)
         scoreChecker.update_move_given_score(board, move);
     else
         scoreChecker.update_move(board, move);
@@ -205,14 +205,14 @@ void Game::set_policy_mask(){
             auto best = scoreChecker.maximize_score(board, currentTurn, threat);
             // no pruning : both the defending point itself and the maximal scoring move that claims it.
             const int threatIdx = threat.first * colSize + threat.second;
-            if(!ablation.prune && best != threatIdx)
+            if(!rules.prune && best != threatIdx)
                 possibleMoves.push_back(threatIdx);
             possibleMoves.push_back(best);
             return;
         }
 
         else{
-            if(ablation.prune){
+            if(rules.prune){
                 auto optimals = scoreChecker.maximize_score(board, currentTurn, 0U);
                 for(const auto& m : optimals)
                     possibleMoves.push_back(m);
@@ -243,8 +243,8 @@ int Game::maximize_score(Color c, const Move& cord) const{
 }
 
 std::vector<float> Game::transfer_logit(const std::vector<float>& logits) const{
-    // the transfer is defined over the pruned move list only (ablation.transfer requires ablation.prune).
-    if(ablation.transfer && ablation.prune)
+    // the transfer is defined over the pruned move list only (rules.transfer requires rules.prune).
+    if(rules.transfer && rules.prune)
         return scoreChecker.transfer_logit(logits, possibleMoves, currentTurn);
 
     std::vector<float> own(possibleMoves.size());

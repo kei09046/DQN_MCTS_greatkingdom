@@ -180,7 +180,7 @@ NNOutput Net::forward(const torch::Tensor& state)
 }
 
 NNInput PolicyValueNet::get_data(const Game& game){
-    std::vector<float> ret(inputSize * globalConfig.inputChannel, 0.0f);
+    std::vector<float> ret(inputSize * inputChannel, 0.0f);
 	Color turn = game.get_turn();
 	Color oppturn = Game::reverse_color(turn);
 	Color state;
@@ -304,11 +304,11 @@ NNInput PolicyValueNet::get_data(const Game& game){
 
 NNInput PolicyValueNet::get_data(const std::vector<const Game*>& gameBatch){
 	NNInput ret;
-	ret.reserve(gameBatch.size() * inputSize * globalConfig.inputChannel);
+	ret.reserve(gameBatch.size() * inputSize * inputChannel);
 
 	for(int b=0; b<gameBatch.size(); ++b){
 		auto data = get_data(*gameBatch[b]);
-		// data : std::tuple<std::vector, std::vector, std::vector> with size inputSize * globalConfig.inputChannel, boardSize + 1, boardSize + 1
+		// data : std::tuple<std::vector, std::vector, std::vector> with size inputSize * inputChannel, boardSize + 1, boardSize + 1
 		ret.insert(ret.end(), data.begin(), data.end());
 	}
     return ret;
@@ -324,11 +324,19 @@ PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& 
 	load_model(modelFile);
 }
 
-PolicyValueNet::PolicyValueNet(const std::string& modelFile, bool useGpu): 
-PolicyValueNet(modelFile, parse_model_name(modelFile).type, parse_model_name(modelFile).blocks, useGpu)
+namespace{
+	ModelName name_or_new(const std::string& modelFile, const NetConfig& newNet){
+		if(auto n = PolicyValueNet::parse_model_name(modelFile))
+			return *n;
+		return {newNet.modelPrefix, newNet.numHiddenBlock, std::nullopt};
+	}
+}
+
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, const NetConfig& newNet, bool useGpu):
+PolicyValueNet(modelFile, name_or_new(modelFile, newNet).type, name_or_new(modelFile, newNet).blocks, useGpu)
 {}
 
-ModelName PolicyValueNet::parse_model_name(const std::string& modelFile){
+std::optional<ModelName> PolicyValueNet::parse_model_name(const std::string& modelFile){
 	const std::string name = std::filesystem::path(modelFile).filename().string();
 	// type : a capital letter (the architecture, see make_net) optionally followed by letters / digits naming the run,
 	// e.g. "MnS". It can't contain '_', which separates the fields.
@@ -340,11 +348,11 @@ ModelName PolicyValueNet::parse_model_name(const std::string& modelFile){
 		std::optional<int> games;
 		if(std::regex_search(tag, g, std::regex("^(\\d+)")))
 			games = std::stoi(g[1].str());
-		return {m[1].str(), std::stoi(m[2].str()), games};
+		return ModelName{m[1].str(), std::stoi(m[2].str()), games};
 	}
 	if(std::regex_match(name, m, old))
-		return {m[1].str(), 10, std::stoi(m[2].str())}; // every model before numHiddenBlock had 10 blocks
-	return {globalConfig.modelPrefix, globalConfig.numHiddenBlock, std::nullopt};
+		return ModelName{m[1].str(), 10, std::stoi(m[2].str())}; // every model before numHiddenBlock had 10 blocks
+	return std::nullopt;
 }
 
 std::string PolicyValueNet::model_prefix() const{
@@ -368,7 +376,7 @@ void PolicyValueNet::capture_graphs(){
 		for(const int B : graphBatchSizes){
 			GraphBucket g;
 			g.batchSize = B;
-			g.in = torch::zeros({B, globalConfig.inputChannel, rowSize, colSize}, options);
+			g.in = torch::zeros({B, inputChannel, rowSize, colSize}, options);
 			// warm-up outside the capture : cuDNN benchmark mode times its algorithms here, which a capture can't contain.
 			for(int i = 0; i < 2; ++i)
 				merge_outputs(policyValueNet->forward(g.in), B);
@@ -390,18 +398,18 @@ void PolicyValueNet::capture_graphs(){
 std::vector<PolicyValueOutput>
 PolicyValueNet::batch_evaluate(NNInput& input, int batchSize, PinnedBuffers* pinned){
 	const int B = batchSize;
-	assert(input.size() == static_cast<size_t>(B) * globalConfig.inputChannel * inputSize);
+	assert(input.size() == static_cast<size_t>(B) * inputChannel * inputSize);
 	std::vector<PolicyValueOutput> outputs;
 	outputs.reserve(B);
 
 	const auto options = torch::TensorOptions().dtype(torch::kFloat32);
-	const torch::Tensor cpuIn = torch::from_blob(input.data(), {B, globalConfig.inputChannel, rowSize, colSize}, options);
+	const torch::Tensor cpuIn = torch::from_blob(input.data(), {B, inputChannel, rowSize, colSize}, options);
 
 	torch::NoGradGuard noGrad;
 	torch::Tensor out; // [B, outWidth] on the CPU
 	if(useGpu && pinned){
 		if(!pinned->in.defined() || pinned->in.size(0) < B){
-			pinned->in = torch::empty({B, globalConfig.inputChannel, rowSize, colSize}, options.pinned_memory(true));
+			pinned->in = torch::empty({B, inputChannel, rowSize, colSize}, options.pinned_memory(true));
 			pinned->out = torch::empty({B, outWidth}, options.pinned_memory(true));
 		}
 		torch::Tensor in = pinned->in.narrow(0, 0, B);
@@ -440,13 +448,13 @@ PolicyValueOutput PolicyValueNet::evaluate(NNInput& input){
 
 std::tuple<float, float, float, float, float, float, float> PolicyValueNet::train(std::vector<float>& stateBatch,
 	 std::vector<float>& nextmoveBatch, std::vector<float>& resultBatch, std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch,
-	  std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch, float lr, bool update){
+	  std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch, float lr, const TrainStepConfig& step, bool update){
 
 	int B = resultBatch.size();
 	auto options = torch::TensorOptions().dtype(torch::kFloat32);
 
 	auto sb = torch::from_blob(stateBatch.data(),
-		{B, globalConfig.inputChannel, inputRow, inputCol},
+		{B, inputChannel, inputRow, inputCol},
 		options).to(device);
 
 	auto mp = torch::from_blob(nextmoveBatch.data(),
@@ -508,7 +516,7 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 	graphs.clear(); // they read the fused weights
 	policyValueNet->train(update);
 	torch::AutoGradMode gradMode(update);
-	const int passes = update ? globalConfig.epochs : 1;
+	const int passes = update ? step.epochs : 1;
 
 	//static int cntr = 0;
 	for(int i=0; i<passes; ++i){
@@ -547,8 +555,8 @@ std::tuple<float, float, float, float, float, float, float> PolicyValueNet::trai
 
 		// TODO : find best ratio
 		//torch::Tensor loss = policy_loss + value_loss*0.5f + score_loss*0.1f + score_map_loss*0.1f + capture_loss*0.1f;
-		// ablation.captureMap off : the capture loss is still computed and logged, but trains nothing.
-		const float captureWeight = ablation.captureMap ? 0.25f : 0.0f;
+		// step.captureMapLoss off (ablation) : the capture loss is still computed and logged, but trains nothing.
+		const float captureWeight = step.captureMapLoss ? 0.25f : 0.0f;
 		torch::Tensor loss = policyLoss + valueLoss + scoreLoss * 0.25f + scoreMapLoss * 0.25f + captureLoss * captureWeight;
 
 		pLoss += policyLoss.item<float>();

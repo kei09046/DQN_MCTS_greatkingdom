@@ -1,25 +1,30 @@
 #include "train.h"
 
-TrainPipeline::TrainPipeline(std::string initModel,
-	std::string testModel, bool gpu, std::optional<float> learningRateOverride) : trainModel(globalConfig.modelPath + initModel, gpu), inferenceModel(globalConfig.modelPath + initModel, gpu),
-	currentBestModelFile(testModel), gpu(gpu), captureRatio(0.5f),
-	replayBuffer(globalConfig.capacity, globalConfig.trainStartPoint, globalConfig.windowFraction){
-	stateBatch = new std::vector<float>(globalConfig.inputChannel * globalConfig.batchSize * inputSize);
-	nextmoveBatch = new std::vector<float>(globalConfig.batchSize * outputSize);
-	scoreBatch = new std::vector<float>(globalConfig.batchSize);
-	resultBatch = new std::vector<float>(globalConfig.batchSize);
-	outcomeBatch = new std::vector<float>(globalConfig.batchSize);
-	mapBatch = new std::vector<float>(globalConfig.batchSize * boardSize);
-	typeBatch = new std::vector<Trainhead>(globalConfig.batchSize);
+TrainPipeline::TrainPipeline(std::string initModel, std::string testModel, const Config& trainConfig,
+	std::string compareConfigPath, bool gpu, std::optional<float> learningRateOverride) :
+	paths(trainConfig.paths), net(trainConfig.net), cache(trainConfig.cache), search(trainConfig.search), cfg(trainConfig.train),
+	defaultKomi(trainConfig.board.komi), compareConfigPath(std::move(compareConfigPath)),
+	captureRatio(0.5f),
+	inferenceModel(paths.modelPath + initModel, net, gpu), trainModel(paths.modelPath + initModel, net, gpu),
+	gpu(gpu), currentBestModelFile(testModel),
+	replayBuffer(cfg.capacity, cfg.trainStartPoint, cfg.windowFraction){
+	stateBatch = new std::vector<float>(inputChannel * cfg.batchSize * inputSize);
+	nextmoveBatch = new std::vector<float>(cfg.batchSize * outputSize);
+	scoreBatch = new std::vector<float>(cfg.batchSize);
+	resultBatch = new std::vector<float>(cfg.batchSize);
+	outcomeBatch = new std::vector<float>(cfg.batchSize);
+	mapBatch = new std::vector<float>(cfg.batchSize * boardSize);
+	typeBatch = new std::vector<Trainhead>(cfg.batchSize);
 	
-	saveCnt = PolicyValueNet::parse_model_name(initModel).games.value_or(0);
-	if(trainModel.model_type() != globalConfig.modelPrefix || trainModel.num_blocks() != globalConfig.numHiddenBlock)
+	const auto parsed = PolicyValueNet::parse_model_name(initModel);
+	saveCnt = parsed ? parsed->games.value_or(0) : 0;
+	if(trainModel.model_type() != net.modelPrefix || trainModel.num_blocks() != net.numHiddenBlock)
 		std::cout << "note : " << initModel << " is a " << trainModel.model_type() << " model with " << trainModel.num_blocks()
 			<< " blocks; config model_prefix / numHiddenBlock only apply to \"none\"" << std::endl;
-	learningRate = globalConfig.initialLearningRate;
+	learningRate = cfg.initialLearningRate;
 
 	// Load optimizer state if possible.
-	const std::string optFile = globalConfig.modelPath + std::filesystem::path(initModel).stem().string() + ".opt";
+	const std::string optFile = paths.modelPath + std::filesystem::path(initModel).stem().string() + ".opt";
 	if(std::filesystem::exists(optFile)){
 		try{
 			trainModel.load_optimizer(optFile);
@@ -43,7 +48,7 @@ TrainPipeline::TrainPipeline(std::string initModel,
 	for(int i=0; i<4; ++i)
 		wintypeCounter[i] = 0;
 	for(int i=0; i<9; ++i)
-		trainLosses[i].reserve(globalConfig.compareGameCnt);
+		trainLosses[i].reserve(cfg.compareGameCnt);
 }
 
 void label_finished_game(std::vector<TrainData>& buffer, const std::vector<Move>& sequence,
@@ -114,7 +119,7 @@ void label_finished_game(std::vector<TrainData>& buffer, const std::vector<Move>
 }
 
 void TrainPipeline::update_fair_komi(){
-	FairKomiTable table = combine_fair_komi({estimate_fair_komi(inferenceModel)}, globalConfig.komi);
+	FairKomiTable table = combine_fair_komi({estimate_fair_komi(inferenceModel, search.rules)}, defaultKomi);
 	std::cout << "fair komi : ";
 	print_fair_komi(std::cout, table);
 	std::cout << std::endl;
@@ -130,10 +135,11 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
 		std::lock_guard<std::mutex> lock(fairKomiMutex);
 		fair = fairKomi.at(rnd::neutral_setup_index(neutrals));
 	}
-	const float komi = rnd::sample_fair_komi(fair, globalConfig.fairKomiNoise, globalConfig.wideKomiProb, globalConfig.wideKomiNoise);
+	const float komi = rnd::sample_fair_komi(fair, cfg.fairKomiNoise, cfg.wideKomiProb, cfg.wideKomiNoise);
 
-	Game gameManager(komi, neutrals);
-	player->reset(Game(komi, neutrals));
+	// the engine's rules : the recorded inputs show the move list the engine searched (input channel 22).
+	Game gameManager(komi, neutrals, search.rules);
+	player->reset(gameManager);
 
 	NNInput state;
 
@@ -154,7 +160,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
 
 		// playout cap randomization : a fast search position keeps its place in the sequence (labels alternate per move)
 		// but isn't recorded.
-		const bool full = (globalConfig.fullSearchProb >= 1.0f) || (rnd::pick0or1(globalConfig.fullSearchProb) == 0);
+		const bool full = (cfg.fullSearchProb >= 1.0f) || (rnd::pick0or1(cfg.fullSearchProb) == 0);
 		const MoveData md = full ? player->get_move_with_stat(temp) : MoveData{player->get_fast_move(temp), {}, 0, false, std::nullopt};
 		const auto& [m, prob, forcedState, isOnlyMove, q] = md;
 		//printMove(m);
@@ -211,7 +217,7 @@ void TrainPipeline::start_self_play(MCTS* player, bool isShown, float temp) {
 			totalScoreDiff.fetch_add(static_cast<int>(-gameManager.score_diff(BLACK)));
 
 		label_finished_game(buffer, sequence, rootValue, winner, wintype, map, gameManager.score_diff(BLACK),
-			globalConfig.valueQMix, &valueTargetStats);
+			cfg.valueQMix, &valueTargetStats);
 		for(int i=0; i<sequence.size(); ++i)
 			if(recorded.at(i))
 				insert_data(buffer.at(i), forced.at(i), only.at(i));
@@ -237,12 +243,12 @@ void TrainPipeline::insert_data(TrainData& data, const int& forced, const bool& 
 }
 
 void TrainPipeline::train(){
-	const int B = globalConfig.batchSize;
+	const int B = cfg.batchSize;
 	for(int iter = 0; iter < 2; ++iter){
 		replayBuffer.sample_batch(B, *stateBatch, *nextmoveBatch, *resultBatch, *outcomeBatch, *scoreBatch, *mapBatch, *typeBatch);
 
 		auto [pLoss, vLoss, sLoss, cmLoss, smLoss, pEntropy, vzLoss] = trainModel.train(*stateBatch,
-			*nextmoveBatch, *resultBatch, *outcomeBatch, *scoreBatch, *mapBatch, *typeBatch, learningRate);
+			*nextmoveBatch, *resultBatch, *outcomeBatch, *scoreBatch, *mapBatch, *typeBatch, learningRate, cfg.step);
 		if(!std::isfinite(pLoss) || !std::isfinite(vLoss) || !std::isfinite(sLoss) || !std::isfinite(smLoss)){
 			skippedSteps++; // train_model.train skipped the optimizer step
 			continue;
@@ -261,13 +267,12 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 {
 	// name of the model.
 	std::string modelName = "";
-	// copied once: globalConfig is swapped to the compare config while the train thread may be waiting.
-	const size_t trainStartPoint = globalConfig.trainStartPoint;
-	const float fallbackWinrate = globalConfig.fallbackWinrate;
-	const int lrPatience = globalConfig.lrPatience;
+	const size_t trainStartPoint = cfg.trainStartPoint;
+	const float fallbackWinrate = cfg.fallbackWinrate;
+	const int lrPatience = cfg.lrPatience;
 	// above 0.5, so that a checkpoint of equal strength (which beats 0.5 in ~46% of 96-game comparisons by chance)
 	// doesn't keep resetting the learning-rate counter.
-	const float lrImprovementWinrate = globalConfig.lrImprovementWinrate;
+	const float lrImprovementWinrate = cfg.lrImprovementWinrate;
 
 	std::atomic<bool> stopFlag = false;
 	std::atomic<bool> startFlag = false; // flag to indicate if self-play has started
@@ -281,10 +286,11 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 	std::vector<MCTS> mctsAgent; // MCTS players of size train_thread_num
 	mctsAgent.reserve(inferenceThreadNum);
 
-	auto evaluator = new Evaluator(&inferenceModel);
+	auto evaluator = new Evaluator(&inferenceModel, cache);
 	update_fair_komi();
+	const Game start(defaultKomi, {}); // replaced by every game's own setup
 	for(int i=0; i<inferenceThreadNum; ++i){
-		mctsAgent.emplace_back(evaluator);
+		mctsAgent.emplace_back(evaluator, search, start);
 		selfPlayPaused[i] = false;
 	}
 
@@ -305,7 +311,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 
 				saveMutex.lock(); // critical part
 
-				if (((++gamesPlayed + saveCnt) % globalConfig.synchronizeFreq) == 0) {
+				if (((++gamesPlayed + saveCnt) % cfg.synchronizeFreq) == 0) {
 					std::cout << "synchronize model" << std::endl;
 					pauseFlag = true; // asks other threads to pause
 					trainCv.notify_one(); // notify train thread
@@ -334,7 +340,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 						{
 							const auto [n, corr, mae] = valueTargetStats.take_summary();
 							std::cout << "value targets : search value vs game result correlation " << corr
-								<< ", mean |q - z| " << mae << " over " << n << " positions (valueQMix " << globalConfig.valueQMix << ")" << std::endl;
+								<< ", mean |q - z| " << mae << " over " << n << " positions (valueQMix " << cfg.valueQMix << ")" << std::endl;
 						}
 						std::cout << "average score difference : " << (float)totalScoreDiff / gamePlayed << std::endl;
 						std::cout << "average game length : " << (float)totalGameLength / gamePlayed << std::endl;
@@ -359,34 +365,39 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 							trainLosses[i].clear();
 					}
 					
-					if((gamesPlayed + saveCnt) % globalConfig.checkFreq == 0){
-						globalConfig = load_config("../configs/on_train_compare_config.json");
+					if((gamesPlayed + saveCnt) % cfg.checkFreq == 0){
+						// the comparing engines search with this run's rules, in this run's model directory.
+						Config compare = load_config(compareConfigPath);
+						compare.paths = paths;
+						compare.search.rules = search.rules;
 
 						modelName = trainModel.model_prefix() + std::to_string(gamesPlayed + saveCnt) + ".pt";
 
 						// save model
 						{
-							trainModel.save_model(globalConfig.modelPath + modelName);
+							trainModel.save_model(paths.modelPath + modelName);
 
 							// save to google drive.
-							if(globalConfig.googleDrive)
-								trainModel.save_model(globalConfig.drivePath + modelName);
+							if(paths.googleDrive)
+								trainModel.save_model(paths.drivePath + modelName);
 
 							// save training data & optimizer state.
 							std::string trunc = modelName.substr(0, modelName.length() - 3);
-							const std::string dataPath = globalConfig.dataPath + trunc + ".bin";
+							const std::string dataPath = paths.dataPath + trunc + ".bin";
 							replayBuffer.save(dataPath);
 							std::cout << "training data saved : " << dataPath << " (" << replayBuffer.size() << " positions)" << std::endl;
 
 							// optimizer state filename.
-							const std::string optPath = globalConfig.modelPath + trunc + ".opt";
+							const std::string optPath = paths.modelPath + trunc + ".opt";
 							trainModel.save_optimizer(optPath);
 							std::cout << "optimizer state saved : " << optPath << std::endl;
 						}
 
 						// compare model
-						float winrate = ModelCompare::policy_evaluate(modelName, currentBestModelFile, 
-							std::cout, std::cout, true, true, 0.5f, globalConfig.compareGameCnt / 2, globalConfig.compareThreadNum);
+						// both engines use the compare config's search ("engines" isn't read here).
+						float winrate = ModelCompare::policy_evaluate(modelName, currentBestModelFile, compare,
+							{compare.search, compare.search}, std::cout, std::cout, true, true, 0.5f,
+							compare.train.compareGameCnt / 2, compare.train.compareThreadNum);
 
 						std::cout << "model " << modelName << " vs " << currentBestModelFile << 
 						" winrate " << winrate << std::endl;
@@ -402,12 +413,12 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 							std::cout << "Best model updated! " << currentBestModelFile << " to " << modelName << std::endl;
 							currentBestModelFile = modelName;
 							// best models are saved
-							trainModel.save_model(globalConfig.modelPath + trainModel.model_prefix() + 
+							trainModel.save_model(paths.modelPath + trainModel.model_prefix() + 
 							std::to_string(gamesPlayed + saveCnt) + "B.pt");
 						}
 						else if(winrate < fallbackWinrate && currentBestModelFile != "none"){
 							std::cout << "model fallback!" << std::endl;
-							trainModel.load_weights(globalConfig.modelPath + currentBestModelFile); // keeps the optimizer state
+							trainModel.load_weights(paths.modelPath + currentBestModelFile); // keeps the optimizer state
 						}
 
 						// no clear improvement for lrPatience comparisons in a row : halve the learning rate.
@@ -422,8 +433,6 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 							<< ", learning rate " << learningRate << std::endl;
 
 						trainModel.set_learning_rate(learningRate);
-
-						globalConfig = load_config("../configs/train_config.json");
 					}
 
 					// critical section
@@ -460,7 +469,7 @@ void TrainPipeline::run(const int gameBatchNum, const int inferenceThreadNum, co
 				pauseCv.notify_one();
 			}
             else if (replayBuffer.size() >= trainStartPoint && !pauseFlag) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(globalConfig.trainWaitTime / inferenceThreadNum));
+				std::this_thread::sleep_for(std::chrono::milliseconds(cfg.trainWaitTime / inferenceThreadNum));
 				trainIter++;
                 train(); 
             }
@@ -555,10 +564,10 @@ void TrainPipeline::display_train_data(const std::shared_ptr<const TrainData> da
 		}
 	}
 }
-void train_on_static_data(const std::string& dataFile, int steps, float lr, float validationFraction){
+void train_on_static_data(const Config& cfg, const std::string& dataFile, int steps, float lr, float validationFraction){
 	size_t added = 0;
 	std::vector<PackedSample> samples = ReplayBuffer::read_file(dataFile, added);
-	const int B = globalConfig.batchSize;
+	const int B = cfg.train.batchSize;
 
 	// positions are stored oldest first and a game's positions are consecutive, so taking the newest ones as
 	// validation keeps (all but one) games entirely on one side. A random split would put positions of the same
@@ -575,8 +584,8 @@ void train_on_static_data(const std::string& dataFile, int steps, float lr, floa
 	std::cout << dataFile << " : " << nTrain << " training / " << nVal << " validation positions, "
 		<< steps << " steps, learning rate " << lr << std::endl;
 
-	PolicyValueNet net("none", torch::cuda::is_available()); // untrained
-	std::vector<float> state(B * globalConfig.inputChannel * inputSize), move(B * outputSize), result(B), outcome(B), score(B), map(B * boardSize);
+	PolicyValueNet net("none", cfg.net, torch::cuda::is_available()); // untrained
+	std::vector<float> state(B * inputChannel * inputSize), move(B * outputSize), result(B), outcome(B), score(B), map(B * boardSize);
 	std::vector<Trainhead> type(B);
 
 	using Losses = std::array<float, 7>; // policy, value, score, capture map, score map, target entropy, value MSE vs z
@@ -589,7 +598,7 @@ void train_on_static_data(const std::string& dataFile, int steps, float lr, floa
 	Losses trainSum{};
 	for(int step = 1; step <= steps; ++step){
 		trainBuffer.sample_batch(B, state, move, result, outcome, score, map, type);
-		const auto [p, v, s, cm, sm, e, vz] = net.train(state, move, result, outcome, score, map, type, lr);
+		const auto [p, v, s, cm, sm, e, vz] = net.train(state, move, result, outcome, score, map, type, lr, cfg.train.step);
 		const Losses l{p, v, s, cm, sm, e, vz};
 		for(int k = 0; k < 7; ++k)
 			trainSum[k] += l[k];
@@ -601,7 +610,7 @@ void train_on_static_data(const std::string& dataFile, int steps, float lr, floa
 				trainMean[k] = trainSum[k] / n;
 			for(int b = 0; b < valBatches; ++b){
 				valBuffer.sample_batch(B, state, move, result, outcome, score, map, type);
-				const auto [vp, vv, vs, vcm, vsm, ve, vvz] = net.train(state, move, result, outcome, score, map, type, lr, /*update=*/false);
+				const auto [vp, vv, vs, vcm, vsm, ve, vvz] = net.train(state, move, result, outcome, score, map, type, lr, cfg.train.step, /*update=*/false);
 				const Losses vl{vp, vv, vs, vcm, vsm, ve, vvz};
 				for(int k = 0; k < 7; ++k)
 					valMean[k] += vl[k] / valBatches;
@@ -614,7 +623,7 @@ void train_on_static_data(const std::string& dataFile, int steps, float lr, floa
 		}
 	}
 
-	const std::string modelName = globalConfig.modelPath + net.model_prefix() + "static.pt";
+	const std::string modelName = cfg.paths.modelPath + net.model_prefix() + "static.pt";
 	net.save_model(modelName);
 	std::cout << "model saved : " << modelName << std::endl;
 }

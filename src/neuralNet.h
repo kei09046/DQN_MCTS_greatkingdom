@@ -128,8 +128,8 @@ private:
 
 // model file name <type>_<blocks>b_<tag>.pt, e.g. K_10b_13440.pt (tag : games played, optionally + "B" for a best model).
 // <type> is a capital letter (architecture) optionally followed by letters / digits, e.g. MnS_12b_13440.pt.
-// Old names <type><games>.pt (e.g. K13440.pt) are read as 10 blocks. Anything else (e.g. "none") : an untrained network
-// of the config's model_prefix and numHiddenBlock.
+// Old names <type><games>.pt (e.g. K13440.pt) are read as 10 blocks. Anything else (e.g. "none") doesn't parse : the
+// network is then an untrained one of the given NetConfig.
 struct ModelName {
 	std::string type;
 	int blocks;
@@ -175,10 +175,11 @@ public:
 
 	PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu);
 
-	// model type and block count from the file name (see ModelName).
-	PolicyValueNet(const std::string& modelFile, bool useGpu);
+	// model type and block count from the file name (see ModelName); newNet's if the name doesn't give them.
+	PolicyValueNet(const std::string& modelFile, const NetConfig& newNet, bool useGpu);
 
-	static ModelName parse_model_name(const std::string& modelFile);
+	// nullopt if the file name doesn't follow either naming scheme.
+	static std::optional<ModelName> parse_model_name(const std::string& modelFile);
 
 	// Gives model name prefix. ex) K_10b_
 	std::string model_prefix() const;
@@ -211,10 +212,11 @@ public:
 	// returns policy, value, score, capture map, score map loss, the entropy of the policy targets and the value head's
 	// squared error against the game result z alone (outcome_batch; not trained on, for comparing value targets).
 	// update = false only measures the losses (inference mode, no optimizer step), e.g. on validation data.
+	// step : passes over the batch (update only) and which losses are trained.
 	std::tuple<float, float, float, float, float, float, float> train(std::vector<float>& stateBatch,
          std::vector<float>& nextmoveBatch,
 		std::vector<float>& resultBatch, std::vector<float>& outcomeBatch, std::vector<float>& scoreBatch, std::vector<float>& mapBatch, std::vector<Trainhead>& typeBatch, float lr,
-		bool update = true);
+		const TrainStepConfig& step, bool update = true);
 
 	void save_model(const std::string& modelFile) const;
 

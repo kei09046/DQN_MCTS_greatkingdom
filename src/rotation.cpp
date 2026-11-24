@@ -154,7 +154,7 @@ std::vector<std::shared_ptr<TrainData>> generate_dihedral_transformations(const 
     auto& states = std::get<0>(data);
 
     // NN input rotation
-    auto rotatedStates = generate_transformed(states, globalConfig.inputChannel, false);
+    auto rotatedStates = generate_transformed(states, inputChannel, false);
 
     auto rotatedMoves = generate_transformed(std::get<1>(data), 1, true); // NN output rotation
     auto value = std::get<2>(data);

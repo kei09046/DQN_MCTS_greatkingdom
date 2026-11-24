@@ -17,7 +17,6 @@ private:
 public:
     Hash();
 
-    [[deprecated("starting position is randomized so there isn't uniform base hash anymore.")]] HashValue base_hash(const Game& game) const;
     HashValue compute_hash(const Game& game) const;
     HashValue compute_hash_after_move(const Game& game, const std::pair<int, int>& move, const HashValue prevHash) const;
 };

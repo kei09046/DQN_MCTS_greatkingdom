@@ -2,7 +2,8 @@
 #include "random.h"
 #include <cmath>
 
-std::vector<std::optional<float>> estimate_fair_komi(PolicyValueNet& net){
+std::vector<std::optional<float>> estimate_fair_komi(PolicyValueNet& net, const RuleConfig& rules){
+	constexpr int batchSize = 512; // positions per forward pass
 	// komi grid the value is read at : the range self-play actually plays (fair komi +- noise, never below 0.5).
 	// Outside it the value is untrained and can be anything, which would mislead the fit below.
 	constexpr float komiLo = 0.5f, komiHi = 8.5f;
@@ -43,12 +44,12 @@ std::vector<std::optional<float>> estimate_fair_komi(PolicyValueNet& net){
 	};
 	for(size_t s=0; s<setups.size(); ++s)
 		for(int j=0; j<nKomi; ++j){
-			Game g(komiLo + j, setups[s]);
+			Game g(komiLo + j, setups[s], rules);
 			g.set_policy_mask(); // fills the available move list (input channel 22), as search does before evaluating
 			const NNInput in = PolicyValueNet::get_data(g);
 			input.insert(input.end(), in.begin(), in.end());
 			pending.emplace_back(setupIdx[s], j);
-			if(static_cast<int>(pending.size()) == globalConfig.batchSize)
+			if(static_cast<int>(pending.size()) == batchSize)
 				flush();
 		}
 	flush();

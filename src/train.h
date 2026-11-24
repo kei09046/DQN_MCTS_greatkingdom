@@ -60,6 +60,16 @@ void label_finished_game(std::vector<TrainData>& buffer, const std::vector<Move>
 
 class TrainPipeline {
 private:
+	// from the train config (declared first : the members below are built from them).
+	PathConfig paths;
+	NetConfig net;
+	CacheConfig cache;
+	SearchConfig search; // self-play engines
+	TrainConfig cfg;
+	float defaultKomi;   // fair komi of a setup the model has no estimate for
+	// read again at every model comparison, so it can be edited during a run.
+	std::string compareConfigPath;
+
 	float learningRate;
 	int comparisonsWithoutImprovement = 0;
 	float captureRatio;
@@ -93,7 +103,10 @@ public:
 	std::vector<float>* stateBatch, *nextmoveBatch, *resultBatch, *outcomeBatch, *scoreBatch, *mapBatch;
 	std::vector<Trainhead>* typeBatch;
 
-	TrainPipeline(std::string initModel, std::string testModel, bool gpu = false, std::optional<float> learningRateOverride = std::nullopt);
+	// trainConfig : self-play and training. compareConfigPath : json of the engines that compare checkpoints; they search
+	// with trainConfig's rules (ablation) and load / save models in trainConfig's model path.
+	TrainPipeline(std::string initModel, std::string testModel, const Config& trainConfig, std::string compareConfigPath,
+		bool gpu = false, std::optional<float> learningRateOverride = std::nullopt);
 
 	void start_self_play(MCTS* player, bool isShown = false, float temp = 0.1f); // used during training
 
@@ -108,7 +121,8 @@ public:
 };
 
 // Trains an untrained network on positions saved by ReplayBuffer::save, reporting training and validation
-// losses as it goes. The newest validation_fraction of the positions are held out. Saves <prefix>static.pt.
-void train_on_static_data(const std::string& dataFile, int steps, float lr, float validationFraction = 0.1f);
+// losses as it goes. The newest validation_fraction of the positions are held out. Saves <prefix>static.pt in
+// cfg's model path; the network is cfg.net, trained in batches of cfg.train.batchSize with cfg.train.step.
+void train_on_static_data(const Config& cfg, const std::string& dataFile, int steps, float lr, float validationFraction = 0.1f);
 
 #endif

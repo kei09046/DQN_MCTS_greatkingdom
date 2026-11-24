@@ -8,7 +8,6 @@
 #include <array>
 #include <optional>
 #include <iostream>
-#include "config.h"
 
 
 // for hash
@@ -33,6 +32,7 @@ constexpr int inputCol = colSize;
 constexpr int outputRow = rowSize;
 constexpr int outputCol = colSize;
 constexpr int inputSize = inputRow * inputCol;
+constexpr int inputChannel = 26; // planes of the network input (PolicyValueNet::get_data)
 
 constexpr int PLAYOUT = 0;
 constexpr int TIMEOUT = 1;

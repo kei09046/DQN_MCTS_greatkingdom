@@ -11,6 +11,7 @@
 #include <optional>
 #include <map>
 #include "consts.h"
+#include "config.h"
 
 // "natural" order : digit runs compare by numeric value, everything else character by character.
 // e.g. M_12b_15360.pt < M_12b_60480B.pt < M_12b_111360B.pt
@@ -18,7 +19,8 @@ bool natural_less(const std::string& a, const std::string& b);
 
 class EloCalculator {
 public:
-    EloCalculator(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames, bool adjustK=false);
+    EloCalculator(const RatingConfig& cfg, const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames,
+        bool adjustK=false);
 
     void update_ratings(int playerA, int playerB, const std::vector<bool>& result);
 
@@ -35,6 +37,7 @@ public:
 private:
     std::vector<float> ratings;
     std::vector<int> gameCounts;
+    RatingConfig cfg;
     std::vector<std::string> modelNames; 
     bool adjustK;
 };
@@ -51,9 +54,9 @@ public:
     void save() const;
 
     // Bradley-Terry maximum likelihood over every stored pair (each pair gets `prior` virtual wins per side,
-    // so 0% / 100% results stay finite). The first model in natural order is fixed at globalConfig.initRating.
+    // so 0% / 100% results stay finite). The first model in natural order is fixed at initRating.
     // Returns name -> (rating, games played), for every model in the stored results.
-    std::map<std::string, std::pair<float, int>> fit(double prior = 1.0) const;
+    std::map<std::string, std::pair<float, int>> fit(float initRating, double prior = 1.0) const;
 
 private:
     struct NaturalLess {

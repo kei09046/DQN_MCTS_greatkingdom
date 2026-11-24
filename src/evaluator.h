@@ -57,9 +57,10 @@ private:
     void free_pinned_memory(); // called by the handler thread on its way out
 
 public:
-    Evaluator(PolicyValueNet* net);
-    Evaluator(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu);
-    Evaluator(const std::string& modelFile, bool useGpu);
+    // evaluates with net (not owned).
+    Evaluator(PolicyValueNet* net, const CacheConfig& cache);
+    // loads modelFile; newNet : the network built if the file name doesn't give type / size (see PolicyValueNet).
+    Evaluator(const std::string& modelFile, const NetConfig& newNet, const CacheConfig& cache, bool useGpu);
     ~Evaluator();
     bool evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash); // return true if cache hit
     bool async_evaluate(std::shared_ptr<NNResultBuf> buf, const Game* game, HashValue hash);

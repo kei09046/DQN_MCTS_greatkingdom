@@ -166,17 +166,12 @@ NodeInfo Evaluator::convert_form(const PolicyValueOutput& nnOutput, const Game& 
     return {expLogit, winP, utility, scoreEXP};
 }
 
-Evaluator::Evaluator(PolicyValueNet* net) : net(net), stop(false), netOwned(false){
+Evaluator::Evaluator(PolicyValueNet* net, const CacheConfig& cache) : net(net), netOwned(false), cache(cache), stop(false){
     net->capture_graphs();
     create_handler_threads();
 }
-Evaluator::Evaluator(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu)
-    : net(new PolicyValueNet(modelFile, modelType, numBlocks, useGpu)), stop(false), netOwned(true){
-    net->capture_graphs();
-    create_handler_threads();
-}
-Evaluator::Evaluator(const std::string& modelFile, bool useGpu)
-    : net(new PolicyValueNet(modelFile, useGpu)), stop(false), netOwned(true){
+Evaluator::Evaluator(const std::string& modelFile, const NetConfig& newNet, const CacheConfig& cache, bool useGpu)
+    : net(new PolicyValueNet(modelFile, newNet, useGpu)), netOwned(true), cache(cache), stop(false){
     net->capture_graphs();
     create_handler_threads();
 }

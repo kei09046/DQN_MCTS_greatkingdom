@@ -27,8 +27,7 @@
 class Analysis{
 public:
     // Prints root winrate + per-candidate-move (visits, policy prior, winrate) breakdown for
-    // the "analyze" REPL. Requires globalConfig.detailedStat = true (winrate is otherwise never
-    // accumulated).
+    // the "analyze" REPL.
     void print_analysis(MCTS& mcts);
 
     // "fairkomi" : one line "fairkomi <r> <c> <komi> ..." with the engine model's fair komi of every neutral setup
@@ -47,7 +46,8 @@ public:
     // "nninput <id> <channels> <values...>" (PolicyValueNet::get_data, channel-major, each
     // channel inputSize values indexed r * colSize + c), or "nninput <id> error" if a move is
     // illegal or the setup is malformed. "quit" exits.
-    static void nn_input_server();
+    // board : the setup of a request without one.
+    static void nn_input_server(const BoardConfig& board);
 
     // "./play rules": a model-free REPL that is the GUI's (game.py RuleManager) only source of
     // move legality, game end and scoring, so Python never re-implements the rules. Prints
@@ -62,7 +62,7 @@ public:
     // still the side that played the capturing move, as in Game::make_move.
     // scoreDiff : black - white territory, komi not applied. board : rowSize * colSize chars,
     // b/w stone, n neutral, B/W territory, . empty point (exactly the legal points). "quit" exits.
-    static void rules_server();
+    static void rules_server(const BoardConfig& board);
 
     // Debug mode: while on, every playout's search path and leaf NN evaluation is printed to
     // stdout the moment that playout finishes (see printPlayoutDebugLine below) -- nothing is

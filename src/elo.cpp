@@ -40,12 +40,13 @@ namespace {
     }
 }
 
-EloCalculator::EloCalculator(const std::optional<std::string>& ratingPath, const std::vector<std::string>& modelNames, bool adjustK): 
-modelNames(modelNames), adjustK(adjustK)
+EloCalculator::EloCalculator(const RatingConfig& cfg, const std::optional<std::string>& ratingPath,
+    const std::vector<std::string>& modelNames, bool adjustK):
+cfg(cfg), modelNames(modelNames), adjustK(adjustK)
 {
     if(!ratingPath.has_value()){
         for(int i=0; i<modelNames.size(); ++i){
-            ratings.push_back(globalConfig.initRating);
+            ratings.push_back(cfg.initRating);
             gameCounts.push_back(0);
         }
         return;
@@ -53,7 +54,7 @@ modelNames(modelNames), adjustK(adjustK)
 
     std::unordered_map<std::string, std::pair<float, int>> loadedModels;
     for(auto& name : modelNames){
-        loadedModels[name] = {globalConfig.initRating, 0};
+        loadedModels[name] = {cfg.initRating, 0};
     }
 
     std::ifstream file(ratingPath.value());
@@ -81,8 +82,8 @@ void EloCalculator::update_ratings(int playerA, int playerB, const std::vector<b
     float ratingA = ratings[playerA];
     float ratingB = ratings[playerB];
 
-    const float aK = globalConfig.initK;
-    const float bK = globalConfig.initK;
+    const float aK = cfg.initK;
+    const float bK = cfg.initK;
 
     for (bool win : result) {
         float ea = 1.0f / (1.0f + pow(10.0f, (ratingB - ratingA) / 400.0f));
@@ -100,8 +101,8 @@ void EloCalculator::update_ratings(int playerA, int playerB, int nGames, float a
     float ratingA = ratings[playerA];
     float ratingB = ratings[playerB];
 
-    const float aK = globalConfig.initK;
-    const float bK = globalConfig.initK;
+    const float aK = cfg.initK;
+    const float bK = cfg.initK;
     const float ea = 1.0f / (1.0f + pow(10.0f, (ratingB - ratingA) / 400.0f));
 
     ratings[playerA] += aK * (aWins - nGames * ea);
@@ -264,7 +265,7 @@ namespace {
     }
 }
 
-std::map<std::string, std::pair<float, int>> PairResults::fit(double prior) const {
+std::map<std::string, std::pair<float, int>> PairResults::fit(float initRating, double prior) const {
     std::map<std::string, int, NaturalLess> index;
     for(const auto& [key, rec] : pairs){
         index.emplace(key.first, 0);
@@ -324,6 +325,6 @@ std::map<std::string, std::pair<float, int>> PairResults::fit(double prior) cons
     const double elo = 400.0 / std::log(10.0);
     std::map<std::string, std::pair<float, int>> result;
     for(int i = 0; i < n; ++i)
-        result[names[i]] = {static_cast<float>(globalConfig.initRating + s[i] * elo), games[i]};
+        result[names[i]] = {static_cast<float>(initRating + s[i] * elo), games[i]};
     return result;
 }

@@ -7,6 +7,7 @@
 #include <bitset>
 #include <istream>
 #include "consts.h"
+#include "config.h"
 #include "board.h"
 #include "territoryhelper.h"
 
@@ -29,7 +30,9 @@ enum Wintype{
 
 class Game{
 public:
-    Game(float komi = globalConfig.komi, const std::vector<Move>& neutrals = globalConfig.neutrals);
+    // rules : how search lists moves and priors (set_policy_mask / transfer_logit); they don't change the game itself.
+    Game(float komi, const std::vector<Move>& neutrals, RuleConfig rules = {});
+    explicit Game(const BoardConfig& board, RuleConfig rules = {}) : Game(board.komi, board.neutrals, rules) {}
     // copy constructor which gets called during MCTS search to generate child node.
     // do not copy transferGroups/availableMoves.
     // Game(const Game& parent);
@@ -117,6 +120,15 @@ public:
         return board;
     }
 
+    inline const RuleConfig& get_rules() const{
+        return rules;
+    }
+
+    // the engine searching this game sets its own rules (MCTS::reset), so two engines can search with different ones.
+    inline void set_rules(RuleConfig r){
+        rules = r;
+    }
+
     inline const float& get_komi() const{
         return komi;
     }
@@ -175,6 +187,7 @@ public:
 
 private:
     float komi;
+    RuleConfig rules;
 
     Color currentTurn;
     Board board;

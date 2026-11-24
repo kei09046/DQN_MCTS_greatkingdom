@@ -31,7 +31,7 @@ void Node::add_child(const Move& move, int idx){
     Node* childNode;
     Color winner;
 
-    if(globalConfig.transTable){
+    if(transposTable){
         auto it = transposTable->find(newHash);
 
         if(it == transposTable->end()){
@@ -93,7 +93,7 @@ void Node::expand(){
     #endif
 }
 
-int Node::select_child_in_search(float fpu){
+int Node::select_child_in_search(float fpu, float cPuct){
     int maxi = -1;
     float pref, maxval = -1000.0f; // pref may be less than -1.(due to score head)
     bool lost = true;
@@ -116,7 +116,7 @@ int Node::select_child_in_search(float fpu){
 
     for(int i=0; i<game.get_available_moves().size(); ++i){
         if(child[i] == nullptr){
-            pref = fpuValue + globalConfig.cPuct * edgeP[i] * sqrt(N);
+            pref = fpuValue + cPuct * edgeP[i] * sqrt(N);
             lost = false;
         }
 
@@ -130,12 +130,12 @@ int Node::select_child_in_search(float fpu){
             }
             // only select non-losing move.
             if(forced == 0){
-                pref = child[i]->W / child[i]->N + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+                pref = child[i]->W / child[i]->N + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
                 lost = false;
             }
             // losing move will almost not be selected if there is a non-losing move.
             else{ 
-                pref = -2.0f + globalConfig.cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
+                pref = -2.0f + cPuct * edgeP[i] * sqrt(N)/(1 + edgeN[i]);
             }
         }
             
@@ -362,7 +362,7 @@ Node* Node::jump(Move move){
 }
 
 void Node::delete_tree(){
-    if(!globalConfig.transTable){
+    if(!transposTable){
         for(Node* c : child){
             if(c != nullptr)
                 c->delete_tree();
@@ -391,7 +391,7 @@ void Node::delete_tree(){
 }
 
 void Node::delete_tree(Node* exception){
-    if(!globalConfig.transTable){
+    if(!transposTable){
         for(Node* c : child){
             if(c != exception && c != nullptr)
                 c->delete_tree();
@@ -419,7 +419,7 @@ void Node::delete_tree(Node* exception){
     }
 }
 
-void Node::add_dirichlet_noise(Evaluator* evaluator){
+void Node::add_dirichlet_noise(Evaluator* evaluator, float alpha, float eps){
     if(N == 0){
         game.set_policy_mask();
         N++;
@@ -437,24 +437,24 @@ void Node::add_dirichlet_noise(Evaluator* evaluator){
 
     // Dirichlet noise is only applied when position is undetermined or lost.
     if(forcedState <= 0 && game.get_available_moves().size() > 0){
-        std::vector<float> eta = rnd::sample_dirichlet(edgeP.size(), globalConfig.alpha); 
+        std::vector<float> eta = rnd::sample_dirichlet(edgeP.size(), alpha); 
         for(int i=0; i<edgeP.size(); ++i)
-            edgeP[i] = (1-globalConfig.eps) * edgeP[i] + globalConfig.eps * eta[i];
+            edgeP[i] = (1-eps) * edgeP[i] + eps * eta[i];
     }
 }
 
-MCTS::MCTS(Evaluator* evaluator, SearchParams params) : 
-evaluator(evaluator), transposTable(new TransTable()), params(params){
-    // g could be set to other position if needed.
-    Game g = Game();
+MCTS::MCTS(Evaluator* evaluator, const SearchConfig& cfg, const Game& start) :
+evaluator(evaluator), transposTable(cfg.transTable ? new TransTable() : nullptr), cfg(cfg){
+    Game g = start;
+    g.set_rules(cfg.rules);
     root = new Node(g, hash.compute_hash(g), transposTable);
-    if(globalConfig.transTable){
+    if(transposTable){
         transposTable->emplace(hash.compute_hash(g), std::make_pair(root, 1));
     }
 }
 
 MCTS::MCTS(MCTS&& other) noexcept
-    : root(other.root), evaluator(other.evaluator), transposTable(other.transposTable), params(other.params)
+    : root(other.root), evaluator(other.evaluator), transposTable(other.transposTable), cfg(other.cfg)
 {
     other.root = nullptr;
     other.evaluator = nullptr;
@@ -471,8 +471,8 @@ void MCTS::run_simulation(const int playMode, const int nPlayout, const int time
     if(root->forcedState != 0)
         return;
 
-    if(!fastSearch && globalConfig.dirichletNoise)
-        root->add_dirichlet_noise(evaluator);
+    if(!fastSearch && cfg.dirichletNoise)
+        root->add_dirichlet_noise(evaluator, cfg.alpha, cfg.eps);
 
     int searchCounter = 0;
     int evaluateCounter = 0;
@@ -564,9 +564,9 @@ void MCTS::run_simulation(const int playMode, const int nPlayout, const int time
 }
 
 Move MCTS::get_move(float temp){
-    const int minVisit = params.min_visits(globalConfig.nPlayout);
+    const int minVisit = cfg.min_visits(cfg.nPlayout);
     for(int i=0; i<10; ++i){
-        run_simulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout / 10, globalConfig.time / 10,
+        run_simulation((cfg.mode == "playout") ? PLAYOUT : TIMEOUT, cfg.nPlayout / 10, cfg.time / 10,
             minVisit * (i + 1) / 10 - minVisit * i / 10);
         const auto& [winProb, scoreEXP] = get_eval();
         // std::cout << "winprob : " << winProb << "\nscoreEXP : " << scoreEXP << std::endl;
@@ -575,17 +575,17 @@ Move MCTS::get_move(float temp){
 }
 
 Move MCTS::select_move(float temp){
-    return root->select_move(temp, params.min_visits(globalConfig.nPlayout));
+    return root->select_move(temp, cfg.min_visits(cfg.nPlayout));
 }
 
 MoveData MCTS::get_move_with_stat(float temp){
-    const int minVisit = params.min_visits(globalConfig.nPlayout);
-    run_simulation((globalConfig.mode == "playout") ? PLAYOUT : TIMEOUT, globalConfig.nPlayout, globalConfig.time, minVisit, false, true);
+    const int minVisit = cfg.min_visits(cfg.nPlayout);
+    run_simulation((cfg.mode == "playout") ? PLAYOUT : TIMEOUT, cfg.nPlayout, cfg.time, minVisit, false, true);
     return root->select_move_with_stat(temp, minVisit);
 }
 
 Move MCTS::get_fast_move(float temp){
-    run_simulation(PLAYOUT, globalConfig.fastPlayout, globalConfig.time, -1, true, true);
+    run_simulation(PLAYOUT, cfg.fastPlayout, cfg.time, -1, true, true);
     return root->select_move(temp, 0);
 }
 
@@ -608,11 +608,13 @@ bool MCTS::jump(Move move){
 
 void MCTS::reset(const Game& startPos){
     root->delete_tree();
-    root = new Node(startPos, hash.compute_hash(startPos), transposTable);
+    Game g = startPos;
+    g.set_rules(cfg.rules);
+    root = new Node(g, hash.compute_hash(g), transposTable);
 
-    if(globalConfig.transTable){
+    if(transposTable){
         transposTable->clear();
-        transposTable->emplace(hash.compute_hash(startPos), std::make_pair(root, 1));
+        transposTable->emplace(hash.compute_hash(g), std::make_pair(root, 1));
     }
 }
 
@@ -623,7 +625,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     // std::cerr << searchCounter << " " << evaluateCounter << std::endl;
 
     // SELECTION
-    if((inEvaluation.size() < globalConfig.searchThreadNum) && !searchStuck){
+    if((inEvaluation.size() < cfg.searchThreadNum) && !searchStuck){
         std::vector<int> childIdx;
         std::vector<Node*> path;
         Node* cur = root;
@@ -675,7 +677,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
                 }
             }
             else
-                a = cur->select_child_in_search(params.fpu); // assume node is evaluated
+                a = cur->select_child_in_search(cfg.fpu, cfg.cPuct); // assume node is evaluated
 
             childIdx.push_back(a);
             cur = cur->child[a];
@@ -734,7 +736,7 @@ void MCTS::playout(int& searchCounter, int& evaluateCounter,
     }
 
     //EVALUATION & UPDATE
-    if(inEvaluation.size() >= globalConfig.searchThreadNum || searchStuck){
+    if(inEvaluation.size() >= cfg.searchThreadNum || searchStuck){
         // wait for the result
         std::shared_ptr<NNResultBuf> rb = resultBuffer.at(inEvaluation.size() - 1);
         std::unique_lock<std::mutex> lk2(rb->resultmutex);

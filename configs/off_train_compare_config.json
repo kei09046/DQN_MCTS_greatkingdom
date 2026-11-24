@@ -3,8 +3,7 @@
     "transTable": true,
     "dirichletNoise": false,
     "googleDrive": false,
-    "FPU": 0.15,
-    "detailedStat": false
+    "FPU": 0.15
   },
 
   "path": {
@@ -44,7 +43,6 @@
 
   "nn": {
     "batchSize": 512,
-    "inputChannel": 26,
     "numHiddenBlock": 12
   },
 

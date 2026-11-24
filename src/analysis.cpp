@@ -33,15 +33,15 @@ static BoardMaps board_maps(PolicyValueNet* net, const Game& game){
 
 // See analysis.hpp for what lives here and why it's split into its own class.
 
-// optional "setup <komi> <nNeutrals> [r c]..." right after a request's id. Without it : config komi / neutrals.
+// optional "setup <komi> <nNeutrals> [r c]..." right after a request's id. Without it : the default board.
 // false on a malformed setup. iss is left at the first move either way.
-static bool read_request_setup(std::istringstream& iss, Game& game){
+static bool read_request_setup(std::istringstream& iss, Game& game, const BoardConfig& board){
     const auto pos = iss.tellg();
     std::string tok;
     if(!(iss >> tok) || tok != "setup"){
         iss.clear();
         iss.seekg(pos);
-        game = Game();
+        game = Game(board);
         return true;
     }
     float komi;
@@ -52,7 +52,7 @@ static bool read_request_setup(std::istringstream& iss, Game& game){
     return true;
 }
 
-void Analysis::nn_input_server(){
+void Analysis::nn_input_server(const BoardConfig& board){
     std::string line;
     while(std::getline(std::cin, line)){
         std::istringstream iss(line);
@@ -63,8 +63,8 @@ void Analysis::nn_input_server(){
         if(cmd != "nninput" || !(iss >> id))
             continue;
 
-        Game game;
-        bool legal = read_request_setup(iss, game);
+        Game game(board);
+        bool legal = read_request_setup(iss, game, board);
         int r, c;
         while(legal && iss >> r >> c){
             const Move m = {static_cast<uint8_t>(r), static_cast<uint8_t>(c)};
@@ -90,9 +90,9 @@ void Analysis::nn_input_server(){
     }
 }
 
-void Analysis::rules_server(){
-    std::cout << "rules ready " << rowSize << " " << colSize << " " << globalConfig.komi << " " << globalConfig.neutrals.size();
-    for(const auto& n : globalConfig.neutrals)
+void Analysis::rules_server(const BoardConfig& board){
+    std::cout << "rules ready " << rowSize << " " << colSize << " " << board.komi << " " << board.neutrals.size();
+    for(const auto& n : board.neutrals)
         std::cout << " " << static_cast<int>(n.first) << " " << static_cast<int>(n.second);
     std::cout << std::endl;
 
@@ -106,8 +106,8 @@ void Analysis::rules_server(){
         if(cmd != "rules" || !(iss >> id))
             continue;
 
-        Game game;
-        if(!read_request_setup(iss, game)){
+        Game game(board);
+        if(!read_request_setup(iss, game, board)){
             std::cout << "rules " << id << " badsetup" << std::endl;
             continue;
         }
@@ -170,7 +170,7 @@ void Analysis::rules_server(){
 }
 
 void Analysis::print_fair_komi(MCTS& mcts){
-    const auto fair = estimate_fair_komi(*mcts.evaluator->model());
+    const auto fair = estimate_fair_komi(*mcts.evaluator->model(), mcts.search_config().rules);
     const auto& classes = rnd::neutral_point_classes();
     std::cout << "fairkomi";
     for(size_t k=0; k<fair.size(); ++k){

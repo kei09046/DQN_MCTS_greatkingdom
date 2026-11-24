@@ -15,23 +15,18 @@
 #include "random.h"
 
 namespace{
-	// search params of idx-th engine; global config values if not given.
-	SearchParams params_of(const std::vector<SearchParams>& params, int idx){
-		return (idx < static_cast<int>(params.size())) ? params[idx] : globalConfig.search_params();
-	}
-
 	bool blank(const std::string& line){
 		return line.find_first_not_of(" \t\r") == std::string::npos;
 	}
 
-	// asks for the game setup on stdin until a valid one (or an empty line : config komi / neutrals) is given.
-	Game prompt_setup(){
+	// asks for the game setup on stdin until a valid one (or an empty line : the default board) is given.
+	Game prompt_setup(const BoardConfig& board){
 		std::string line;
 		while(true){
-			std::cout << "game setup : <komi> <nNeutrals> [r c]... (empty line : komi " << globalConfig.komi
+			std::cout << "game setup : <komi> <nNeutrals> [r c]... (empty line : komi " << board.komi
 				<< ", config neutrals)" << std::endl;
 			if(!std::getline(std::cin, line) || blank(line))
-				return Game();
+				return Game(board);
 			std::istringstream iss(line);
 			float komi;
 			std::vector<Move> neutrals;
@@ -134,10 +129,10 @@ float ModelCompare::start_play(std::array<MCTS*, 2> playerList, const Game& star
 	}
 }
 
-void ModelCompare::play(const std::string& model, Color side, float temp, bool gpu, bool shown) {
-	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator);
-	Game gameManager = prompt_setup();
+void ModelCompare::play(const std::string& model, const Config& cfg, Color side, float temp, bool gpu, bool shown) {
+	auto evaluator = new Evaluator(cfg.paths.modelPath + model, cfg.net, cfg.cache, gpu);
+	Game gameManager = prompt_setup(cfg.board);
+	MCTS player(evaluator, cfg.search, gameManager);
 	player.reset(gameManager);
 	print_setup(std::cout, gameManager);
 	gameManager.display_board_gui(false);
@@ -181,7 +176,7 @@ void ModelCompare::play(const std::string& model, Color side, float temp, bool g
 	return;
 }
 
-void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams params) {
+void ModelCompare::analyze(const std::string& model, const Config& cfg, const SearchConfig& search, bool gpu) {
 	// The "analyze" loop below peeks the raw stdin fd via poll() to detect a queued
 	// "pause" command without blocking. Buffered stdio can silently read ahead past the
 	// currently-parsed line (e.g. if the first getline() below runs late because model
@@ -191,16 +186,16 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 	// read, so poll() always sees exactly what's actually still unconsumed.
 	setvbuf(stdin, nullptr, _IONBF, 0);
 
-	Game gameManager = Game();
-	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator, params);
+	Game gameManager(cfg.board);
+	auto evaluator = new Evaluator(cfg.paths.modelPath + model, cfg.net, cfg.cache, gpu);
+	MCTS player(evaluator, search, gameManager);
 	// Owns debug-mode state and the printAnalysis/printVariation implementations (see
 	// analysis.hpp) -- attach it so player's own hot path (playout()/updateEval()) can reach it
 	// for debug-line streaming too, per MCTS::attachAnalysis's own comment.
 	Analysis analysis;
 	player.attach_analysis(&analysis);
 
-	std::cout << "search params : FPU " << params.fpu << " minVisitRatio " << params.minVisitRatio << std::endl;
+	std::cout << "search params : FPU " << search.fpu << " minVisitRatio " << search.minVisitRatio << std::endl;
 	std::cout << "analysis ready" << std::endl;
 
 	std::string line;
@@ -213,14 +208,14 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			break;
 		}
 		else if (cmd == "reset") {
-			// "reset" : empty board with config komi / neutrals. "reset <komi> <nNeutrals> [r c]..." : that setup.
+			// "reset" : empty default board. "reset <komi> <nNeutrals> [r c]..." : that setup.
 			float komi;
 			std::vector<Move> neutrals;
 			std::string rest;
 			std::getline(iss, rest);
 			std::istringstream setup(rest);
 			if(blank(rest))
-				gameManager = Game();
+				gameManager = Game(cfg.board);
 			else if(Game::read_setup(setup, komi, neutrals))
 				gameManager = Game(komi, neutrals);
 			else{
@@ -258,7 +253,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			// target is a *cumulative* visit count on the root, not a one-shot playout budget:
 			// re-requesting the same or a lower target is a no-op (just re-prints current state),
 			// and raising it later resumes search on the existing tree instead of restarting.
-			int targetVisits = globalConfig.nPlayout;
+			int targetVisits = player.search_config().nPlayout;
 			int requested;
 			if (iss >> requested)
 				targetVisits = requested;
@@ -277,7 +272,7 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 				// minVisitRatio of this call's own playout budget, same ratio MCTS::getMove uses
 				// -- e.g. n == chunk == 400 with minVisitRatio 0.005 gives 2 forced playouts
 				// per child every chunk.
-				player.run_simulation(PLAYOUT, n, 0, player.search_params().min_visits(n));
+				player.run_simulation(PLAYOUT, n, 0, player.search_config().min_visits(n));
 				analysis.print_analysis(player);
 				ranAny = true;
 
@@ -297,19 +292,19 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 			// "select <temp>" -- pick a move from the current search result with the same rule
 			// MCTS::getMove uses (Node::selectMove), without searching further. Does not play it;
 			// the caller sends "play" afterwards. Pass is printed as "<rowSize> 0", resign as "255 255".
-			float temp = globalConfig.temp;
+			float temp = search.temp;
 			iss >> temp;
 			Move m = player.select_move(temp);
 			std::cout << "selected " << static_cast<int>(m.first) << " " << static_cast<int>(m.second) << std::endl;
 		}
 		else if (cmd == "playouts") {
-			// "playouts <n>" -- the caller's per-move playout setting. Sets this (analyze-only)
-			// process's nPlayout, so "select" (MCTS::select_move) prunes with
+			// "playouts <n>" -- the caller's per-move playout setting. Sets the engine's
+			// nPlayout, so "select" (MCTS::select_move) prunes with
 			// minVisitRatio * <n> instead of play_config.json's nPlayout, as MCTS::get_move would
 			// for a search of <n> playouts. Also the default target of a bare "analyze".
 			int n;
 			if (iss >> n && n > 0) {
-				globalConfig.nPlayout = n;
+				player.set_playouts(n);
 				std::cout << "playouts ok" << std::endl;
 			}
 			else {
@@ -344,15 +339,15 @@ void ModelCompare::analyze(const std::string& model, bool gpu, SearchParams para
 	return;
 }
 
-void ModelCompare::play_web(const std::string& model, const Color humanColor, int playout, float temp, bool gpu){
-	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator);
+void ModelCompare::play_web(const std::string& model, const Config& cfg, const Color humanColor, int playout, float temp, bool gpu){
+	auto evaluator = new Evaluator(cfg.paths.modelPath + model, cfg.net, cfg.cache, gpu);
+	MCTS player(evaluator, cfg.search, Game(cfg.board));
 
 	Move cord;
 	Color res;
 
 	std::cout << "model loaded" << std::endl;
-	Game gameManager = prompt_setup();
+	Game gameManager = prompt_setup(cfg.board);
 	player.reset(gameManager);
 	print_setup(std::cout, gameManager);
 	while (true) {
@@ -387,11 +382,11 @@ void ModelCompare::play_web(const std::string& model, const Color humanColor, in
 	return;
 }
 
-void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
-    std::vector<Move> neutrals = globalConfig.neutrals;
-    Game gameManager = Game();
-	auto evaluator = new Evaluator(globalConfig.modelPath + model, gpu);
-	MCTS player = MCTS(evaluator);
+void ModelCompare::play_gtp(const std::string& model, const Config& cfg, float temp, bool gpu) {
+    std::vector<Move> neutrals = cfg.board.neutrals;
+    Game gameManager(cfg.board);
+	auto evaluator = new Evaluator(cfg.paths.modelPath + model, cfg.net, cfg.cache, gpu);
+	MCTS player(evaluator, cfg.search, gameManager);
 	Move cord;
 	Color res = EMPTY;
 
@@ -423,7 +418,7 @@ void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
 			evaluating = false;
 		}
         if (cmd == "protocol_version") ok("2");
-        else if (cmd == "name") ok(globalConfig.modelPath + model);
+        else if (cmd == "name") ok(cfg.paths.modelPath + model);
         else if (cmd == "version") ok("0.1");
         else if (cmd == "list_commands")
         ok("protocol_version\nname\nversion\nboardsize\nclear_board\nkomi\nset_neutrals\nplay\ngenmove\nquit");
@@ -491,8 +486,8 @@ void ModelCompare::play_gtp(const std::string& model, float temp, bool gpu) {
     return;
 }
 
-void ModelCompare::play_human() {
-	Game gameManager = prompt_setup();
+void ModelCompare::play_human(const BoardConfig& board) {
+	Game gameManager = prompt_setup(board);
 	Game experiment = gameManager;
 	print_setup(std::cout, gameManager);
 	experiment.set_policy_mask();
@@ -547,14 +542,14 @@ void ModelCompare::play_human() {
 	return;
 }
 
-std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo, const FairKomiTable& fairKomi,
+std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo, const FairKomiTable& fairKomi, float fairKomiNoise,
 		std::ostream& totalRes, bool isShown, float temp, int nGames) {
 
 	// each pair of games (one with each color) gets its own random setup, drawn like self-play's.
 	std::vector<bool> result(nGames << 1);
 	for (int i = 0; i < nGames; ++i) {
 		const std::vector<Move> neutrals = rnd::sample_neutrals();
-		const Game start(rnd::sample_fair_komi(fairKomi.at(rnd::neutral_setup_index(neutrals)), globalConfig.fairKomiNoise),
+		const Game start(rnd::sample_fair_komi(fairKomi.at(rnd::neutral_setup_index(neutrals)), fairKomiNoise),
 			neutrals);
 		// result[i] : player_one plays as black, result[nGames + i] : player_two plays as black
 		result[i] = static_cast<bool>(ModelCompare::start_play({ playerOne, playerTwo }, start, totalRes, isShown, temp));
@@ -563,25 +558,27 @@ std::vector<bool> ModelCompare::play_match(MCTS* playerOne, MCTS* playerTwo, con
 	return result;
 }
 
-float ModelCompare::policy_evaluate(const std::string& modOne, const std::string& modTwo, std::ostream& totalRes, std::ostream& partRes, bool isShown,
-	bool gpu, float temp, int nGames, int nThread, const std::vector<SearchParams>& params) {
-	auto eo = new Evaluator(globalConfig.modelPath + modOne, gpu);
-	auto et = new Evaluator(globalConfig.modelPath + modTwo, gpu);
+float ModelCompare::policy_evaluate(const std::string& modOne, const std::string& modTwo, const Config& cfg,
+	const std::array<SearchConfig, 2>& engines, std::ostream& totalRes, std::ostream& partRes, bool isShown,
+	bool gpu, float temp, int nGames, int nThread) {
+	auto eo = new Evaluator(cfg.paths.modelPath + modOne, cfg.net, cfg.cache, gpu);
+	auto et = new Evaluator(cfg.paths.modelPath + modTwo, cfg.net, cfg.cache, gpu);
 	std::vector<MCTS*> basePlayers, oppoPlayers;
 
+	const Game start(cfg.board); // replaced by every game's own setup
 	for(int i=0; i<nThread; ++i){
-		basePlayers.push_back(new MCTS(eo, params_of(params, 0)));
-		oppoPlayers.push_back(new MCTS(et, params_of(params, 1)));
+		basePlayers.push_back(new MCTS(eo, engines[0], start));
+		oppoPlayers.push_back(new MCTS(et, engines[1], start));
 	}
 
 	// fair komi : the mean of both models' estimates, so neither model alone decides how setups are balanced.
-	const FairKomiTable fairKomi = combine_fair_komi({estimate_fair_komi(*eo->model()), estimate_fair_komi(*et->model())},
-		globalConfig.komi);
+	const FairKomiTable fairKomi = combine_fair_komi({estimate_fair_komi(*eo->model(), engines[0].rules),
+		estimate_fair_komi(*et->model(), engines[1].rules)}, cfg.board.komi);
 	totalRes << "fair komi : ";
 	print_fair_komi(totalRes, fairKomi);
 	totalRes << std::endl;
 
-	const float winRate = policy_evaluate(basePlayers, oppoPlayers, fairKomi, totalRes, isShown, temp, nGames);
+	const float winRate = policy_evaluate(basePlayers, oppoPlayers, fairKomi, cfg.train.fairKomiNoise, totalRes, isShown, temp, nGames);
 
 	for(int i=0; i<nThread; ++i){
 		delete basePlayers[i];
@@ -593,7 +590,7 @@ float ModelCompare::policy_evaluate(const std::string& modOne, const std::string
 }
 
 float ModelCompare::policy_evaluate(const std::vector<MCTS*>& playersOne, const std::vector<MCTS*>& playersTwo,
-	const FairKomiTable& fairKomi, std::ostream& totalRes, bool isShown, float temp, int nGames) {
+	const FairKomiTable& fairKomi, float fairKomiNoise, std::ostream& totalRes, bool isShown, float temp, int nGames) {
 	if(playersOne.size() != playersTwo.size() || playersOne.empty())
 		throw std::runtime_error("policy_evaluate : both sides need the same, nonzero number of per-thread players");
 
@@ -604,7 +601,7 @@ float ModelCompare::policy_evaluate(const std::vector<MCTS*>& playersOne, const 
 	std::atomic<int> totalWin = 0;
 	for(int i=0; i<nThread; ++i){
 		evaluateThreads.emplace_back([&, i]{
-			std::vector<bool> b = play_match(playersOne[i], playersTwo[i], fairKomi, totalRes, (i == 0) && isShown, temp, gamesPerThread);
+			std::vector<bool> b = play_match(playersOne[i], playersTwo[i], fairKomi, fairKomiNoise, totalRes, (i == 0) && isShown, temp, gamesPerThread);
 			totalWin += std::count(b.begin(), b.end(), true);
 		}
 		);
@@ -617,10 +614,12 @@ float ModelCompare::policy_evaluate(const std::vector<MCTS*>& playersOne, const 
 	return totalWin / static_cast<float>(nGames << 1);
 }
 
-std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelList,
-	std::ostream& totalRes, const std::optional<std::string>& eloFilePath, const std::vector<int>& skips, bool isShown, bool gpu,
-	float temp, int nGames, int nThread, const std::vector<SearchParams>& params) {
+std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelList, const Config& cfg,
+	const std::vector<SearchConfig>& engines, std::ostream& totalRes, const std::optional<std::string>& eloFilePath,
+	const std::vector<int>& skips, bool isShown, bool gpu, float temp, int nGames, int nThread) {
 	const int N = modelList.size();
+	if(static_cast<int>(engines.size()) != N)
+		throw std::runtime_error("policy_evaluate : one search config per model is needed");
 	const int gameBatch = nThread * 2;
 
 	if(nGames % gameBatch != 0){
@@ -628,15 +627,15 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 		nGames = (nGames < gameBatch) ? gameBatch : nGames / gameBatch * gameBatch;
 	}
 
-	// models in training order (natural order of names); each keeps its own search params.
+	// models in training order (natural order of names); each keeps its own search config.
 	std::vector<int> order(N);
 	for(int i=0; i<N; ++i) order[i] = i;
 	std::stable_sort(order.begin(), order.end(), [&](int a, int b){ return natural_less(modelList[a], modelList[b]); });
 	std::vector<std::string> models;
-	std::vector<SearchParams> modelParams;
+	std::vector<SearchConfig> modelEngines;
 	for(int i : order){
 		models.push_back(modelList[i]);
-		modelParams.push_back(params_of(params, i));
+		modelEngines.push_back(engines[i]);
 	}
 
 	// pairs to play : (i, i + d) for every skip d. no skips : full round-robin.
@@ -655,19 +654,20 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 
 	std::vector<Evaluator*> evaluators(N);
 	std::vector<std::vector<MCTS*>> players(N, std::vector<MCTS*>(nThread));
+	const Game start(cfg.board); // replaced by every game's own setup
 	for(int i=0; i<N; ++i){
-		evaluators[i] = new Evaluator(globalConfig.modelPath + models[i], gpu);
+		evaluators[i] = new Evaluator(cfg.paths.modelPath + models[i], cfg.net, cfg.cache, gpu);
 		for(int th=0; th<nThread; ++th)
-			players[i][th] = new MCTS(evaluators[i], modelParams[i]);
+			players[i][th] = new MCTS(evaluators[i], modelEngines[i], start);
 	}
 
 	// fair komi of a pair : from those two models only, so a weak engine elsewhere doesn't distort it.
 	std::vector<std::vector<std::optional<float>>> komiEstimates;
-	for(auto* e : evaluators)
-		komiEstimates.push_back(estimate_fair_komi(*e->model()));
+	for(int i=0; i<N; ++i)
+		komiEstimates.push_back(estimate_fair_komi(*evaluators[i]->model(), modelEngines[i].rules));
 	std::vector<FairKomiTable> komiTable;
 	for(const auto& [i, j] : pairList)
-		komiTable.push_back(combine_fair_komi({komiEstimates[i], komiEstimates[j]}, globalConfig.komi));
+		komiTable.push_back(combine_fair_komi({komiEstimates[i], komiEstimates[j]}, cfg.board.komi));
 
 	std::cout << pairList.size() << " pairs (of " << N * (N - 1) / 2 << " in a round-robin)" << std::endl;
 
@@ -680,7 +680,7 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 			const auto [i, j] = pairList[p];
 			const auto batchBegin = std::chrono::steady_clock::now();
 
-			const float wr = policy_evaluate(players[i], players[j], komiTable[p], std::cout, false, temp, gameBatch);
+			const float wr = policy_evaluate(players[i], players[j], komiTable[p], cfg.train.fairKomiNoise, std::cout, false, temp, gameBatch);
 
 			const auto batchMs = std::chrono::duration_cast<std::chrono::milliseconds>(
 				std::chrono::steady_clock::now() - batchBegin).count();
@@ -707,11 +707,11 @@ std::vector<float> ModelCompare::policy_evaluate(std::vector<std::string> modelL
 	}
 
 	// ratings : Bradley-Terry fit over every stored pair (this run's and earlier runs'), saved to the rating file.
-	const auto fitted = pairResults.fit();
+	const auto fitted = pairResults.fit(cfg.rating.initRating);
 	std::vector<std::string> fittedNames;
 	for(const auto& [name, rec] : fitted)
 		fittedNames.push_back(name);
-	EloCalculator eloCalculator(std::nullopt, fittedNames);
+	EloCalculator eloCalculator(cfg.rating, std::nullopt, fittedNames);
 	for(size_t k=0; k<fittedNames.size(); ++k)
 		eloCalculator.set_rating(k, fitted.at(fittedNames[k]).first, fitted.at(fittedNames[k]).second);
 	eloCalculator.save_rating(eloFilePath, fittedNames);

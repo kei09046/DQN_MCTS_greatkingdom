@@ -15,6 +15,7 @@ using TransTable = std::unordered_map<HashValue, std::pair<Node*, unsigned int>>
 
 class alignas(64) Node{
 public:
+    // transposTable : null when the search doesn't use a transposition table.
     Node(const Game& g, const HashValue hashValue, TransTable* const transposTable);
 
     Move select_move(float temperature, int minVisit);
@@ -25,7 +26,7 @@ public:
 
     Node* jump(Move move);
 
-    void add_dirichlet_noise(Evaluator* evaluator);
+    void add_dirichlet_noise(Evaluator* evaluator, float alpha, float eps);
 
     void delete_tree();
 
@@ -59,13 +60,14 @@ private:
 
     void expand();
 
-    int select_child_in_search(float fpu);
+    int select_child_in_search(float fpu, float cPuct);
 };
 
 
 class alignas(64) MCTS{
 public:
-    MCTS(Evaluator* evaluator, SearchParams params = globalConfig.search_params());
+    // start : root position (reset() replaces it). The search's rules (cfg.rules) are set on every root.
+    MCTS(Evaluator* evaluator, const SearchConfig& cfg, const Game& start);
     ~MCTS();
     MCTS(MCTS&& other) noexcept;
 
@@ -105,8 +107,13 @@ public:
         return static_cast<int>(root->N);
     }
 
-    inline const SearchParams& search_params() const{
-        return params;
+    inline const SearchConfig& search_config() const{
+        return cfg;
+    }
+
+    // playouts of a move (get_move); also what select_move's forced-visit pruning assumes.
+    inline void set_playouts(int n){
+        cfg.nPlayout = n;
     }
 
     // Associates this MCTS instance with the Analysis object that owns debug-mode state (see
@@ -130,8 +137,8 @@ private:
 
     Node* root;
     Evaluator* evaluator; // shared along multiple MCTS instances
-    TransTable* transposTable;
-    SearchParams params; // fpu / minVisitRatio used by this instance.
+    TransTable* transposTable; // null if cfg.transTable is off
+    SearchConfig cfg;
 
     // Non-owning; null unless attachAnalysis() was called (see above). Only playout()/updateEval()
     // below read this, to stream debug lines through it mid-search -- everything else Analysis

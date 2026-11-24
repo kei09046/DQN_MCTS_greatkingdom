@@ -13,8 +13,9 @@ using FairKomiTable = std::vector<float>; // indexed by rnd::neutral_setup_index
 // net's fair komi of every neutral setup, from its value of the empty board (averaged over the setup's orientations)
 // on a komi grid of 0.5 .. 8.5 : a step fit of where the value turns from black's favour to white's, robust to a bumpy
 // curve. Fair komi beyond the grid comes out near its ends. nullopt for a setup whose value barely changes over the
-// grid (e.g. an untrained model). net must not be evaluating anything else meanwhile.
-std::vector<std::optional<float>> estimate_fair_komi(PolicyValueNet& net);
+// grid (e.g. an untrained model). net must not be evaluating anything else meanwhile. rules : the move list the net's
+// engine searches with (input channel 22 shows it).
+std::vector<std::optional<float>> estimate_fair_komi(PolicyValueNet& net, const RuleConfig& rules);
 
 // one table from several models' estimates : per setup, the mean of the models that have an estimate, else fallback.
 FairKomiTable combine_fair_komi(const std::vector<std::vector<std::optional<float>>>& estimates, float fallback);
