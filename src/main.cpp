@@ -26,11 +26,14 @@ int main(int argc, char** argv) {
     if(mod == "train"){
         Config cfg = load_config("../configs/train_config.json");
         // ./play train <model> <data file> <games> <threads> <is_shown> [learning rate] [-Nprune] [-Ntransfer] [-NcaptureMap]
+        //             [-NoppTerritory]
         // if learning rate is not given, config file's default learning rate or optimizer's learning rate would be used.
         // ablation flags (any position after the mode) switch off one component of the method :
         //   -Nprune      search every legal move instead of only maximal scoring moves (implies -Ntransfer)
         //   -Ntransfer   keep each move's own prior logit instead of the max over the squares it claims
         //   -NcaptureMap train without the capture map loss
+        //   -NoppTerritory  input channel 24 (opponent's territory building moves) is left all 0, in self-play and in
+        //                   the checkpoint comparisons. Evaluate such a model with "oppTerritory": false in "engines".
         std::vector<std::string> args;
         for(int i=2; i<argc; ++i){
             const std::string a = argv[i];
@@ -40,14 +43,16 @@ int main(int argc, char** argv) {
                 cfg.search.rules.transfer = false;
             else if(a == "-NcaptureMap")
                 cfg.train.step.captureMapLoss = false;
+            else if(a == "-NoppTerritory")
+                cfg.search.rules.oppTerritory = false;
             else if(!a.empty() && a[0] == '-')
-                throw std::runtime_error("unknown train option " + a + " (expected -Nprune, -Ntransfer or -NcaptureMap)");
+                throw std::runtime_error("unknown train option " + a + " (expected -Nprune, -Ntransfer, -NcaptureMap or -NoppTerritory)");
             else
                 args.push_back(a);
         }
         if(args.size() < 5 || args.size() > 6){
             std::cerr << "usage : ./play train <model> <data file> <games> <threads> <is_shown> [learning rate] "
-                         "[-Nprune] [-Ntransfer] [-NcaptureMap]" << std::endl;
+                         "[-Nprune] [-Ntransfer] [-NcaptureMap] [-NoppTerritory]" << std::endl;
             return 1;
         }
         RuleConfig& rules = cfg.search.rules;
@@ -56,7 +61,7 @@ int main(int argc, char** argv) {
             rules.transfer = false;
         }
         std::cout << "ablation : prune " << rules.prune << " transfer " << rules.transfer
-                  << " captureMap " << cfg.train.step.captureMapLoss << std::endl;
+                  << " captureMap " << cfg.train.step.captureMapLoss << " oppTerritory " << rules.oppTerritory << std::endl;
 
         std::string modelFile = args[0];
         std::string dataFile = args[1];

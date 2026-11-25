@@ -289,9 +289,11 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		ret.at(23 * inputSize + m) = 1.0f;
 	}
 
-	// channel 24 : opponent's territory building move
-	for(const auto& m : game.maximize_score(oppturn, 1)){
-		ret.at(24 * inputSize + m) = 1.0f;
+	// channel 24 : opponent's territory building move. Left all 0 under the -NoppTerritory ablation.
+	if(game.get_rules().oppTerritory){
+		for(const auto& m : game.maximize_score(oppturn, 1)){
+			ret.at(24 * inputSize + m) = 1.0f;
+		}
 	}
 
 	// channel 25 : komi from the side to move's perspective.

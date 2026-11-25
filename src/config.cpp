@@ -72,6 +72,7 @@ Config load_config(const std::string& path) {
             e.minVisitRatio = E.value("minVisitRatio", s.minVisitRatio);
             e.rules.prune = E.value("prune", s.rules.prune);
             e.rules.transfer = E.value("transfer", s.rules.transfer);
+            e.rules.oppTerritory = E.value("oppTerritory", s.rules.oppTerritory);
             c.engines.push_back(e);
         }
     }

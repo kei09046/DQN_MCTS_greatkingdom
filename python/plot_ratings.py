@@ -92,15 +92,16 @@ def main():
                 markeredgecolor="white", markeredgewidth=1.5, label=run, zorder=3)
 
     has_ci = any(p[2] is not None for pts in runs.values() for p in pts)
-    title = "Elo rating by training progress"
-    if len(runs) == 1:  # a single line has no legend : the title names it
-        title += f" : {next(iter(runs))}"
-    if has_ci:
-        title += " (band : 95% CI)"
-    ax.set_title(title, loc="left", fontsize=11, color=INK)
-    ax.set_xlabel("self-play games", fontsize=9, color=MUTED)
-    ax.set_ylabel("Elo", fontsize=9, color=MUTED)
-    ax.tick_params(labelsize=8, colors=MUTED)
+    # title = "Elo rating by training progress"
+    # if len(runs) == 1:  # a single line has no legend : the title names it
+    #     title += f" : {next(iter(runs))}"
+    # if has_ci:
+    #     title += " (band : 95% CI)"
+    # ax.set_title(title, loc="left", fontsize=11, color=INK)
+    ax.set_title("")
+    ax.set_xlabel("self-play games", fontsize=15, color=MUTED, fontweight='bold')
+    ax.set_ylabel("Elo rating", fontsize=15, color=MUTED, fontweight='bold')
+    ax.tick_params(labelsize=15, colors=MUTED)
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v / 1000:.0f}k" if v >= 1000 else f"{v:.0f}"))
     ax.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)

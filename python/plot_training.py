@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 # reference categorical order (blue, orange, aqua), muted ink for annotations
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
@@ -190,7 +191,7 @@ def plot(saves, ratings, out, show, komi_window):
     series(ax[0], saves, "policy", BLUE, "policy loss")
     series(ax[0], saves, "entropy", ORANGE, "target entropy")
     series(ax[0], saves, "kl", AQUA, "KL (loss - entropy)")
-    style(ax[0], "Policy", "nats")
+    style(ax[0], "Policy loss", "nats")
     if any(s.get("entropy") is not None for s in saves):
         ax[0].legend(fontsize=8, frameon=False)
 
@@ -198,19 +199,30 @@ def plot(saves, ratings, out, show, komi_window):
     series(ax[1], saves, "value_z", ORANGE, "vs game result z")
     style(ax[1], "Value loss", "MSE")
     if any(s.get("value_z") is not None for s in saves):
-        ax[1].legend(fontsize=8, frameon=False, loc="upper left")
+        ax[1].legend(fontsize=8, frameon=False)
 
     for a, key, title in ((ax[2], "score", "Score loss"), (ax[3], "score_map", "Score map loss"),
                           (ax[9], "capture_map", "Capture map loss (BCE)")):
         series(a, saves, key, BLUE)
         style(a, title, "loss")
 
+    # losses on a log scale : they shrink by orders of magnitude, and a log axis shows late-training changes too.
+    # Non-positive points (e.g. a slightly negative KL from averaging) are left out by matplotlib.
+    # Each panel spans about one decade, so ticks at 1, 2, 3, 5 times a power of ten, labelled as plain numbers.
+    for a in (ax[0], ax[1], ax[2], ax[3], ax[9]):
+        a.set_yscale("log")
+        a.yaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 3.0, 5.0)))
+        a.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        a.yaxis.set_minor_formatter(NullFormatter())
+
     # fallbacks reload the best model (and reset the optimizer): mark them on the loss panels
     for r in ratings:
         if r["fallback"]:
             for a in ax[:4]:
                 a.axvline(r["games_model"], color=MUTED, linestyle="--", linewidth=1)
-    ax[1].annotate("dashed = fallback", (0.98, 0.95), xycoords="axes fraction", ha="right", fontsize=7, color=MUTED)
+
+    # fallback never happened.
+    # ax[1].annotate("dashed = fallback", (0.98, 0.95), xycoords="axes fraction", ha="right", fontsize=7, color=MUTED)
 
     # Elo, chained through the gating comparisons
     anchor = next((r["model"] for r in ratings if r["opponent"] == "none"), None)
