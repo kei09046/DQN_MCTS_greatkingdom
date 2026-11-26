@@ -356,7 +356,8 @@ Node* Node::jump(Move move){
         }
     }
 
-    std::cerr << "unexpected move played" << std::endl;
+    // human may play suboptimal move, or other engine with -Nprune = true
+    //std::cerr << "unexpected move played" << std::endl;
     add_child(move, -1);
     return child.back();
 }
