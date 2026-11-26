@@ -3,7 +3,7 @@
     "transTable": true,
     "dirichletNoise": true,
     "googleDrive": false,
-    "FPU": -1.0
+    "FPU": 0.15
   },
 
   "path": {
