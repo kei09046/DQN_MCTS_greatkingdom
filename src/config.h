@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include <utility>
+#include <bitset>
 
 // Configuration, split by consumer. load_config reads a json file into a Config, and each object is handed (and keeps)
 // only the part it reads : MCTS a SearchConfig, Evaluator a CacheConfig, EloCalculator a RatingConfig, and so on.
@@ -16,8 +17,7 @@ struct BoardConfig {
 };
 
 // how a Game lists the moves search considers (Game::set_policy_mask) and gives them priors (Game::transfer_logit).
-// Not read from the json files : the defaults are the full method; ./play train -Nprune / -Ntransfer and an engine's
-// "prune" / "transfer" in "engines" switch them off (ablation).
+// Not read from the json files. For ablation run only.
 struct RuleConfig {
     bool prune = true;    // search only maximal scoring moves. false : every legal move is searched.
     bool transfer = true; // a kept move's prior logit is the max over the logits of the squares it would claim.

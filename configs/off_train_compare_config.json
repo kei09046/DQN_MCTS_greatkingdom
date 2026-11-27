@@ -41,7 +41,7 @@
 
   "engines": [
     {},
-    {"transfer": false, "prune": false}
+    {}
   ],
 
   "nn": {
