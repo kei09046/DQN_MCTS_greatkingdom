@@ -6,8 +6,10 @@ Fair komi per neutral stone location goes to a second image, <out>_komi.png.
 Loss comparison : several logs (or one log with --losses) plot only the training losses, one image per loss with one
 line per log, no titles :
     python plot_training.py train_result_M4.txt train_result_MnS.txt:"no capture map" [-o out_dir] [--smooth 20]
-                            [--cap GAMES]
-At most 10 logs. --cap GAMES (both modes) leaves out everything after that many self-play games.
+                            [--min GAMES] [--cap GAMES] [--policyOnly] [--valueOnly] ...
+At most 10 logs. --min / --cap GAMES (both modes) leave out everything before / after that many self-play games.
+--policyOnly, --valueOnly, --scoreOnly, --scoreMapOnly, --captureMapOnly : only those loss images (several may be
+combined); they imply the loss comparison, even for a single log.
 A log may be followed by ":label" for the legend (default : the file name). Images go to out_dir (default :
 <first log>_losses/) : policy_loss, value_loss, score_loss, score_map_loss, capture_map_loss.
 """
@@ -279,6 +281,9 @@ def plot(saves, ratings, out, show, komi_window):
 LOSS_PLOTS = [("policy_loss", "policy", "policy loss (nats)"), ("value_loss", "value", "value loss (MSE)"),
               ("score_loss", "score", "score loss (Huber)"), ("score_map_loss", "score_map", "score map loss (MSE)"),
               ("capture_map_loss", "capture_map", "capture map loss (BCE)")]
+# --<flag> -> log key of the only loss(es) to plot
+ONLY_FLAGS = {"policyOnly": "policy", "valueOnly": "value", "scoreOnly": "score", "scoreMapOnly": "score_map",
+              "captureMapOnly": "capture_map"}
 # up to 10 runs : the reference order first, then further distinct hues
 SERIES = [BLUE, ORANGE, AQUA, "#8a5cd1", "#c9a227", "#d6458b", "#5b6b7a", "#8c564b", "#17becf", "#7f7f00"]
 
@@ -291,14 +296,20 @@ def parse_log_arg(arg):
     return Path(arg), Path(arg).stem
 
 
-def cap_saves(saves, cap):
-    """saves up to `cap` self-play games (all of them if cap is None)."""
-    if cap is None:
+def in_range(games, lo, hi):
+    """games within [lo, hi]; a missing bound doesn't limit."""
+    return games is not None and (lo is None or games >= lo) and (hi is None or games <= hi)
+
+
+def cap_saves(saves, cap, lo=None):
+    """saves from `lo` up to `cap` self-play games (all of them if both are None)."""
+    if cap is None and lo is None:
         return saves
-    return [s for s in saves if s.get("games") is not None and s["games"] <= cap]
+    return [s for s in saves if in_range(s.get("games"), lo, cap)]
 
 
-def plot_losses(logs, out_dir, smooth, show, cap=None):
+def plot_losses(logs, out_dir, smooth, show, cap=None, lo=None, only=None):
+    """only : log keys of the losses to plot (None : all of them)."""
     """one image per training loss, one line per log, no titles. smooth : rolling mean over that many saves."""
     if len(logs) > len(SERIES):
         raise SystemExit(f"{len(logs)} logs in one chart is too many to tell apart; plot at most {len(SERIES)}")
@@ -306,12 +317,14 @@ def plot_losses(logs, out_dir, smooth, show, cap=None):
     for path, label in logs:
         if not path.exists():
             raise SystemExit(f"no such file : {path}")
-        saves = cap_saves(parse_log(path)[0], cap)
+        saves = cap_saves(parse_log(path)[0], cap, lo)
         runs.append((label, saves))
         print(f"{label} : {len(saves)} saves, up to {saves[-1].get('games', 0) if saves else 0} games")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, key, ylabel in LOSS_PLOTS:
+        if only and key not in only:
+            continue
         fig, a = plt.subplots(figsize=(10, 6))
         drawn = 0
         for color, (label, saves) in zip(SERIES, runs):
@@ -372,6 +385,10 @@ def main():
     parser.add_argument("--smooth", type=int, default=1, help="loss comparison : rolling mean over this many saves")
     parser.add_argument("--cap", type=int, default=None, metavar="GAMES",
                         help="leave out every save / checkpoint after this many self-play games (default : show all)")
+    parser.add_argument("--min", dest="lo", type=int, default=None, metavar="GAMES",
+                        help="leave out every save / checkpoint before this many self-play games (default : show all)")
+    for flag, key in ONLY_FLAGS.items():
+        parser.add_argument(f"--{flag}", dest=f"only_{key}", action="store_true", help=f"only the {key} loss image")
     parser.add_argument("--show", action="store_true", help="also open a window")
     parser.add_argument("--batch", type=int, default=512, help="batch size")
     parser.add_argument("--steps", type=int, default=2, help="optimizer steps per train_iter")
@@ -380,20 +397,24 @@ def main():
     args = parser.parse_args()
     if args.smooth < 1:
         raise SystemExit("--smooth must be at least 1")
+    if args.lo is not None and args.cap is not None and args.lo > args.cap:
+        raise SystemExit("--min must not be larger than --cap")
+    only = {key for key in ONLY_FLAGS.values() if getattr(args, f"only_{key}")}
 
-    if len(args.log) > 1 or args.losses:
+    if len(args.log) > 1 or args.losses or only:
         logs = [parse_log_arg(a) for a in args.log]
         out_dir = Path(args.out) if args.out else logs[0][0].with_name(logs[0][0].stem + "_losses")
-        plot_losses(logs, out_dir, args.smooth, args.show, args.cap)
+        plot_losses(logs, out_dir, args.smooth, args.show, args.cap, args.lo, only)
         return
 
     log = args.log[0]
     saves, comparisons = parse_log(log)
-    if args.cap is not None:
-        saves = cap_saves(saves, args.cap)
-        comparisons = [c for c in comparisons if c["games"] <= args.cap]
+    # derived statistics and the chained Elo use the whole log; the range only decides what is shown.
     add_derived(saves, args.batch, args.steps)
     ratings = elo_chain(comparisons, args.games)
+    if args.cap is not None or args.lo is not None:
+        saves = cap_saves(saves, args.cap, args.lo)
+        ratings = [r for r in ratings if in_range(r["games"], args.lo, args.cap)]
     print_table(saves, ratings)
     plot(saves, ratings, args.out or str(Path(log).with_suffix(".png")), args.show, args.komi_window)
 
