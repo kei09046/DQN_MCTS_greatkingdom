@@ -2,6 +2,12 @@
 
 usage: python plot_training.py train_result_J.txt [-o out.png] [--show] [--batch 512] [--steps 2] [--komi-window 20]
 Fair komi per neutral stone location goes to a second image, <out>_komi.png.
+
+Loss comparison : several logs (or one log with --losses) plot only the training losses, one image per loss with one
+line per log, no titles :
+    python plot_training.py train_result_M4.txt train_result_MnS.txt:"no capture map" [-o out_dir] [--smooth 20]
+A log may be followed by ":label" for the legend (default : the file name). Images go to out_dir (default :
+<first log>_losses/) : policy_loss, value_loss, score_loss, score_map_loss, capture_map_loss.
 """
 import argparse
 import math
@@ -267,6 +273,72 @@ def plot(saves, ratings, out, show, komi_window):
         plt.show()
 
 
+# loss comparison : (file name, log key, y label). Value loss against the training target only (the loss trained on).
+LOSS_PLOTS = [("policy_loss", "policy", "policy loss (nats)"), ("value_loss", "value", "value loss (MSE)"),
+              ("score_loss", "score", "score loss (Huber)"), ("score_map_loss", "score_map", "score map loss (MSE)"),
+              ("capture_map_loss", "capture_map", "capture map loss (BCE)")]
+SERIES = [BLUE, ORANGE, AQUA, "#8a5cd1", "#c9a227"]
+
+
+def parse_log_arg(arg):
+    """"log[:label]" -> (Path, label). A ':' is only a label separator if the whole argument isn't an existing file."""
+    head, sep, tail = arg.rpartition(":")
+    if sep and head and not Path(arg).exists() and "/" not in tail and "\\" not in tail:
+        return Path(head), tail
+    return Path(arg), Path(arg).stem
+
+
+def plot_losses(logs, out_dir, smooth, show):
+    """one image per training loss, one line per log, no titles. smooth : rolling mean over that many saves."""
+    if len(logs) > len(SERIES):
+        raise SystemExit(f"{len(logs)} logs in one chart is too many to tell apart; plot at most {len(SERIES)}")
+    runs = []
+    for path, label in logs:
+        if not path.exists():
+            raise SystemExit(f"no such file : {path}")
+        saves, _ = parse_log(path)
+        runs.append((label, saves))
+        print(f"{label} : {len(saves)} saves, up to {saves[-1].get('games', 0) if saves else 0} games")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name, key, ylabel in LOSS_PLOTS:
+        fig, a = plt.subplots(figsize=(10, 6))
+        drawn = 0
+        for color, (label, saves) in zip(SERIES, runs):
+            pts = [(s["games"], s[key]) for s in saves if s.get(key) is not None and s.get("games") is not None]
+            if not pts:
+                continue
+            x, y = zip(*pts)
+            a.plot(x, rolling_mean(list(y), smooth), color=color, linewidth=2, label=label)
+            drawn += 1
+        if not drawn:
+            plt.close(fig)
+            print(f"no {key} loss in any log, skipped")
+            continue
+        a.set_yscale("log")
+        a.yaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 3.0, 5.0)))
+        a.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        a.yaxis.set_minor_formatter(NullFormatter())
+        a.set_xlabel("self-play games", fontsize=15, color=MUTED, fontweight="bold")
+        a.set_ylabel(ylabel, fontsize=15, color=MUTED, fontweight="bold")
+        a.tick_params(labelsize=13, colors=MUTED)
+        a.grid(True, color=GRID, linewidth=0.8)
+        for side in ("top", "right"):
+            a.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            a.spines[side].set_color(GRID)
+        if len(runs) > 1:
+            a.legend(fontsize=13, frameon=False)
+        fig.tight_layout()
+        out = out_dir / f"{name}.png"
+        fig.savefig(out, dpi=150)
+        if not show:
+            plt.close(fig)
+        print(f"saved {out}")
+    if show:
+        plt.show()
+
+
 def print_table(saves, ratings):
     cols = ["games", "train_iter", "samples_per_position", "capture_ratio", "segment_length",
             "policy", "entropy", "kl", "value", "value_z", "score", "score_map", "capture_map", "window"]
@@ -282,20 +354,31 @@ def print_table(saves, ratings):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("log")
-    parser.add_argument("-o", "--out", help="output image (default: <log>.png)")
+    parser.add_argument("log", nargs="+", help="training log(s); with several, only the losses are compared")
+    parser.add_argument("-o", "--out", help="output image (default: <log>.png); loss comparison : output directory")
+    parser.add_argument("--losses", action="store_true", help="loss comparison mode even for a single log")
+    parser.add_argument("--smooth", type=int, default=1, help="loss comparison : rolling mean over this many saves")
     parser.add_argument("--show", action="store_true", help="also open a window")
     parser.add_argument("--batch", type=int, default=512, help="batch size")
     parser.add_argument("--steps", type=int, default=2, help="optimizer steps per train_iter")
     parser.add_argument("--komi-window", type=int, default=20, help="saves averaged per fair komi point (1 = raw)")
     parser.add_argument("--games", type=int, default=96, help="games per comparison if the log doesn't say")
     args = parser.parse_args()
+    if args.smooth < 1:
+        raise SystemExit("--smooth must be at least 1")
 
-    saves, comparisons = parse_log(args.log)
+    if len(args.log) > 1 or args.losses:
+        logs = [parse_log_arg(a) for a in args.log]
+        out_dir = Path(args.out) if args.out else logs[0][0].with_name(logs[0][0].stem + "_losses")
+        plot_losses(logs, out_dir, args.smooth, args.show)
+        return
+
+    log = args.log[0]
+    saves, comparisons = parse_log(log)
     add_derived(saves, args.batch, args.steps)
     ratings = elo_chain(comparisons, args.games)
     print_table(saves, ratings)
-    plot(saves, ratings, args.out or str(Path(args.log).with_suffix(".png")), args.show, args.komi_window)
+    plot(saves, ratings, args.out or str(Path(log).with_suffix(".png")), args.show, args.komi_window)
 
 
 if __name__ == "__main__":
