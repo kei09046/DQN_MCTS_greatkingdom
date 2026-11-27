@@ -3,12 +3,12 @@
     "transTable": true,
     "dirichletNoise": true,
     "googleDrive": false,
-    "FPU": -1.0
+    "FPU": 0.15
   },
 
   "path": {
      "model_path": "../models/",
-     "model_prefix": "MnT",
+     "model_prefix": "MnS",
      "drive_path": "../drive/MyDrive/",
      "data_path": "../data/"
   },

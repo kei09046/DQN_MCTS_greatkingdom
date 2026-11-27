@@ -179,6 +179,7 @@ NNOutput Net::forward(const torch::Tensor& state)
 	return std::make_tuple(logAct, val, expScoreDiff, expScoreMap, captureLogit);
 }
 
+
 NNInput PolicyValueNet::get_data(const Game& game){
     std::vector<float> ret(inputSize * inputChannel, 0.0f);
 	Color turn = game.get_turn();
@@ -284,16 +285,14 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		}
 	}
 
-	// channel 23 : territory building move (change : may not be legal right now(due to threat))
-	for(const auto& m : game.maximize_score(turn, 1)){
-		ret.at(23 * inputSize + m) = 1.0f;
-	}
+	// // channel 23 : territory building move (change : may not be legal right now(due to threat))
+	// for(const auto& m : game.maximize_score(turn, 1)){
+	// 	ret.at(23 * inputSize + m) = 1.0f;
+	// }
 
-	// channel 24 : opponent's territory building move. Left all 0 under the -NoppTerritory ablation.
-	if(game.get_rules().oppTerritory){
-		for(const auto& m : game.maximize_score(oppturn, 1)){
-			ret.at(24 * inputSize + m) = 1.0f;
-		}
+	// channel 24 : opponent's territory building move
+	for(const auto& m : game.maximize_score(oppturn, 1)){
+		ret.at(24 * inputSize + m) = 1.0f;
 	}
 
 	// channel 25 : komi from the side to move's perspective.
@@ -316,27 +315,21 @@ NNInput PolicyValueNet::get_data(const std::vector<const Game*>& gameBatch){
     return ret;
 }
 
+// name parsing. Used in constructor(static function).
+ModelName PolicyValueNet::name_or_new(const std::string& modelFile, const NetConfig& newNet){
+	if(auto n = PolicyValueNet::parse_model_name(modelFile))
+		return *n;
+	return {newNet.modelPrefix, newNet.numHiddenBlock, std::nullopt};
+}
 
-PolicyValueNet::PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu):
- useGpu(useGpu), device(useGpu ? torch::kCUDA : torch::kCPU), modelType(modelType), numBlocks(numBlocks)
+PolicyValueNet::PolicyValueNet(const std::string& modelFile, const NetConfig& newNet, bool useGpu): useGpu(useGpu), device(useGpu ? torch::kCUDA : torch::kCPU),
+modelType(name_or_new(modelFile, newNet).type), numBlocks(name_or_new(modelFile, newNet).blocks)
 {
 	// enable cuDNN benchmark mode.
 	if(useGpu)
 		at::globalContext().setBenchmarkCuDNN(true);
 	load_model(modelFile);
 }
-
-namespace{
-	ModelName name_or_new(const std::string& modelFile, const NetConfig& newNet){
-		if(auto n = PolicyValueNet::parse_model_name(modelFile))
-			return *n;
-		return {newNet.modelPrefix, newNet.numHiddenBlock, std::nullopt};
-	}
-}
-
-PolicyValueNet::PolicyValueNet(const std::string& modelFile, const NetConfig& newNet, bool useGpu):
-PolicyValueNet(modelFile, name_or_new(modelFile, newNet).type, name_or_new(modelFile, newNet).blocks, useGpu)
-{}
 
 std::optional<ModelName> PolicyValueNet::parse_model_name(const std::string& modelFile){
 	const std::string name = std::filesystem::path(modelFile).filename().string();

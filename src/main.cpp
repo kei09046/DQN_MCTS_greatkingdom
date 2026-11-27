@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
         int nGames = std::stoi(argv[5]);
         int nThreads = std::stoi(argv[6]);
         float winRate = ModelCompare::policy_evaluate(target, compare, cfg, {cfg.engine(0), cfg.engine(1)},
-            std::cout, std::cout, true, true, temp, nGames, nThreads);
+            std::cout, std::cout, false, true, temp, nGames, nThreads);
         std::cout << winRate << std::endl;
     }
     else if(mod == "evaluate_multi"){

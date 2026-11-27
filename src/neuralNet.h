@@ -128,8 +128,6 @@ private:
 
 // model file name <type>_<blocks>b_<tag>.pt, e.g. K_10b_13440.pt (tag : games played, optionally + "B" for a best model).
 // <type> is a capital letter (architecture) optionally followed by letters / digits, e.g. MnS_12b_13440.pt.
-// Old names <type><games>.pt (e.g. K13440.pt) are read as 10 blocks. Anything else (e.g. "none") doesn't parse : the
-// network is then an untrained one of the given NetConfig.
 struct ModelName {
 	std::string type;
 	int blocks;
@@ -145,41 +143,21 @@ struct PolicyValueOutput{
 };
 
 class PolicyValueNet {
-private:
-	bool useGpu;
-	torch::Device device;
-	float l2Const = 0.0001f;
-	std::unique_ptr<torch::optim::Adam> optimizer;
-	const std::string modelType;
-	const int numBlocks;
-
-	// std::vector<float> makeScoreDistributionBatch(const std::vector<float>& scores, float scoreRange, float sigma, int window) const;
-
-	void display_nn_output(const NNOutput& modelOut);
-
-	// untrained network of this->model_type.
-	std::shared_ptr<NetBase> make_net() const;
-
-	// the fused forward pass recorded as a CUDA graph for one batch size (see capture_graphs).
-	struct GraphBucket{
-		int batchSize;
-		std::unique_ptr<at::cuda::CUDAGraph> graph;
-		torch::Tensor in, out; // the graph's fixed input [batchSize, ...] and merged output [batchSize, outWidth] on the GPU
-	};
-	std::vector<GraphBucket> graphs; // ascending batchSize. Empty : batch_evaluate runs the net op by op.
-
 public:
 	static constexpr float capturePosWeight = 5.0f; // BCE weight of captured points in the capture map loss
 
 	std::shared_ptr<NetBase> policyValueNet;
-
-	PolicyValueNet(const std::string& modelFile, const std::string& modelType, int numBlocks, bool useGpu);
 
 	// model type and block count from the file name (see ModelName); newNet's if the name doesn't give them.
 	PolicyValueNet(const std::string& modelFile, const NetConfig& newNet, bool useGpu);
 
 	// nullopt if the file name doesn't follow either naming scheme.
 	static std::optional<ModelName> parse_model_name(const std::string& modelFile);
+
+	// retrieve NN input from the game
+	static NNInput get_data(const Game& game);
+
+	static NNInput get_data(const std::vector<const Game*>& gameBatch);
 
 	// Gives model name prefix. ex) K_10b_
 	std::string model_prefix() const;
@@ -188,9 +166,6 @@ public:
 
 	int num_blocks() const { return numBlocks; }
 
-	static NNInput get_data(const Game& game);
-
-	static NNInput get_data(const std::vector<const Game*>& gameBatch);
 
 	// input : batchSize positions from getData, back to back (batchSize * inputChannel * inputSize floats).
 	// pinned : reused for the host <-> GPU transfer; without it the transfer goes through pageable memory and the
@@ -234,6 +209,32 @@ public:
 	float get_learning_rate() const;
 
 	void set_learning_rate(float lr);
+
+
+private:
+	bool useGpu;
+	torch::Device device;
+	float l2Const = 0.0001f;
+	std::unique_ptr<torch::optim::Adam> optimizer;
+	const std::string modelType;
+	const int numBlocks;
+
+	// used for model name parsing.
+	static ModelName name_or_new(const std::string& modelFile, const NetConfig& newNet);
+
+	// untrained network of this->model_type.
+	std::shared_ptr<NetBase> make_net() const;
+
+	// for debugging.
+	void display_nn_output(const NNOutput& modelOut);
+
+	// the fused forward pass recorded as a CUDA graph for one batch size (see capture_graphs).
+	struct GraphBucket{
+		int batchSize;
+		std::unique_ptr<at::cuda::CUDAGraph> graph;
+		torch::Tensor in, out; // the graph's fixed input [batchSize, ...] and merged output [batchSize, outWidth] on the GPU
+	};
+	std::vector<GraphBucket> graphs; // ascending batchSize. Empty : batch_evaluate runs the net op by op.
 };
 
 #endif
