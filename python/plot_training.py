@@ -6,6 +6,8 @@ Fair komi per neutral stone location goes to a second image, <out>_komi.png.
 Loss comparison : several logs (or one log with --losses) plot only the training losses, one image per loss with one
 line per log, no titles :
     python plot_training.py train_result_M4.txt train_result_MnS.txt:"no capture map" [-o out_dir] [--smooth 20]
+                            [--cap GAMES]
+At most 10 logs. --cap GAMES (both modes) leaves out everything after that many self-play games.
 A log may be followed by ":label" for the legend (default : the file name). Images go to out_dir (default :
 <first log>_losses/) : policy_loss, value_loss, score_loss, score_map_loss, capture_map_loss.
 """
@@ -277,7 +279,8 @@ def plot(saves, ratings, out, show, komi_window):
 LOSS_PLOTS = [("policy_loss", "policy", "policy loss (nats)"), ("value_loss", "value", "value loss (MSE)"),
               ("score_loss", "score", "score loss (Huber)"), ("score_map_loss", "score_map", "score map loss (MSE)"),
               ("capture_map_loss", "capture_map", "capture map loss (BCE)")]
-SERIES = [BLUE, ORANGE, AQUA, "#8a5cd1", "#c9a227"]
+# up to 10 runs : the reference order first, then further distinct hues
+SERIES = [BLUE, ORANGE, AQUA, "#8a5cd1", "#c9a227", "#d6458b", "#5b6b7a", "#8c564b", "#17becf", "#7f7f00"]
 
 
 def parse_log_arg(arg):
@@ -288,7 +291,14 @@ def parse_log_arg(arg):
     return Path(arg), Path(arg).stem
 
 
-def plot_losses(logs, out_dir, smooth, show):
+def cap_saves(saves, cap):
+    """saves up to `cap` self-play games (all of them if cap is None)."""
+    if cap is None:
+        return saves
+    return [s for s in saves if s.get("games") is not None and s["games"] <= cap]
+
+
+def plot_losses(logs, out_dir, smooth, show, cap=None):
     """one image per training loss, one line per log, no titles. smooth : rolling mean over that many saves."""
     if len(logs) > len(SERIES):
         raise SystemExit(f"{len(logs)} logs in one chart is too many to tell apart; plot at most {len(SERIES)}")
@@ -296,7 +306,7 @@ def plot_losses(logs, out_dir, smooth, show):
     for path, label in logs:
         if not path.exists():
             raise SystemExit(f"no such file : {path}")
-        saves, _ = parse_log(path)
+        saves = cap_saves(parse_log(path)[0], cap)
         runs.append((label, saves))
         print(f"{label} : {len(saves)} saves, up to {saves[-1].get('games', 0) if saves else 0} games")
 
@@ -327,7 +337,9 @@ def plot_losses(logs, out_dir, smooth, show):
             a.spines[side].set_visible(False)
         for side in ("left", "bottom"):
             a.spines[side].set_color(GRID)
-        if len(runs) > 1:
+        if len(runs) > 4:  # many runs : legend beside the plot, so it doesn't cover the lines
+            a.legend(fontsize=11, frameon=False, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+        elif len(runs) > 1:
             a.legend(fontsize=13, frameon=False)
         fig.tight_layout()
         out = out_dir / f"{name}.png"
@@ -358,6 +370,8 @@ def main():
     parser.add_argument("-o", "--out", help="output image (default: <log>.png); loss comparison : output directory")
     parser.add_argument("--losses", action="store_true", help="loss comparison mode even for a single log")
     parser.add_argument("--smooth", type=int, default=1, help="loss comparison : rolling mean over this many saves")
+    parser.add_argument("--cap", type=int, default=None, metavar="GAMES",
+                        help="leave out every save / checkpoint after this many self-play games (default : show all)")
     parser.add_argument("--show", action="store_true", help="also open a window")
     parser.add_argument("--batch", type=int, default=512, help="batch size")
     parser.add_argument("--steps", type=int, default=2, help="optimizer steps per train_iter")
@@ -370,11 +384,14 @@ def main():
     if len(args.log) > 1 or args.losses:
         logs = [parse_log_arg(a) for a in args.log]
         out_dir = Path(args.out) if args.out else logs[0][0].with_name(logs[0][0].stem + "_losses")
-        plot_losses(logs, out_dir, args.smooth, args.show)
+        plot_losses(logs, out_dir, args.smooth, args.show, args.cap)
         return
 
     log = args.log[0]
     saves, comparisons = parse_log(log)
+    if args.cap is not None:
+        saves = cap_saves(saves, args.cap)
+        comparisons = [c for c in comparisons if c["games"] <= args.cap]
     add_derived(saves, args.batch, args.steps)
     ratings = elo_chain(comparisons, args.games)
     print_table(saves, ratings)
