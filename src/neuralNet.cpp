@@ -285,14 +285,16 @@ NNInput PolicyValueNet::get_data(const Game& game){
 		}
 	}
 
-	// // channel 23 : territory building move (change : may not be legal right now(due to threat))
-	for(const auto& m : game.maximize_score(turn, 1)){
-		ret.at(23 * inputSize + m) = 1.0f;
-	}
-
+	// channel 23 : territory building move (change : may not be legal right now(due to threat))
 	// channel 24 : opponent's territory building move
-	for(const auto& m : game.maximize_score(oppturn, 1)){
-		ret.at(24 * inputSize + m) = 1.0f;
+	// both left all 0 under the scoring channel ablation (RuleConfig::scoringChannels, ./play train -NscoringChannels).
+	if(game.get_rules().scoringChannels){
+		for(const auto& m : game.maximize_score(turn, 1)){
+			ret.at(23 * inputSize + m) = 1.0f;
+		}
+		for(const auto& m : game.maximize_score(oppturn, 1)){
+			ret.at(24 * inputSize + m) = 1.0f;
+		}
 	}
 
 	// channel 25 : komi from the side to move's perspective.

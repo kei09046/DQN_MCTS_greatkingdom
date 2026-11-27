@@ -2,14 +2,14 @@
 set -euo pipefail  # safer bash settings
 
 # Arrays of files
-abmodels=(../testmodels/MnTnP_12b_*B.pt)
+abmodels=(../testmodels/MnR_12b_*B.pt)
 models=(../testmodels/M_12b_*.pt)
 
 for abmodel in "${abmodels[@]}"; do
     # Extract ID part from abmodel filename
     # Example: MnTnP_12b_ABC123B.pt → ABC123
     abfile=$(basename "$abmodel")
-    idpart=$(echo "$abfile" | sed -E 's/^MnTnP_12b_(.*)B\.pt$/\1/')
+    idpart=$(echo "$abfile" | sed -E 's/^MnR_12b_(.*)B\.pt$/\1/')
 
     # Find matching model file
     match=""

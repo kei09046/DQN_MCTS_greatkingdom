@@ -1,13 +1,20 @@
 """Plot the Elo difference between two runs, from `play evaluate_two` logs, against training progress.
 
 usage: python plot_rating_diff.py ../ratings/MvsMnTnP.txt [../ratings/MvsMnT.txt ...] [-o out.png] [--show]
-                                  [--smooth K] [--from GAMES]
+                                  [--smooth K] [--from GAMES] [--target {first,second}]
+                                  [--min-games GAMES] [--band]
 
 Each log holds one evaluate_two result per checkpoint pair : two "Model loaded: <path> (...)" lines, then
-"win count : <wins>" and the first model's win rate. The difference is the first model's Elo minus the second's,
-400 * log10(p / (1 - p)), so above 0 means the first model (e.g. the full method) is stronger. The x axis is the number
-of self-play games in the first model's name (M_12b_11520.pt -> 11520). The band is the 95% Wilson interval of the
-win rate, mapped to Elo. One line per file.
+"win count : <wins>" and the first model's win rate. The difference is the target model's Elo minus the baseline's,
+400 * log10(p / (1 - p)) with p the target's win rate, so above 0 means the target is stronger. By default the second
+model is the target and the first the baseline (MvsMnT.txt -> MnT − M); --target first swaps that. The x axis is the
+number of self-play games in the target model's name (MnT_12b_11520B.pt -> 11520). The printed CI (and the band,
+with --band) is the 95% Wilson interval of the win rate, mapped to Elo. One line per file, so several comparisons (e.g. MvsMnR.txt MvsMnT.txt
+MvsMnTnP.txt) can share one chart; when two files give the same "target − baseline" label, the file name is added.
+
+--target T   which model of each pair is the target : "second" (default) or "first".
+--min-games GAMES  drop checkpoints with fewer self-play games, before smoothing and pooling (early ones are noisy).
+--band       draw the 95% interval as a shaded band (hidden by default).
 
 --smooth K   pool the games of K neighbouring checkpoints (centred window) for each point : K = 3 with 96 games per
              checkpoint narrows the band from about +-70 to +-40 Elo. Points are drawn at the centre checkpoint.
@@ -21,8 +28,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-# same reference palette as plot_ratings.py
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
+# plot_ratings.py's three hues, extended in fixed order (checked with the dataviz palette validator)
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#f2a600", "#ee7fac", "#008a17"]
+MARKERS = ["o", "s", "^", "D", "v", "P"]  # second cue besides colour
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 LOADED_RE = re.compile(r"Model loaded:\s*(\S+)")
@@ -99,26 +107,41 @@ def main():
     ap.add_argument("--smooth", type=int, default=1, metavar="K", help="pool K neighbouring checkpoints per point")
     ap.add_argument("--from", dest="start", type=int, default=None, metavar="GAMES",
                     help="also report the pooled difference from this many self-play games on")
+    ap.add_argument("--min-games", type=int, default=0, metavar="GAMES",
+                    help="ignore checkpoints with fewer self-play games than this")
+    ap.add_argument("--band", action="store_true", help="draw the 95%% interval band")
+    ap.add_argument("--target", choices=("first", "second"), default="second",
+                    help="which model of each pair the difference is measured for (default: second)")
     args = ap.parse_args()
     if args.smooth < 1:
         raise SystemExit("--smooth must be at least 1")
     if len(args.logs) > len(SERIES):
         raise SystemExit(f"{len(args.logs)} logs in one chart is too many to tell apart; plot at most {len(SERIES)}")
 
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    for color, path in zip(SERIES, args.logs):
-        rows = sorted(read_log(path))
+    series = []
+    for path in args.logs:
+        rows = read_log(path)
+        if args.target == "second":  # second model's view : its wins are the first model's losses
+            rows = [(model_info(m2)[1] or games, m2, m1, n - w, n) for games, m1, m2, w, n in rows]
+        rows = sorted(r for r in rows if r[0] >= args.min_games)
         if not rows:
             print(f"{path} : no results found")
             continue
-        first, second = model_info(rows[0][1])[0], model_info(rows[0][2])[0]
-        label = f"{first} − {second}"
+        target, baseline = model_info(rows[0][1])[0], model_info(rows[0][2])[0]
+        series.append((path, rows, f"{target} − {baseline}"))
+    labels = [label for _, _, label in series]
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    for color, marker, (path, rows, label) in zip(SERIES, MARKERS, series):
+        if labels.count(label) > 1:
+            label = f"{label} ({path.stem})"
         shown = smooth(rows, args.smooth)
         x = [r[0] for r in shown]
         y = [elo(r[3] / r[4]) for r in shown]
-        lo, hi = zip(*(wilson(r[3], r[4]) for r in shown))
-        ax.fill_between(x, [elo(p) for p in lo], [elo(p) for p in hi], color=color, alpha=0.15, linewidth=0)
-        ax.plot(x, y, color=color, linewidth=2, marker="o", markersize=5,
+        if args.band:
+            lo, hi = zip(*(wilson(r[3], r[4]) for r in shown))
+            ax.fill_between(x, [elo(p) for p in lo], [elo(p) for p in hi], color=color, alpha=0.15, linewidth=0)
+        ax.plot(x, y, color=color, linewidth=2, marker=marker, markersize=6,
                 markeredgecolor="white", markeredgewidth=1.5, label=label, zorder=3)
 
         wins, total, d, dlo, dhi = pooled(rows)
@@ -148,7 +171,7 @@ def main():
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(GRID)
-    ax.legend(frameon=False, fontsize=12, loc="upper left")
+    ax.legend(frameon=False, fontsize=12, loc="upper left", bbox_to_anchor=(1.01, 1.0))  # outside : never covers data
     ax.margins(x=0.08)
 
     fig.tight_layout()

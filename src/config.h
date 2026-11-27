@@ -16,14 +16,15 @@ struct BoardConfig {
     std::vector<std::pair<uint8_t, uint8_t>> neutrals;
 };
 
-// how a Game lists the moves search considers (Game::set_policy_mask) and gives them priors (Game::transfer_logit).
-// Not read from the json files. For ablation run only.
+// how a Game lists the moves search considers (Game::set_policy_mask), gives them priors (Game::transfer_logit) and
+// what the network sees of it (PolicyValueNet::get_data). For ablation runs only : set by ./play train -Nprune /
+// -Ntransfer / -NscoringChannels, and per engine by "prune" / "transfer" / "scoringChannels" in "engines".
 struct RuleConfig {
     bool prune = true;    // search only maximal scoring moves. false : every legal move is searched.
     bool transfer = true; // a kept move's prior logit is the max over the logits of the squares it would claim.
                           // false : each move keeps its own logit. Only applies with prune.
-    bool oppTerritory = true; // input channel 24 marks the opponent's territory building moves. false : it is all 0.
-                              // A model trained with it off must be evaluated with it off too.
+    bool scoringChannels = true; // input channels 23 / 24 mark my / the opponent's territory building moves.
+                                 // false : both are all 0. A model trained with it off must be evaluated with it off.
 };
 
 // one search engine (MCTS) : "mcts", "features", "dirichlet_noise" and train.search_thread_num in the json.
