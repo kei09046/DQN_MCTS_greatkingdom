@@ -1,0 +1,93 @@
+starting ...
+Model loaded: ../testmodels/M_12b_11520.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_11520B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 18
+0.1875
+total time: 212743[ms]
+No matching model found for MnS_12b_12480B.pt
+No matching model found for MnS_12b_14400B.pt
+Evaluating: ../testmodels/M_12b_16320.pt vs ../testmodels/MnS_12b_16320B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_16320.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_16320B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 37
+0.385417
+total time: 292117[ms]
+Evaluating: ../testmodels/M_12b_19200.pt vs ../testmodels/MnS_12b_19200B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_19200.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_19200B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 43
+0.447917
+total time: 241355[ms]
+No matching model found for MnS_12b_22080B.pt
+No matching model found for MnS_12b_24960B.pt
+Evaluating: ../testmodels/M_12b_27840.pt vs ../testmodels/MnS_12b_27840B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_27840.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_27840B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=5.7 (0,1)=5.9 (0,2)=5.7 (0,3)=6.4 (0,4)=5.6 (1,1)=6.2 (1,2)=6.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=5.2
+win count : 38
+0.395833
+total time: 319756[ms]
+No matching model found for MnS_12b_35520B.pt
+Evaluating: ../testmodels/M_12b_39360.pt vs ../testmodels/MnS_12b_39360B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_39360.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_39360B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=4.4 (0,1)=4.4 (0,2)=4.5 (0,3)=4.5 (0,4)=4.7 (1,1)=4 (1,2)=4 (1,3)=4.2 (1,4)=4.6 (2,2)=5 (2,3)=4.9 (2,4)=4.9 (3,3)=4.5 (3,4)=3.3 (4,4)=4.7 none=4
+win count : 36
+0.375
+total time: 306021[ms]
+Evaluating: ../testmodels/M_12b_49920.pt vs ../testmodels/MnS_12b_49920B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_49920.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_49920B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.8 (0,1)=2.1 (0,2)=2.8 (0,3)=2.6 (0,4)=2.5 (1,1)=2 (1,2)=2.2 (1,3)=2.1 (1,4)=2.3 (2,2)=2.7 (2,3)=2.8 (2,4)=2.5 (3,3)=2.4 (3,4)=2.2 (4,4)=2.3 none=2
+win count : 34
+0.354167
+total time: 346559[ms]
+No matching model found for MnS_12b_51840B.pt
+Evaluating: ../testmodels/M_12b_5760.pt vs ../testmodels/MnS_12b_5760B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_5760.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_5760B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 39
+0.40625
+total time: 179854[ms]
+Evaluating: ../testmodels/M_12b_6720.pt vs ../testmodels/MnS_12b_6720B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_6720.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_6720B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 8
+0.0833333
+total time: 195559[ms]
+Evaluating: ../testmodels/M_12b_8640.pt vs ../testmodels/MnS_12b_8640B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_8640.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_8640B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 15
+0.15625
+total time: 132053[ms]
+Evaluating: ../testmodels/M_12b_9600.pt vs ../testmodels/MnS_12b_9600B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_9600.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_9600B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 17
+0.177083
+total time: 195828[ms]
+Evaluating: ../testmodels/M_12b_960.pt vs ../testmodels/MnS_12b_960B.pt
+starting ...
+Model loaded: ../testmodels/M_12b_960.pt (type M, 12 blocks)
+Model loaded: ../testmodels/MnS_12b_960B.pt (type MnS, 12 blocks)
+fair komi : (0,0)=2.5 (0,1)=2.5 (0,2)=2.5 (0,3)=2.5 (0,4)=2.5 (1,1)=2.5 (1,2)=2.5 (1,3)=2.5 (1,4)=2.5 (2,2)=2.5 (2,3)=2.5 (2,4)=2.5 (3,3)=2.5 (3,4)=2.5 (4,4)=2.5 none=2.5
+win count : 49
+0.510417
+total time: 217255[ms]
